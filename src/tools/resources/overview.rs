@@ -29,20 +29,20 @@ fn value_label(tab: TopTab, value: f64) -> String {
     }
 }
 
-const MAX_WIDTH: f32 = 880.0;
+pub(super) const MAX_WIDTH: f32 = 880.0;
 const GRAPH_HEIGHT: f32 = 120.0;
 const SMALL_CARD_HEIGHT: f32 = 150.0;
 const SMALL_GRAPH_HEIGHT: f32 = 40.0;
 /// Samples without GPU data in a row before the card says no GPU was found.
-const GPU_MISSING_AFTER: u32 = 3;
+pub(super) const GPU_MISSING_AFTER: u32 = 3;
 const IO_CARD_HEIGHT: f32 = 210.0;
 const IO_GRAPH_HEIGHT: f32 = 60.0;
-const DISK_FLOOR: f32 = 1024.0 * 1024.0;
-const NET_FLOOR: f32 = 128.0 * 1024.0;
+pub(super) const DISK_FLOOR: f32 = 1024.0 * 1024.0;
+pub(super) const NET_FLOOR: f32 = 128.0 * 1024.0;
 const VIOLET: Color32 = Color32::from_rgb(167, 139, 250);
-const SKY: Color32 = Color32::from_rgb(56, 189, 248);
-const GREY: Color32 = Color32::from_rgb(139, 144, 154);
-const NONE: &str = "-";
+pub(super) const SKY: Color32 = Color32::from_rgb(56, 189, 248);
+pub(super) const GREY: Color32 = Color32::from_rgb(139, 144, 154);
+pub(super) const NONE: &str = "-";
 
 /// Memory in use as a percentage of the total; 0 when the total is unknown.
 pub(super) fn mem_percent(used: u64, total: u64) -> f32 {
@@ -73,7 +73,7 @@ pub(super) fn nice_ceiling(max: f32, floor: f32) -> f32 {
 }
 
 /// `nice_ceiling` of the largest value across several histories.
-fn peak_ceiling(series: &[&[f32]], floor: f32) -> f32 {
+pub(super) fn peak_ceiling(series: &[&[f32]], floor: f32) -> f32 {
     let peak = series
         .iter()
         .flat_map(|s| s.iter().copied())
@@ -82,7 +82,7 @@ fn peak_ceiling(series: &[&[f32]], floor: f32) -> f32 {
 }
 
 /// "physical/logical", or just the logical count when the physical count is unknown.
-fn cores_label(physical: Option<usize>, logical: usize) -> String {
+pub(super) fn cores_label(physical: Option<usize>, logical: usize) -> String {
     match physical {
         Some(p) => format!("{p}/{logical}"),
         None => logical.to_string(),
@@ -366,7 +366,7 @@ pub(super) fn gpu_memory_label(used: Option<u64>, total: Option<u64>) -> String 
 }
 
 /// Strong title on the left, weak detail on the right.
-fn header(ui: &mut egui::Ui, title: &str, detail: &str) {
+pub(super) fn header(ui: &mut egui::Ui, title: &str, detail: &str) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(title).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

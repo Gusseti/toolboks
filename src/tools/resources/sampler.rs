@@ -18,6 +18,7 @@ use windows::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterValue,
     PdhOpenQueryW, PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY,
 };
+use windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
 
 /// A ping older than this means the page is no longer shown.
 const VISIBLE_WINDOW_MS: u64 = 2500;
@@ -184,6 +185,108 @@ fn is_counted_adapter(name: &str) -> bool {
     !["loopback", "isatap", "teredo", "6to4"]
         .iter()
         .any(|bad| lower.contains(bad))
+}
+
+/// Builds the adapter list from plain tuples `(name, rx_delta, tx_delta, total_rx, total_tx)`:
+/// pseudo adapters are dropped, speeds are deltas over `secs`, sorted by name (case-insensitive).
+fn build_adapters(items: &[(String, u64, u64, u64, u64)], secs: f64) -> Vec<AdapterInfo> {
+    let mut list: Vec<AdapterInfo> = items
+        .iter()
+        .filter(|(name, ..)| is_counted_adapter(name))
+        .map(|(name, rx, tx, total_rx, total_tx)| AdapterInfo {
+            name: name.clone(),
+            down_bps: bytes_per_second(*rx, secs),
+            up_bps: bytes_per_second(*tx, secs),
+            total_down: *total_rx,
+            total_up: *total_tx,
+        })
+        .collect();
+    list.sort_by_key(|a| a.name.to_lowercase());
+    list
+}
+
+/// One drive as plain values: mount, label, kind, total, free, bytes read, bytes written.
+type DriveRow = (String, String, String, u64, u64, u64, u64);
+
+/// Builds the drive list from plain rows: drives with total 0 are skipped, speeds are deltas
+/// over `secs`, sorted by mount.
+fn build_drives(items: &[DriveRow], secs: f64) -> Vec<DriveInfo> {
+    let mut list: Vec<DriveInfo> = items
+        .iter()
+        .filter(|(_, _, _, total, ..)| *total > 0)
+        .map(
+            |(mount, label, kind, total, free, read, written)| DriveInfo {
+                mount: mount.clone(),
+                label: label.clone(),
+                kind: kind.clone(),
+                total: *total,
+                free: *free,
+                read_bps: bytes_per_second(*read, secs),
+                write_bps: bytes_per_second(*written, secs),
+            },
+        )
+        .collect();
+    list.sort_by(|a, b| a.mount.cmp(&b.mount));
+    list
+}
+
+/// The process table is refreshed on every second reported sample (about every 2 s).
+fn refresh_procs_now(sample_index: u64) -> bool {
+    sample_index.is_multiple_of(2)
+}
+
+fn read_drives(disks: &Disks, secs: f64) -> Vec<DriveInfo> {
+    let items: Vec<DriveRow> = disks
+        .iter()
+        .map(|d| {
+            let u = d.usage();
+            let kind = match d.kind() {
+                sysinfo::DiskKind::SSD => "SSD",
+                sysinfo::DiskKind::HDD => "HDD",
+                _ => "",
+            };
+            (
+                d.mount_point().to_string_lossy().into_owned(),
+                d.name().to_string_lossy().into_owned(),
+                kind.to_string(),
+                d.total_space(),
+                d.available_space(),
+                u.read_bytes,
+                u.written_bytes,
+            )
+        })
+        .collect();
+    build_drives(&items, secs)
+}
+
+fn read_adapters(nets: &Networks, secs: f64) -> Vec<AdapterInfo> {
+    let items: Vec<_> = nets
+        .iter()
+        .map(|(name, n)| {
+            (
+                name.to_string_lossy().into_owned(),
+                n.received(),
+                n.transmitted(),
+                n.total_received(),
+                n.total_transmitted(),
+            )
+        })
+        .collect();
+    build_adapters(&items, secs)
+}
+
+/// System-wide process, thread and handle counts; None if the call fails.
+fn read_counts() -> Option<SystemCounts> {
+    let mut info = PERFORMANCE_INFORMATION::default();
+    let cb = std::mem::size_of::<PERFORMANCE_INFORMATION>() as u32;
+    info.cb = cb;
+    // SAFETY: `info` is a valid, writable PERFORMANCE_INFORMATION and `cb` is its exact size.
+    unsafe { GetPerformanceInfo(&mut info, cb) }.ok()?;
+    Some(SystemCounts {
+        processes: info.ProcessCount,
+        threads: info.ThreadCount,
+        handles: info.HandleCount,
+    })
 }
 
 /// Per-process CPU is percent of one core; this converts it to percent of the whole machine.
@@ -447,13 +550,19 @@ impl Sampler {
                 }
                 ctx.request_repaint();
 
-                let disk_kind = DiskRefreshKind::nothing().with_io_usage();
+                let disk_kind = DiskRefreshKind::nothing()
+                    .with_kind()
+                    .with_storage()
+                    .with_io_usage();
                 let mut disks = Disks::new_with_refreshed_list_specifics(disk_kind).ok();
                 let mut nets = Networks::new_with_refreshed_list().ok();
                 let busy = DiskBusy::new();
                 let mut gpu_reader = GpuReader::new();
                 let nvml = Nvml::open();
                 let mut last_tick = Instant::now();
+                let mut last_proc = Instant::now();
+                let mut top = TopProcesses::default();
+                let mut sample_index: u64 = 0;
 
                 // The thread was just primed above, so the first tick can already report.
                 let mut primed = true;
@@ -481,35 +590,46 @@ impl Sampler {
                         refresh_procs(&mut sys);
                         let _ = gpu_reader.read();
                         last_tick = Instant::now();
+                        last_proc = last_tick;
+                        top = TopProcesses::default();
+                        // The next sample refreshes the table (index 0).
+                        sample_index = 0;
                         continue;
                     }
                     sys.refresh_memory();
 
                     let secs = last_tick.elapsed().as_secs_f64();
                     last_tick = Instant::now();
-                    let (read, written) = match disks.as_mut() {
+                    let (read, written, drives) = match disks.as_mut() {
                         Some(d) => {
                             d.refresh_specifics(true, disk_kind);
-                            disk_totals(d)
+                            let (r, w) = disk_totals(d);
+                            (r, w, read_drives(d, secs))
                         }
-                        None => (0, 0),
+                        None => (0, 0, Vec::new()),
                     };
-                    let (down, up) = match nets.as_mut() {
+                    let (down, up, adapters) = match nets.as_mut() {
                         Some(n) => {
                             n.refresh(true);
-                            net_totals(n)
+                            let (d, u) = net_totals(n);
+                            (d, u, read_adapters(n, secs))
                         }
-                        None => (0, 0),
+                        None => (0, 0, Vec::new()),
                     };
 
                     let freqs: Vec<u64> = sys.cpus().iter().map(|c| c.frequency()).collect();
-                    refresh_procs(&mut sys);
                     let mut gpu_basic = gpu_reader.read();
                     let gpu_pids = gpu_basic
                         .as_mut()
                         .map(|b| std::mem::take(&mut b.per_process))
                         .unwrap_or_default();
-                    let top = build_top(&sys, logical, secs, &gpu_pids);
+                    if refresh_procs_now(sample_index) {
+                        refresh_procs(&mut sys);
+                        let proc_secs = last_proc.elapsed().as_secs_f64();
+                        last_proc = Instant::now();
+                        top = build_top(&sys, logical, proc_secs, &gpu_pids);
+                    }
+                    sample_index += 1;
                     let sample = Sample {
                         cpu: sys.global_cpu_usage(),
                         cores: sys.cpus().iter().map(|c| c.usage()).collect(),
@@ -529,11 +649,10 @@ impl Sampler {
                             };
                             merge_gpu(basic, nv)
                         }),
-                        top,
-                        // Filled in by the phase 5 work.
-                        drives: Vec::new(),
-                        adapters: Vec::new(),
-                        counts: None,
+                        top: top.clone(),
+                        drives,
+                        adapters,
+                        counts: read_counts(),
                     };
                     if tx.send(Msg::Sample(Box::new(sample))).is_err() {
                         return;
@@ -616,6 +735,50 @@ mod tests {
         assert!(!is_counted_adapter("isatap.{ABC}"));
         assert!(!is_counted_adapter("Teredo Tunneling Pseudo-Interface"));
         assert!(!is_counted_adapter("6TO4 Adapter"));
+    }
+
+    #[test]
+    fn adapters_filter_and_sort() {
+        let items = vec![
+            ("wi-fi".to_string(), 2000, 1000, 50, 60),
+            ("Loopback Pseudo-Interface 1".to_string(), 9, 9, 9, 9),
+            ("Ethernet".to_string(), 0, 500, 7, 8),
+        ];
+        let a = build_adapters(&items, 2.0);
+        assert_eq!(a.len(), 2);
+        assert_eq!(a[0].name, "Ethernet");
+        assert_eq!(a[0].up_bps, 250.0);
+        assert_eq!(a[1].name, "wi-fi");
+        assert_eq!(a[1].down_bps, 1000.0);
+        assert_eq!((a[1].total_down, a[1].total_up), (50, 60));
+        assert!(build_adapters(&[], 1.0).is_empty());
+        assert_eq!(build_adapters(&items, 0.0)[0].up_bps, 0.0);
+    }
+
+    #[test]
+    fn drives_skip_empty_and_sort() {
+        let d = |m: &str, total: u64| -> DriveRow {
+            (m.into(), "L".into(), "SSD".into(), total, 5, 400, 200)
+        };
+        let l = build_drives(&[d("D:\\", 10), d("E:\\", 0), d("C:\\", 20)], 2.0);
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0].mount, "C:\\");
+        assert_eq!(l[1].mount, "D:\\");
+        assert_eq!(l[0].read_bps, 200.0);
+        assert_eq!(l[0].write_bps, 100.0);
+        assert_eq!((l[0].total, l[0].free), (20, 5));
+    }
+
+    #[test]
+    fn process_refresh_every_second_sample() {
+        let picks: Vec<bool> = (0..6).map(refresh_procs_now).collect();
+        assert_eq!(picks, [true, false, true, false, true, false]);
+    }
+
+    #[test]
+    fn counts_read_on_windows() {
+        let c = read_counts().expect("GetPerformanceInfo");
+        assert!(c.processes > 0 && c.threads > 0 && c.handles > 0);
     }
 
     #[test]
@@ -765,6 +928,13 @@ mod tests {
                             s.net_up_bps
                         );
                         println!("  gpu {:?}", s.gpu);
+                        println!("  counts {:?}", s.counts);
+                        for d in &s.drives {
+                            println!("  drive {d:?}");
+                        }
+                        for a in &s.adapters {
+                            println!("  adapter {a:?}");
+                        }
                         for (label, list) in [
                             ("cpu %", &s.top.cpu),
                             ("mem B", &s.top.memory),
