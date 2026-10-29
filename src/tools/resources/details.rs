@@ -4,16 +4,16 @@ use eframe::egui::{self, Align, Layout, RichText, Vec2};
 
 use super::history::History;
 use super::overview::{
-    cores_label, gpu_memory_label, header, nice_ceiling, DISK_FLOOR, GREY, MAX_WIDTH, NET_FLOOR,
-    NONE, SKY,
+    cores_label, gpu_memory_label, header, nice_ceiling, DISK_FLOOR, GREY, INNER_GAP, NET_FLOOR,
+    NONE, SCROLL_GUTTER, SKY,
 };
 use super::Resources;
 use crate::format::{clock, rate, size_plain, uptime};
 use crate::ui::{card, graph, stat, Line, ACCENT, AMBER, GAP, GREEN};
 
 const COLS: usize = 4;
-const MINI_HEIGHT: f32 = 36.0;
-const IO_HEIGHT: f32 = 40.0;
+const MINI_HEIGHT: f32 = 28.0;
+const IO_HEIGHT: f32 = 32.0;
 /// Engine types that always get a graph when the GPU reports them.
 const MAIN_ENGINES: [&str; 5] = ["3D", "Copy", "Video Decode", "Video Encode", "Compute"];
 
@@ -77,24 +77,18 @@ fn mini_label(ui: &mut egui::Ui, name: &str, value: Option<f32>) {
 
 impl Resources {
     pub(super) fn details_ui(&self, ui: &mut egui::Ui) {
-        let width = (ui.available_width() - 14.0).min(MAX_WIDTH);
-        ui.vertical_centered(|ui| {
-            ui.allocate_ui_with_layout(
-                Vec2::new(width, 0.0),
-                Layout::top_down(Align::LEFT),
-                |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::splat(GAP);
-                    ui.label(RichText::new("Resource Monitor").size(24.0).strong());
-                    card(ui, width, 0.0, |ui| self.cpu_details(ui));
-                    card(ui, width, 0.0, |ui| self.gpu_details(ui));
-                    card(ui, width, 0.0, |ui| self.disk_details(ui));
-                    card(ui, width, 0.0, |ui| self.net_details(ui));
-                },
-            );
+        let width = ui.available_width() - SCROLL_GUTTER;
+        ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::LEFT), |ui| {
+            ui.spacing_mut().item_spacing = Vec2::splat(GAP);
+            card(ui, width, 0.0, |ui| self.cpu_details(ui));
+            card(ui, width, 0.0, |ui| self.gpu_details(ui));
+            card(ui, width, 0.0, |ui| self.disk_details(ui));
+            card(ui, width, 0.0, |ui| self.net_details(ui));
         });
     }
 
     fn cpu_details(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         let name = self.info.as_ref().map_or("", |i| i.cpu_name.as_str());
         header(ui, "CPU", name);
         let s = self.last.as_ref();
@@ -107,7 +101,7 @@ impl Resources {
             .map(|i| cores_label(i.physical_cores, i.logical_cores));
         let counts = s.and_then(|s| s.counts.as_ref());
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 24.0;
+            ui.spacing_mut().item_spacing.x = 20.0;
             stat(ui, usage.as_deref().unwrap_or(NONE), "Usage");
             stat(ui, speed.as_deref().unwrap_or(NONE), "Speed");
             stat(ui, cores.as_deref().unwrap_or(NONE), "Cores / threads");
@@ -132,6 +126,7 @@ impl Resources {
     }
 
     fn gpu_details(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         let name = self.gpu.as_ref().map_or("", |g| g.name.as_str());
         header(ui, "GPU", name);
         let Some(gpu) = &self.gpu else {
@@ -171,7 +166,7 @@ impl Resources {
 
         let mem = gpu_memory_label(gpu.mem_used, gpu.mem_total);
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 24.0;
+            ui.spacing_mut().item_spacing.x = 20.0;
             stat(ui, &mem, "Memory");
             if let Some(t) = gpu.temp_c {
                 stat(ui, &format!("{t:.0} °C"), "Temp");
@@ -189,6 +184,7 @@ impl Resources {
     }
 
     fn disk_details(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         header(ui, "Disk", "");
         let drives = self.last.as_ref().map_or(&[][..], |s| &s.drives[..]);
         if drives.is_empty() {
@@ -196,7 +192,7 @@ impl Resources {
             return;
         }
         for d in drives {
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             let title = [d.mount.as_str(), d.label.as_str(), d.kind.as_str()]
                 .iter()
                 .filter(|p| !p.is_empty())
@@ -231,7 +227,7 @@ impl Resources {
                 graph(ui, IO_HEIGHT, &lines, r.capacity(), peak(r, w, DISK_FLOOR));
             }
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 24.0;
+                ui.spacing_mut().item_spacing.x = 20.0;
                 stat(ui, &rate(d.read_bps), "Read");
                 stat(ui, &rate(d.write_bps), "Write");
             });
@@ -239,6 +235,7 @@ impl Resources {
     }
 
     fn net_details(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         header(ui, "Network", "");
         let adapters = self.last.as_ref().map_or(&[][..], |s| &s.adapters[..]);
         if adapters.is_empty() {
@@ -246,7 +243,7 @@ impl Resources {
             return;
         }
         for a in adapters {
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             ui.label(RichText::new(&a.name).strong());
             if let Some([d, u]) = self.adapters.get(&a.name) {
                 let lines = [
@@ -269,7 +266,7 @@ impl Resources {
                 size_plain(a.total_up)
             );
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 24.0;
+                ui.spacing_mut().item_spacing.x = 20.0;
                 stat(ui, &rate(a.down_bps), "Down");
                 stat(ui, &rate(a.up_bps), "Up");
                 stat(ui, &total, "Total");

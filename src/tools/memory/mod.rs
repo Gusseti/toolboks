@@ -24,7 +24,7 @@ use crate::elevation;
 const REFRESH: Duration = Duration::from_secs(2);
 /// How often the auto-clean rules are checked, in the background too.
 const AUTO_CHECK: Duration = Duration::from_secs(5);
-const ROW_HEIGHT: f32 = 22.0;
+const ROW_HEIGHT: f32 = 20.0;
 
 /// Live RAM usage, a per-process table, manual per-process trimming and, with admin rights,
 /// system-wide memory list commands and auto-clean (see `admin`).
@@ -245,12 +245,23 @@ impl Tool for Memory {
         }
         ui.request_repaint_after(REFRESH);
 
+        if page == 0 {
+            // Home lays out its own three zones and scrolls inside them.
+            self.home_ui(ui);
+            return;
+        }
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| match page {
-                0 => self.home_ui(ui),
-                _ => self.advanced_ui(ui),
-            });
+            .show(ui, |ui| self.advanced_ui(ui));
+    }
+
+    fn status(&self) -> Vec<String> {
+        match self.sampler.as_ref() {
+            Some(s) if s.totals.total > 0 => {
+                vec![format!("RAM {:.0}%", s.totals.used_fraction() * 100.0)]
+            }
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -258,16 +269,20 @@ impl Memory {
     /// Everything for people who want control: process list, trimming, protection, system-wide
     /// cleaning and auto-clean.
     fn advanced_ui(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Advanced").size(24.0).strong());
-        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.spacing_mut().button_padding = egui::vec2(6.0, 1.0);
 
         let totals = self.sampler.as_ref().map(|s| s.totals).unwrap_or_default();
-        ui.add(egui::ProgressBar::new(totals.used_fraction()).text(format!(
-            "{} used of {} ({:.0}%)",
-            format_bytes(totals.used),
-            format_bytes(totals.total),
-            totals.used_fraction() * 100.0
-        )));
+        ui.add(
+            egui::ProgressBar::new(totals.used_fraction())
+                .desired_height(16.0)
+                .text(format!(
+                    "{} used of {} ({:.0}%)",
+                    format_bytes(totals.used),
+                    format_bytes(totals.total),
+                    totals.used_fraction() * 100.0
+                )),
+        );
         let mut summary = format!("Available: {}", format_bytes(totals.available));
         if let Some(lists) = self.lists {
             summary += &format!(
@@ -281,12 +296,11 @@ impl Memory {
             "Available = Free + Standby. Windows keeps recently used data in the standby list \
              and hands it out whenever a program needs memory.",
         );
-        ui.add_space(8.0);
+        ui.add_space(4.0);
 
         self.confirm_bar(ui);
         if let Some(status) = &self.status {
             ui.label(status);
-            ui.add_space(4.0);
         }
         self.system_panel(ui);
         self.auto_panel(ui);
@@ -299,7 +313,7 @@ impl Memory {
             ui.checkbox(&mut self.grouped, "Group by name");
             ui.label(format!("{process_count} processes"));
         });
-        ui.add_space(4.0);
+        ui.add_space(2.0);
 
         let Some(sampler) = self.sampler.as_ref() else {
             return;
@@ -330,7 +344,7 @@ impl Memory {
             .column(Column::exact(100.0))
             .column(Column::exact(64.0))
             .column(Column::exact(64.0))
-            .header(ROW_HEIGHT + 4.0, |mut header| {
+            .header(ROW_HEIGHT, |mut header| {
                 for (label, key) in [
                     ("Name", SortKey::Name),
                     ("PID", SortKey::Pid),
@@ -340,7 +354,14 @@ impl Memory {
                     header.col(|ui| {
                         let arrow = sort_arrow(sort_key == key, descending);
                         if ui
-                            .button(egui::RichText::new(format!("{label}{arrow}")).strong())
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(format!("{label}{arrow}"))
+                                        .small()
+                                        .strong(),
+                                )
+                                .small(),
+                            )
                             .clicked()
                         {
                             sort_click = Some(key);
@@ -348,7 +369,7 @@ impl Memory {
                     });
                 }
                 header.col(|ui| {
-                    ui.label(egui::RichText::new("Protect").strong())
+                    ui.label(egui::RichText::new("Protect").small().strong())
                         .on_hover_text("Tick to keep this app from ever being trimmed");
                 });
                 header.col(|_| {});

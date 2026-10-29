@@ -5,6 +5,7 @@ use std::time::Duration;
 use eframe::egui;
 
 use crate::tools::{self, Tool};
+use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
 
 /// Results sent back from the update worker thread.
@@ -117,11 +118,16 @@ impl App {
         };
     }
 
+    /// The update control in one row. Meant for a right-to-left layout: the first item added
+    /// sits rightmost.
     fn update_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         match &self.update {
             UpdateState::Idle | UpdateState::UpToDate | UpdateState::Failed(_) => {
-                if ui.button("Check for updates").clicked() {
+                let check = egui::Button::new(egui::RichText::new("Check for updates").size(11.0))
+                    .small()
+                    .frame(false);
+                if ui.add(check).clicked() {
                     self.update = UpdateState::Checking;
                     self.spawn_update_job(&ctx, || UpdateMsg::Checked(update::check()));
                 }
@@ -130,7 +136,12 @@ impl App {
                         ui.small("You have the latest version.");
                     }
                     UpdateState::Failed(message) => {
-                        ui.add(egui::Label::new(egui::RichText::new(message).small()).wrap());
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(message).small().color(look::AMBER),
+                            )
+                            .truncate(),
+                        );
                     }
                     _ => {}
                 }
@@ -140,16 +151,33 @@ impl App {
             }
             UpdateState::Available(release) => {
                 let release = release.clone();
-                ui.small(format!("Version {} is available.", release.version));
-                if ui.button("Install and restart").clicked() {
-                    self.start_install(&ctx, release);
+                let install = egui::Button::new(
+                    egui::RichText::new("Install and restart")
+                        .size(11.0)
+                        .color(egui::Color32::WHITE),
+                )
+                .small()
+                .fill(look::ACCENT);
+                if ui.add(install).clicked() {
+                    self.start_install(&ctx, release.clone());
                 }
+                ui.small(format!("Version {} is available.", release.version));
             }
             UpdateState::Installing => {
                 ui.small("Installing\u{2026}");
             }
         }
     }
+}
+
+/// Flattens the status items of all tools (in tool order), trimmed, without empty ones.
+fn status_items(groups: impl IntoIterator<Item = Vec<String>>) -> Vec<String> {
+    groups
+        .into_iter()
+        .flatten()
+        .map(|item| item.trim().to_owned())
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 /// Starts the freshly installed exe. It inherits this process's rights, admin included.
@@ -168,37 +196,79 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Panel::left("tools")
+        let strip = || {
+            egui::Frame::new()
+                .fill(look::WINDOW_BG)
+                .inner_margin(egui::Margin::symmetric(8, 0))
+        };
+
+        // Tool tabs, with the version and the update control on the right.
+        egui::Panel::top("tools")
             .resizable(false)
-            .exact_size(170.0)
+            .frame(strip())
             .show(ui, |ui| {
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new("toolboks").heading().strong());
-                ui.add_space(8.0);
-
-                for (ti, tool) in self.tools.iter().enumerate() {
-                    let pages = tool.pages();
-                    if pages.is_empty() {
-                        ui.selectable_value(&mut self.selected, (ti, 0), tool.name());
-                        continue;
+                ui.set_height(28.0);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for ti in 0..self.tools.len() {
+                        let name = self.tools[ti].name();
+                        let on = self.selected.0 == ti;
+                        if look::tab(ui, name, on, 28.0).clicked() && !on {
+                            self.selected = (ti, 0);
+                        }
                     }
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new(tool.name()).small().weak());
-                    for (pi, page) in pages.iter().enumerate() {
-                        ui.selectable_value(&mut self.selected, (ti, pi), *page);
-                    }
-                }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui.weak(format!("v{}", Version::current()));
+                        self.update_ui(ui);
+                    });
+                });
+            });
 
-                // Bottom-up: the first item added sits lowest.
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    ui.add_space(4.0);
-                    ui.weak(format!("v{}", Version::current()));
-                    self.update_ui(ui);
+        // Pages of the selected tool; hidden when there is one page or none.
+        let pages = self
+            .tools
+            .get(self.selected.0)
+            .map_or(&[][..], |tool| tool.pages());
+        if pages.len() > 1 {
+            egui::Panel::top("pages")
+                .resizable(false)
+                .frame(strip())
+                .show(ui, |ui| {
+                    ui.set_height(24.0);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        for (pi, page) in pages.iter().enumerate() {
+                            let on = self.selected.1 == pi;
+                            if look::tab(ui, page, on, 24.0).clicked() {
+                                self.selected.1 = pi;
+                            }
+                        }
+                    });
+                });
+        }
+
+        // Status bar: the status items of every tool, in tool order.
+        let items = status_items(self.tools.iter().map(|tool| tool.status()));
+        egui::Panel::bottom("status")
+            .resizable(false)
+            .exact_size(22.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(look::STATUS_BG)
+                    .inner_margin(egui::Margin::symmetric(10, 0)),
+            )
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 14.0;
+                    for item in &items {
+                        ui.label(egui::RichText::new(item).size(11.0).color(look::MUTED));
+                    }
                 });
             });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(ui.style()).inner_margin(24.0))
+            .frame(egui::Frame::central_panel(ui.style()).inner_margin(look::CARD_PAD))
             .show(ui, |ui| {
                 let (tool, page) = self.selected;
                 if let Some(tool) = self.tools.get_mut(tool) {
@@ -212,7 +282,7 @@ impl eframe::App for App {
 
 impl App {
     /// The "update available" question: shown once a newer release is found, and dismissed
-    /// with "Not now" until the next launch (the sidebar keeps an Install button).
+    /// with "Not now" until the next launch (the top bar keeps an Install button).
     fn update_prompt(&mut self, ctx: &egui::Context) {
         if !self.prompt_open {
             return;
@@ -264,5 +334,25 @@ impl App {
         } else if later {
             self.prompt_open = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_items;
+
+    #[test]
+    fn status_items_keep_tool_order_and_skip_blanks() {
+        let groups = vec![
+            vec!["RAM 63%".to_owned(), "  ".to_owned()],
+            Vec::new(),
+            vec![" CPU 24% ".to_owned(), "GPU 7%".to_owned()],
+        ];
+        assert_eq!(status_items(groups), ["RAM 63%", "CPU 24%", "GPU 7%"]);
+    }
+
+    #[test]
+    fn status_items_empty_when_no_tool_reports() {
+        assert!(status_items([Vec::new(), Vec::new()]).is_empty());
     }
 }

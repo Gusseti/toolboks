@@ -3,11 +3,11 @@ use eframe::egui;
 mod memory;
 mod resources;
 
-/// A utility shown in the sidebar. Add a module, implement this, and register it in [`all`].
+/// A utility shown as a tab. Add a module, implement this, and register it in [`all`].
 pub trait Tool {
     fn name(&self) -> &'static str;
 
-    /// Sidebar pages of this tool. Empty means a single page named after the tool.
+    /// Pages of this tool (the second tab strip). Empty means a single page named after the tool.
     fn pages(&self) -> &'static [&'static str] {
         &[]
     }

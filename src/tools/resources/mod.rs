@@ -1,5 +1,7 @@
 //! Resource Monitor: live CPU and memory graphs.
 
+use std::time::{Duration, Instant};
+
 use eframe::egui;
 
 mod details;
@@ -14,6 +16,9 @@ use sampler::{GpuSample, Info, Msg, Sample, Sampler};
 
 /// Points kept per graph (one per second, so a minute).
 const HISTORY_POINTS: usize = 60;
+
+/// A sample older than this means the sampler is no longer live.
+const LIVE_WITHIN: Duration = Duration::from_secs(5);
 
 /// Histories keyed by name (engine, drive mount, adapter), `N` series each.
 pub(crate) struct Keyed<const N: usize> {
@@ -79,6 +84,8 @@ pub struct Resources {
     sampler: Option<Sampler>,
     info: Option<Info>,
     last: Option<Sample>,
+    /// When `last` arrived.
+    last_at: Option<Instant>,
     cpu: History,
     mem: History,
     disk_read: History,
@@ -103,6 +110,7 @@ impl Resources {
             sampler: None,
             info: None,
             last: None,
+            last_at: None,
             cpu: History::new(HISTORY_POINTS),
             mem: History::new(HISTORY_POINTS),
             disk_read: History::new(HISTORY_POINTS),
@@ -127,6 +135,18 @@ impl crate::tools::Tool for Resources {
 
     fn pages(&self) -> &'static [&'static str] {
         &["Overview", "Details"]
+    }
+
+    fn status(&self) -> Vec<String> {
+        let live = self.last_at.is_some_and(|t| t.elapsed() < LIVE_WITHIN);
+        let (true, Some(sample)) = (live, &self.last) else {
+            return Vec::new();
+        };
+        let mut items = vec![format!("CPU {:.0}%", sample.cpu)];
+        if let Some(load) = self.gpu.as_ref().and_then(|g| g.load) {
+            items.push(format!("GPU {load:.0}%"));
+        }
+        items
     }
 
     fn tick(&mut self, _ctx: &egui::Context) {
@@ -177,6 +197,7 @@ impl crate::tools::Tool for Resources {
                         None => self.gpu_missing = self.gpu_missing.saturating_add(1),
                     }
                     self.last = Some(*sample);
+                    self.last_at = Some(Instant::now());
                 }
             }
         }

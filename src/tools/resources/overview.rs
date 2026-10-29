@@ -29,14 +29,17 @@ fn value_label(tab: TopTab, value: f64) -> String {
     }
 }
 
-pub(super) const MAX_WIDTH: f32 = 880.0;
-const GRAPH_HEIGHT: f32 = 196.0;
-const SMALL_CARD_HEIGHT: f32 = 150.0;
-const SMALL_GRAPH_HEIGHT: f32 = 40.0;
+/// Width kept free on the right for the scrollbar that floats over the content.
+pub(super) const SCROLL_GUTTER: f32 = 14.0;
+/// Vertical gap between the lines inside a card.
+pub(super) const INNER_GAP: f32 = 4.0;
+const GRAPH_HEIGHT: f32 = 112.0;
+const SMALL_CARD_HEIGHT: f32 = 104.0;
+const SMALL_GRAPH_HEIGHT: f32 = 32.0;
 /// Samples without GPU data in a row before the card says no GPU was found.
 pub(super) const GPU_MISSING_AFTER: u32 = 3;
-const IO_CARD_HEIGHT: f32 = 210.0;
-const IO_GRAPH_HEIGHT: f32 = 94.0;
+const IO_CARD_HEIGHT: f32 = 140.0;
+const IO_GRAPH_HEIGHT: f32 = 56.0;
 pub(super) const DISK_FLOOR: f32 = 1024.0 * 1024.0;
 pub(super) const NET_FLOOR: f32 = 128.0 * 1024.0;
 const VIOLET: Color32 = Color32::from_rgb(167, 139, 250);
@@ -91,18 +94,10 @@ pub(super) fn cores_label(physical: Option<usize>, logical: usize) -> String {
 
 impl Resources {
     pub(super) fn overview_ui(&mut self, ui: &mut egui::Ui) {
-        // Leave a gutter on the right for the scrollbar that floats over the content.
-        let width = (ui.available_width() - 14.0).min(MAX_WIDTH);
-        ui.vertical_centered(|ui| {
-            ui.allocate_ui_with_layout(
-                Vec2::new(width, 0.0),
-                Layout::top_down(Align::LEFT),
-                |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::splat(GAP);
-                    ui.label(RichText::new("Resource Monitor").size(24.0).strong());
-                    self.cards(ui, width);
-                },
-            );
+        let width = ui.available_width() - SCROLL_GUTTER;
+        ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::LEFT), |ui| {
+            ui.spacing_mut().item_spacing = Vec2::splat(GAP);
+            self.cards(ui, width);
         });
     }
 
@@ -145,6 +140,7 @@ impl Resources {
     }
 
     fn top_card(&mut self, ui: &mut egui::Ui, total: f32) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         ui.horizontal(|ui| {
             ui.label(RichText::new("Top processes").strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -179,7 +175,7 @@ impl Resources {
         let bar_w = (total - 2.0 * (CARD_PAD + 1.0) - name_w - value_w - 2.0 * gap).max(80.0);
         egui::Grid::new("top_processes")
             .num_columns(3)
-            .spacing([gap, 10.0])
+            .spacing([gap, 2.0])
             .show(ui, |ui| {
                 for p in list.iter().take(TOP_ROWS) {
                     let mut name = friendly_name(&p.name);
@@ -195,6 +191,7 @@ impl Resources {
                     ui.add(
                         egui::ProgressBar::new(fraction as f32)
                             .desired_width(bar_w)
+                            .desired_height(10.0)
                             .fill(ACCENT),
                     );
                     ui.label(RichText::new(value_label(tab, p.value)).weak());
@@ -204,6 +201,7 @@ impl Resources {
     }
 
     fn disk_card(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         header(ui, "Disk", "All drives");
         let max = peak_ceiling(
             &[self.disk_read.values(), self.disk_write.values()],
@@ -230,7 +228,7 @@ impl Resources {
                 .map_or(NONE.to_string(), |a| format!("{a:.0}%"))
         });
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 24.0;
+            ui.spacing_mut().item_spacing.x = 20.0;
             stat(ui, read.as_deref().unwrap_or(NONE), "Read");
             stat(ui, write.as_deref().unwrap_or(NONE), "Write");
             stat(ui, active.as_deref().unwrap_or(NONE), "Active");
@@ -238,6 +236,7 @@ impl Resources {
     }
 
     fn net_card(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         header(ui, "Network", "All adapters");
         let max = peak_ceiling(&[self.net_down.values(), self.net_up.values()], NET_FLOOR);
         let lines = [
@@ -257,13 +256,14 @@ impl Resources {
         let down = self.last.as_ref().map(|s| rate(s.net_down_bps));
         let up = self.last.as_ref().map(|s| rate(s.net_up_bps));
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 24.0;
+            ui.spacing_mut().item_spacing.x = 20.0;
             stat(ui, down.as_deref().unwrap_or(NONE), "Down");
             stat(ui, up.as_deref().unwrap_or(NONE), "Up");
         });
     }
 
     fn cpu_card(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         let name = self.info.as_ref().map_or("", |i| i.cpu_name.as_str());
         header(ui, "CPU", name);
         let line = Line {
@@ -281,7 +281,7 @@ impl Resources {
             .as_ref()
             .map(|i| cores_label(i.physical_cores, i.logical_cores));
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 24.0;
+            ui.spacing_mut().item_spacing.x = 20.0;
             stat(ui, usage.as_deref().unwrap_or(NONE), "Usage");
             stat(ui, speed.as_deref().unwrap_or(NONE), "Speed");
             stat(ui, cores.as_deref().unwrap_or(NONE), "Cores / threads");
@@ -290,6 +290,7 @@ impl Resources {
     }
 
     fn gpu_card(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         let name = self.gpu.as_ref().map_or("", |g| g.name.as_str());
         header(ui, "GPU", name);
         if self.gpu.is_none() && self.gpu_missing >= GPU_MISSING_AFTER {
@@ -321,7 +322,7 @@ impl Resources {
             .and_then(|g| g.temp_c)
             .map(|t| format!("{t:.0} °C"));
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 24.0;
+            ui.spacing_mut().item_spacing.x = 20.0;
             stat(ui, load.as_deref().unwrap_or(NONE), "Load");
             stat(ui, mem.as_deref().unwrap_or(NONE), "Memory");
             if let Some(t) = &temp {
@@ -331,6 +332,7 @@ impl Resources {
     }
 
     fn mem_card(&self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = INNER_GAP;
         let total = self.info.as_ref().map_or(0, |i| i.mem_total);
         let size = if total > 0 {
             size_plain(total)
@@ -348,7 +350,7 @@ impl Resources {
         let percent = self.mem.last().map(|p| format!("{p:.0}%"));
         let used = self.last.as_ref().map(|s| size_plain(s.mem_used));
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 24.0;
+            ui.spacing_mut().item_spacing.x = 20.0;
             stat(ui, percent.as_deref().unwrap_or(NONE), "In use");
             stat(ui, used.as_deref().unwrap_or(NONE), "Used");
         });

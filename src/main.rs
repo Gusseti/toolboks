@@ -18,13 +18,16 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(concat!("toolboks ", env!("CARGO_PKG_VERSION")))
-            .with_inner_size([880.0, 640.0])
-            .with_min_inner_size([640.0, 480.0]),
+            .with_inner_size([960.0, 640.0])
+            .with_min_inner_size([640.0, 420.0]),
         ..Default::default()
     };
     eframe::run_native(
         "toolboks",
         options,
-        Box::new(|_cc| Ok(Box::new(app::App::new()))),
+        Box::new(|cc| {
+            ui::apply_style(&cc.egui_ctx);
+            Ok(Box::new(app::App::new()))
+        }),
     )
 }
