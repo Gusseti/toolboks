@@ -5,7 +5,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -611,6 +611,68 @@ fn net_totals(nets: &Networks) -> (u64, u64) {
         })
 }
 
+/// Runs the process table refresh on its own thread, so a slow refresh can never hold back the
+/// CPU and memory samples. It publishes the latest top lists into `top` about every 2 s while
+/// the page is visible, and clears them after a pause. `gpu_pids` is the newest per-process GPU
+/// reading from the main worker.
+fn spawn_process_worker(
+    logical: usize,
+    epoch: Instant,
+    ping: Arc<AtomicU64>,
+    top: Arc<Mutex<TopProcesses>>,
+    gpu_pids: Arc<Mutex<Vec<(u32, f32)>>>,
+) {
+    let spawned = std::thread::Builder::new()
+        .name("resource-procs".into())
+        .spawn(move || {
+            let Ok(mut sys) = System::new() else {
+                return;
+            };
+            refresh_procs(&mut sys);
+            let mut last_proc = Instant::now();
+            let mut sample_index: u64 = 0;
+            let mut primed = true;
+            loop {
+                std::thread::sleep(TICK);
+                if Arc::strong_count(&top) == 1 {
+                    // The main worker is gone, so nobody reads the lists any more.
+                    return;
+                }
+                let now_ms = epoch.elapsed().as_millis() as u64;
+                if !is_visible(ping.load(Ordering::Relaxed), now_ms) {
+                    primed = false;
+                    continue;
+                }
+                if !primed {
+                    // First reading after a pause averages over the whole pause: reset the
+                    // baseline and drop the old lists. The next tick refreshes the table.
+                    primed = true;
+                    refresh_procs(&mut sys);
+                    last_proc = Instant::now();
+                    sample_index = 0;
+                    if let Ok(mut t) = top.lock() {
+                        *t = TopProcesses::default();
+                    }
+                    continue;
+                }
+                if refresh_procs_now(sample_index) {
+                    refresh_procs(&mut sys);
+                    let proc_secs = last_proc.elapsed().as_secs_f64();
+                    last_proc = Instant::now();
+                    let pids = gpu_pids.lock().map(|p| p.clone()).unwrap_or_default();
+                    let built = build_top(&sys, logical, proc_secs, &pids);
+                    match top.lock() {
+                        Ok(mut t) => *t = built,
+                        Err(_) => return,
+                    }
+                }
+                sample_index += 1;
+            }
+        });
+    // If the thread cannot start, the top lists just stay empty.
+    let _ = spawned;
+}
+
 impl Sampler {
     /// Starts the worker thread. It wakes the UI with `ctx.request_repaint()` after each sample.
     pub fn start(ctx: &egui::Context) -> Sampler {
@@ -628,7 +690,6 @@ impl Sampler {
                 };
                 sys.refresh_cpu_all();
                 sys.refresh_memory();
-                refresh_procs(&mut sys);
 
                 let logical = sys.cpus().len();
                 let info = Info {
@@ -646,6 +707,18 @@ impl Sampler {
                 }
                 ctx.request_repaint();
 
+                // The process table is the slowest source (it can take many seconds on a loaded
+                // machine), so it has its own thread and never delays the other samples.
+                let top = Arc::new(Mutex::new(TopProcesses::default()));
+                let gpu_pids_shared: Arc<Mutex<Vec<(u32, f32)>>> = Arc::new(Mutex::new(Vec::new()));
+                spawn_process_worker(
+                    logical,
+                    epoch,
+                    Arc::clone(&ping),
+                    Arc::clone(&top),
+                    Arc::clone(&gpu_pids_shared),
+                );
+
                 let disk_kind = DiskRefreshKind::nothing()
                     .with_kind()
                     .with_storage()
@@ -657,9 +730,6 @@ impl Sampler {
                 let mut gpu_reader = GpuReader::new();
                 let nvml = Nvml::open();
                 let mut last_tick = Instant::now();
-                let mut last_proc = Instant::now();
-                let mut top = TopProcesses::default();
-                let mut sample_index: u64 = 0;
 
                 // The thread was just primed above, so the first tick can already report.
                 let mut primed = true;
@@ -687,13 +757,8 @@ impl Sampler {
                             c.collect();
                         }
                         // Resets the GPU counter baseline; the reading itself is dropped.
-                        refresh_procs(&mut sys);
                         let _ = gpu_reader.read();
                         last_tick = Instant::now();
-                        last_proc = last_tick;
-                        top = TopProcesses::default();
-                        // The next sample refreshes the table (index 0).
-                        sample_index = 0;
                         continue;
                     }
                     sys.refresh_memory();
@@ -723,13 +788,9 @@ impl Sampler {
                         .as_mut()
                         .map(|b| std::mem::take(&mut b.per_process))
                         .unwrap_or_default();
-                    if refresh_procs_now(sample_index) {
-                        refresh_procs(&mut sys);
-                        let proc_secs = last_proc.elapsed().as_secs_f64();
-                        last_proc = Instant::now();
-                        top = build_top(&sys, logical, proc_secs, &gpu_pids);
+                    if let Ok(mut shared) = gpu_pids_shared.lock() {
+                        *shared = gpu_pids;
                     }
-                    sample_index += 1;
                     let sample = Sample {
                         cpu: sys.global_cpu_usage(),
                         cores: sys.cpus().iter().map(|c| c.usage()).collect(),
@@ -752,7 +813,7 @@ impl Sampler {
                             };
                             merge_gpu(basic, nv)
                         }),
-                        top: top.clone(),
+                        top: top.lock().map(|t| t.clone()).unwrap_or_default(),
                         drives,
                         adapters,
                         counts: read_counts(),
@@ -1073,11 +1134,20 @@ mod tests {
     #[test]
     fn real_sampler_smoke() {
         let sampler = Sampler::start(&egui::Context::default());
-        for _ in 0..10 {
+        // Wait for the startup message and a few samples, up to 30 s: on a loaded machine
+        // (many parallel tests, a game running) the worker can start slowly.
+        let started = Instant::now();
+        let mut msgs: Vec<Msg> = Vec::new();
+        while started.elapsed() < Duration::from_secs(30) {
             sampler.ping();
-            std::thread::sleep(Duration::from_millis(500));
+            std::thread::sleep(Duration::from_millis(250));
+            msgs.extend(sampler.drain());
+            let has_info = msgs.iter().any(|m| matches!(m, Msg::Info(_)));
+            let samples = msgs.iter().filter(|m| matches!(m, Msg::Sample(_))).count();
+            if has_info && samples >= 3 {
+                break;
+            }
         }
-        let msgs = sampler.drain();
 
         let infos: Vec<&Info> = msgs
             .iter()
