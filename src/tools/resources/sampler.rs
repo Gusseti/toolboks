@@ -54,6 +54,8 @@ pub struct Sample {
     pub net_up_bps: f64,
     /// The main GPU, `None` if the PC has no usable GPU.
     pub gpu: Option<GpuSample>,
+    /// The biggest users of CPU, memory, GPU and disk.
+    pub top: TopProcesses,
 }
 
 /// The main GPU, merged from the generic readings and, on NVIDIA, the driver library.
@@ -71,6 +73,28 @@ pub struct GpuSample {
     pub power_w: Option<f32>,
     pub clock_mhz: Option<u32>,
     pub mem_clock_mhz: Option<u32>,
+}
+
+/// One row of a top-processes list: processes with the same name (case-insensitive) are merged.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProcUse {
+    /// The exe name as first seen, e.g. "chrome.exe".
+    pub name: String,
+    /// How many processes were merged into this row.
+    pub count: usize,
+    /// CPU and GPU: percent 0 to 100 of the whole machine; memory: working set in bytes;
+    /// disk: read plus write bytes per second.
+    pub value: f64,
+}
+
+/// The biggest users per resource, each list sorted largest first, at most 8 rows, zero values
+/// left out.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TopProcesses {
+    pub cpu: Vec<ProcUse>,
+    pub memory: Vec<ProcUse>,
+    pub gpu: Vec<ProcUse>,
+    pub disk: Vec<ProcUse>,
 }
 
 pub enum Msg {
@@ -341,6 +365,8 @@ impl Sampler {
                             };
                             merge_gpu(basic, nv)
                         }),
+                        // Filled in by the phase 4 work.
+                        top: TopProcesses::default(),
                     };
                     if tx.send(Msg::Sample(sample)).is_err() {
                         return;
@@ -442,6 +468,7 @@ mod tests {
             mem_used: Some(1),
             mem_total: Some(2),
             engines: vec![("3D".into(), 40.0)],
+            per_process: Vec::new(),
         };
         assert!(is_nvidia(&basic));
         let plain = merge_gpu(basic.clone(), None);

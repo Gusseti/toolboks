@@ -22,6 +22,9 @@ pub struct GpuBasic {
     pub mem_total: Option<u64>,
     /// Load per engine type, e.g. ("3D", 21.0), ("Copy", 0.0), ("Video Decode", 3.0), 0 to 100.
     pub engines: Vec<(String, f32)>,
+    /// GPU load per process id on the main adapter, 0 to 100 (busiest engine of that process),
+    /// zeros dropped. Filled by the phase 4 work.
+    pub per_process: Vec<(u32, f32)>,
 }
 
 /// Splits a counter instance name such as
@@ -272,6 +275,7 @@ impl GpuReader {
             mem_used: main.used_memory(),
             mem_total: main.total_memory(),
             engines: Vec::new(),
+            per_process: Vec::new(),
         };
 
         let mut main_luid: Option<String> = None;

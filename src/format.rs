@@ -36,6 +36,19 @@ pub fn rate(bytes_per_sec: f64) -> String {
     }
 }
 
+/// A process name for people: "chrome.exe" becomes "Chrome".
+pub fn friendly_name(exe: &str) -> String {
+    let stem = match exe.get(exe.len().saturating_sub(4)..) {
+        Some(tail) if exe.len() > 4 && tail.eq_ignore_ascii_case(".exe") => &exe[..exe.len() - 4],
+        _ => exe,
+    };
+    let mut chars = stem.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 /// A clock speed in MHz as "3.6 GHz" (or "800 MHz" below 1 GHz).
 pub fn clock(mhz: u64) -> String {
     if mhz >= 1000 {
@@ -84,6 +97,16 @@ mod tests {
         assert_eq!(rate(8.4 * 1024.0 * 1024.0), "8.4 MB/s");
         assert_eq!(rate(12.0 * 1024.0 * 1024.0), "12 MB/s");
         assert_eq!(rate(1.5 * 1024.0 * 1024.0 * 1024.0), "1.5 GB/s");
+    }
+
+    #[test]
+    fn makes_process_names_friendly() {
+        assert_eq!(friendly_name("chrome.exe"), "Chrome");
+        assert_eq!(friendly_name("Code.EXE"), "Code");
+        assert_eq!(friendly_name("System"), "System");
+        assert_eq!(friendly_name(".exe"), ".exe");
+        assert_eq!(friendly_name(""), "");
+        assert_eq!(friendly_name("\u{e9}diteur.exe"), "\u{c9}diteur");
     }
 
     #[test]

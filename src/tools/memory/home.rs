@@ -14,11 +14,11 @@ use eframe::egui::{
 };
 
 use super::memlist::{self, Command};
-use super::stats::{friendly_name, group_by_name, ProcInfo};
+use super::stats::{group_by_name, ProcInfo};
 use super::trim::{skip_reason, trim_process};
 use super::{Memory, AUTO_CHECK};
 use crate::elevation;
-use crate::format::size_plain;
+use crate::format::{friendly_name, size_plain};
 use crate::ui::{card, toggle_switch, ACCENT, AMBER, CARD_PAD, GAP, GREEN, RED};
 
 const MB: u64 = 1024 * 1024;
