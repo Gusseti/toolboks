@@ -4,7 +4,9 @@ use eframe::egui;
 
 mod app;
 mod elevation;
+mod format;
 mod tools;
+mod ui;
 mod update;
 mod win;
 mod winhttp;

@@ -144,18 +144,6 @@ pub fn sort_and_filter<'a>(
     rows
 }
 
-/// Sizes for non-technical screens: "850 MB", "1.2 GB".
-pub fn format_size_plain(bytes: u64) -> String {
-    const MB: f64 = 1024.0 * 1024.0;
-    const GB: f64 = MB * 1024.0;
-    let b = bytes as f64;
-    if b >= GB {
-        format!("{:.1} GB", b / GB)
-    } else {
-        format!("{:.0} MB", b / MB)
-    }
-}
-
 /// A process name for people: "chrome.exe" becomes "Chrome".
 pub fn friendly_name(exe: &str) -> String {
     let stem = match exe.get(exe.len().saturating_sub(4)..) {
@@ -261,13 +249,6 @@ mod tests {
         assert_eq!(format_bytes(0), "0.0 MiB");
         assert_eq!(format_bytes(5 * 1024 * 1024), "5.0 MiB");
         assert_eq!(format_bytes(3 * 1024 * 1024 * 1024), "3.00 GiB");
-    }
-
-    #[test]
-    fn formats_plain_sizes() {
-        assert_eq!(format_size_plain(0), "0 MB");
-        assert_eq!(format_size_plain(850 * 1024 * 1024), "850 MB");
-        assert_eq!(format_size_plain(1536 * 1024 * 1024), "1.5 GB");
     }
 
     #[test]

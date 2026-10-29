@@ -1,6 +1,7 @@
 use eframe::egui;
 
 mod memory;
+mod resources;
 
 /// A utility shown in the sidebar. Add a module, implement this, and register it in [`all`].
 pub trait Tool {

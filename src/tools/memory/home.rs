@@ -14,10 +14,12 @@ use eframe::egui::{
 };
 
 use super::memlist::{self, Command};
-use super::stats::{format_size_plain, friendly_name, group_by_name, ProcInfo};
+use super::stats::{friendly_name, group_by_name, ProcInfo};
 use super::trim::{skip_reason, trim_process};
 use super::{Memory, AUTO_CHECK};
 use crate::elevation;
+use crate::format::size_plain;
+use crate::ui::{card, toggle_switch, ACCENT, AMBER, CARD_PAD, GAP, GREEN, RED};
 
 const MB: u64 = 1024 * 1024;
 pub const DEFAULT_MIN_APP_MB: u32 = 32;
@@ -25,19 +27,12 @@ pub const DEFAULT_MIN_APP_MB: u32 = 32;
 const NOTABLE_RELEASE: u64 = 50 * MB;
 const TOP_APPS: usize = 4;
 /// The Home grid: spacing, card padding and the heights of the top row.
-const GAP: f32 = 12.0;
-const CARD_PAD: f32 = 16.0;
 const HERO_HEIGHT: f32 = 364.0;
 const STAT_HEIGHT: f32 = 112.0;
 const MAX_WIDTH: f32 = 880.0;
-const ACCENT: Color32 = Color32::from_rgb(38, 110, 214);
 /// After an automatic run, wait at least this long before the next one.
 const AUTO_OPT_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 pub const DEFAULT_AUTO_PERCENT: u32 = 85;
-
-const GREEN: Color32 = Color32::from_rgb(52, 168, 107);
-const AMBER: Color32 = Color32::from_rgb(232, 163, 23);
-const RED: Color32 = Color32::from_rgb(214, 69, 65);
 
 /// What an optimize run did.
 pub struct Report {
@@ -160,7 +155,7 @@ fn summary(outcome: &Outcome) -> (String, String) {
         (
             format!(
                 "Released about {} from {} {}",
-                format_size_plain(r.released),
+                size_plain(r.released),
                 r.apps,
                 if r.apps == 1 { "app" } else { "apps" }
             ),
@@ -413,12 +408,8 @@ impl Memory {
     fn stat(&self, ui: &mut egui::Ui) {
         let totals = self.sampler.as_ref().map(|s| s.totals).unwrap_or_default();
         ui.label(RichText::new("In use").weak());
-        ui.label(
-            RichText::new(format_size_plain(totals.used))
-                .size(28.0)
-                .strong(),
-        );
-        ui.label(RichText::new(format!("of {}", format_size_plain(totals.total))).weak());
+        ui.label(RichText::new(size_plain(totals.used)).size(28.0).strong());
+        ui.label(RichText::new(format!("of {}", size_plain(totals.total))).weak());
     }
 
     /// The automatic switch and the slider for when it starts.
@@ -458,8 +449,8 @@ impl Memory {
             ui.label(
                 RichText::new(format!(
                     "Memory in use: {} \u{2192} {}",
-                    format_size_plain(outcome.used_before),
-                    format_size_plain(outcome.used_after)
+                    size_plain(outcome.used_before),
+                    size_plain(outcome.used_after)
                 ))
                 .weak(),
             );
@@ -495,7 +486,7 @@ impl Memory {
                             .desired_width(bar_w)
                             .fill(ACCENT),
                     );
-                    ui.label(RichText::new(format_size_plain(app.working_set)).weak());
+                    ui.label(RichText::new(size_plain(app.working_set)).weak());
                     ui.end_row();
                 }
             });
@@ -532,53 +523,6 @@ impl Memory {
             ui.weak("More controls are on the Advanced page.");
         });
     }
-}
-
-/// A rounded card of exactly `width` (including its border), at least `min_height` tall.
-fn card(ui: &mut egui::Ui, width: f32, min_height: f32, add: impl FnOnce(&mut egui::Ui)) {
-    let visuals = ui.visuals();
-    let fill = visuals
-        .panel_fill
-        .lerp_to_gamma(visuals.strong_text_color(), 0.05);
-    let stroke = visuals.widgets.noninteractive.bg_stroke;
-    let inset = 2.0 * (CARD_PAD + stroke.width);
-
-    egui::Frame::new()
-        .fill(fill)
-        .stroke(stroke)
-        .corner_radius(12.0)
-        .inner_margin(CARD_PAD)
-        .show(ui, |ui| {
-            ui.set_width(width - inset);
-            ui.set_min_height((min_height - inset).max(0.0));
-            // Tighter than the gap between cards, so the cards' heights are predictable.
-            ui.spacing_mut().item_spacing.y = 6.0;
-            add(ui);
-        });
-}
-
-/// An on/off switch.
-fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
-    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(38.0, 22.0), Sense::click());
-    if response.clicked() {
-        *on = !*on;
-        response.mark_changed();
-    }
-    let t = ui.ctx().animate_bool_responsive(response.id, *on);
-    if ui.is_rect_visible(rect) {
-        let radius = rect.height() / 2.0;
-        let fill = ui
-            .visuals()
-            .widgets
-            .inactive
-            .bg_fill
-            .lerp_to_gamma(ACCENT, t);
-        ui.painter().rect_filled(rect, radius, fill);
-        let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
-        ui.painter()
-            .circle_filled(egui::pos2(x, rect.center().y), radius - 3.0, Color32::WHITE);
-    }
-    response
 }
 
 #[cfg(test)]
