@@ -44,3 +44,14 @@ Top tab "Debloater"; page strip: **Privacy and ads**, **Apps** (later **Startup*
 ## Rules and risks
 
 Single exe, nothing written, in-memory state. No "apply everything" button; Careful items are never pre-ticked. Every item has a plain "what changes / what could break" text. Top risks: removing a protected app (denylist and dependency checks, curated list only), undo of app removal not reliable, settings silently ignored or reverted (always re-read), restore point silently skipped (show its real status), antivirus flagging an unsigned exe that changes system settings, WinRT/COM threading mistakes. Checks by fmt, clippy -D warnings, unit tests on the fakes, read-only smoke tests on the real system, a release build; applying real changes is tested only on a scratch HKCU key in test code or with the owner's explicit say-so.
+
+## Decisions after the research (docs/RESEARCH-debloat.md)
+
+| Topic | Decision |
+|---|---|
+| Phase 4 first | Startup entries (Run keys + StartupApproved), then scheduled tasks (exact-path allow-list), then services last |
+| Careful items | Shown collapsed under "Advanced", never pre-ticked, one-line consequence, never in presets |
+| Services | Safe tier: Disabled; Careful tier: Manual only; never Disabled with active dependents |
+| Signing | Investigate SignPath Foundation first (open source), OV certificate as fallback |
+| Undo | In memory only plus "Copy undo steps"; no backup file (research suggestion rejected); re-read real state on every launch |
+| Still open | Compatibility Appraiser task, AI/Recall switches, presets, Home-edition badges, domain/MDM read-only mode, when to elevate (see report section 13) |
