@@ -16,6 +16,7 @@ pub mod catalog;
 pub mod model;
 mod page;
 pub mod plan;
+pub mod restore;
 pub mod startup;
 pub mod tasks;
 
@@ -55,10 +56,27 @@ struct StartupState {
     message: Option<String>,
 }
 
+/// The "Create a restore point first" switch, shared by Privacy and ads and Tasks. Memory only.
+#[derive(Default)]
+struct RestoreState {
+    /// The switch (off by default each session).
+    on: bool,
+    /// Tasks page: a restore point was already tried this session, so do not repeat it.
+    tasks_done: bool,
+    /// Privacy and ads: creating before an apply, with the ids to apply afterwards.
+    creating: Option<Receiver<(restore::RestoreStatus, Vec<&'static str>)>>,
+    /// Last result line.
+    status: Option<String>,
+}
+
 /// Result of a short worker run on the Tasks page.
 enum TaskJob {
-    /// One task was switched: (title, outcome).
-    Set(String, Result<tasks::UndoStep, String>),
+    /// One task was switched: (title, outcome, restore point result if one was made first).
+    Set(
+        String,
+        Result<tasks::UndoStep, String>,
+        Option<restore::RestoreStatus>,
+    ),
     /// Undo ran; the steps that failed come back with the counts.
     Undo {
         remaining: Vec<tasks::UndoStep>,
@@ -103,6 +121,7 @@ pub struct Debloater {
     apps: AppsState,
     startup: StartupState,
     tasks: TasksState,
+    restore: RestoreState,
 }
 
 impl Debloater {
@@ -120,6 +139,7 @@ impl Debloater {
             apps: AppsState::default(),
             startup: StartupState::default(),
             tasks: TasksState::default(),
+            restore: RestoreState::default(),
         }
     }
 }

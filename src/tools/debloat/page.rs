@@ -6,6 +6,7 @@ use eframe::egui::{self, Color32, RichText, Sense, Stroke, Vec2};
 
 use super::apps::{self, AppRow, AppRun};
 use super::model::{Applicable, Edition, Group, Hive, Item, RegValue, Risk, State, Status};
+use super::restore::{self, RestoreStatus};
 use super::startup::{self, Class, Entry, Source};
 use super::tasks::{self, TaskDef, TaskState};
 use super::{backend, catalog, plan, Debloater, TaskJob};
@@ -82,7 +83,84 @@ fn risk_text(risk: Risk) -> &'static str {
     }
 }
 
+const RESTORE_NOTE: &str = "A restore point saves Windows settings so you can roll back in \
+                            Windows. It does not bring back removed apps.";
+
+/// A restore point is made only when the switch is on, we are admin and (Tasks page) none was
+/// made yet this session.
+fn should_create(switch: bool, elevated: bool, already_created: bool) -> bool {
+    switch && elevated && !already_created
+}
+
+/// Short description handed to System Restore.
+fn restore_description(text: &str) -> String {
+    format!("toolboks: {text}")
+}
+
 impl Debloater {
+    /// The "Create a restore point first" switch with its notes.
+    fn restore_switch(&mut self, ui: &mut egui::Ui, busy: bool) {
+        let elevated = self.env.elevated;
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(elevated && !busy, |ui| {
+                ui::toggle_switch(ui, &mut self.restore.on);
+            });
+            ui.label("Create a restore point first");
+        });
+        if !elevated {
+            ui.label(RichText::new("Needs admin").small().weak());
+        }
+        ui.label(RichText::new(RESTORE_NOTE).small().weak());
+    }
+
+    /// Starts an apply: with the switch on, a restore point is made on a worker first.
+    fn start_apply(&mut self, ctx: &egui::Context, ids: &[&'static str]) {
+        self.confirming = false;
+        self.restore.status = None;
+        if self.restore.creating.is_some() {
+            return;
+        }
+        if !should_create(self.restore.on, self.env.elevated, false) {
+            self.apply_selected(ids);
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        let ids = ids.to_vec();
+        let elevated = self.env.elevated;
+        std::thread::spawn(move || {
+            let status = restore::create(
+                &mut restore::WinRestore,
+                &restore_description("privacy and ads changes"),
+                elevated,
+            );
+            let _ = tx.send((status, ids));
+            ctx.request_repaint();
+        });
+        self.restore.creating = Some(rx);
+    }
+
+    fn restore_poll(&mut self) {
+        let Some(rx) = &self.restore.creating else {
+            return;
+        };
+        let (status, ids) = match rx.try_recv() {
+            Ok(done) => done,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => (
+                RestoreStatus::Failed("the restore point stopped unexpectedly".into()),
+                Vec::new(),
+            ),
+        };
+        self.restore.creating = None;
+        self.restore.status = Some(restore::status_text(&status));
+        if restore::is_blocking(&status) {
+            self.message = Some("Nothing was changed.".to_string());
+        } else if !ids.is_empty() {
+            self.apply_selected(&ids);
+        }
+    }
+
     fn refresh(&mut self) {
         self.statuses = plan::statuses(catalog::items(), &backend::WinRegistry, self.env);
         self.loaded = true;
@@ -103,6 +181,10 @@ impl Debloater {
     pub(super) fn page_ui(&mut self, ui: &mut egui::Ui, page: usize) {
         if !self.loaded {
             self.refresh();
+        }
+
+        if page == 0 {
+            self.restore_poll();
         }
 
         if page == 1 {
@@ -183,6 +265,14 @@ impl Debloater {
         });
         if let Some(message) = &self.message {
             ui.label(RichText::new(message).small().weak());
+        }
+        if self.restore.creating.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Creating restore point...");
+            });
+        } else if let Some(line) = &self.restore.status {
+            ui.label(RichText::new(line).small().weak());
         }
         ui.add_space(GAP - 2.0);
 
@@ -294,7 +384,7 @@ impl Debloater {
         ui.spacing_mut().item_spacing.y = 4.0;
         ui.label(RichText::new("Review").strong());
 
-        let ids: Vec<&str> = self.selected.iter().copied().collect();
+        let ids: Vec<&'static str> = self.selected.iter().copied().collect();
         let review = plan::review(catalog::items(), &self.statuses, &ids);
         if review.changes == 0 {
             ui.label("No changes");
@@ -330,14 +420,22 @@ impl Debloater {
             self.confirming = false;
         }
         let apply_label = format!("Apply {}", plural(applicable, "change", "changes"));
-        if self.confirming {
+        let creating = self.restore.creating.is_some();
+        self.restore_switch(ui, creating);
+        ui.add_space(2.0);
+        if creating {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Creating restore point...");
+            });
+        } else if self.confirming {
             ui.label(format!(
                 "Apply {}? You can undo them until you close toolboks.",
                 plural(applicable, "change", "changes")
             ));
             ui.horizontal(|ui| {
                 if ui.button("Apply").clicked() {
-                    self.apply_selected(&ids);
+                    self.start_apply(&ctx, &ids);
                 }
                 if ui.button("Cancel").clicked() {
                     self.confirming = false;
@@ -1287,12 +1385,19 @@ impl Debloater {
         self.tasks.working = None;
         self.tasks.started = false; // reload right away
         self.tasks.message = Some(match job {
-            Some(TaskJob::Set(title, Ok(step))) => {
-                let now = if step.was_enabled { "off" } else { "on" };
-                self.tasks.steps.push(step);
-                format!("{title} is now {now}.")
+            Some(TaskJob::Set(title, result, point)) => {
+                if let Some(status) = &point {
+                    self.restore.status = Some(restore::status_text(status));
+                }
+                match result {
+                    Ok(step) => {
+                        let now = if step.was_enabled { "off" } else { "on" };
+                        self.tasks.steps.push(step);
+                        format!("{title} is now {now}.")
+                    }
+                    Err(e) => format!("Could not change {title}: {e}"),
+                }
             }
-            Some(TaskJob::Set(title, Err(e))) => format!("Could not change {title}: {e}"),
             Some(TaskJob::Undo {
                 remaining,
                 done,
@@ -1310,11 +1415,27 @@ impl Debloater {
         if self.tasks.working.is_some() {
             return;
         }
+        let make_point = should_create(self.restore.on, self.env.elevated, self.restore.tasks_done);
+        if make_point {
+            self.restore.tasks_done = true;
+        }
+        self.restore.status = None;
+        let elevated = self.env.elevated;
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = tasks::set_enabled(&mut tasks::WinTasks, &def, enable);
-            let _ = tx.send(TaskJob::Set(def.title.to_string(), result));
+            let point = make_point.then(|| {
+                restore::create(
+                    &mut restore::WinRestore,
+                    &restore_description(&format!("switch task {}", def.title)),
+                    elevated,
+                )
+            });
+            let result = match &point {
+                Some(status) if restore::is_blocking(status) => Err(restore::status_text(status)),
+                _ => tasks::set_enabled(&mut tasks::WinTasks, &def, enable),
+            };
+            let _ = tx.send(TaskJob::Set(def.title.to_string(), result, point));
             ctx.request_repaint();
         });
         self.tasks.working = Some(rx);
@@ -1365,6 +1486,9 @@ impl Debloater {
         });
         if let Some(message) = &self.tasks.message {
             ui.label(RichText::new(message).small().weak());
+        }
+        if let Some(line) = &self.restore.status {
+            ui.label(RichText::new(line).small().weak());
         }
         ui.add_space(GAP - 2.0);
 
@@ -1548,6 +1672,17 @@ impl Debloater {
         }
 
         ui.add_space(GAP);
+        let busy = self.tasks_busy();
+        self.restore_switch(ui, busy);
+        if self.restore.on && self.env.elevated && self.restore.tasks_done {
+            ui.label(
+                RichText::new("A restore point was already made this session.")
+                    .small()
+                    .weak(),
+            );
+        }
+
+        ui.add_space(GAP);
         ui.label(RichText::new("Undo").strong());
         let working = self.tasks.working.is_some();
         if working {
@@ -1590,6 +1725,19 @@ mod tests {
             could_break: "It may stop X.",
             risk,
         }
+    }
+
+    #[test]
+    fn should_create_needs_switch_admin_and_no_earlier_point() {
+        assert!(should_create(true, true, false));
+        assert!(!should_create(false, true, false));
+        assert!(!should_create(true, false, false));
+        assert!(!should_create(true, true, true));
+    }
+
+    #[test]
+    fn restore_description_has_prefix() {
+        assert_eq!(restore_description("x"), "toolboks: x");
     }
 
     #[test]

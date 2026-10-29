@@ -4,6 +4,12 @@
 use super::model::{Edition, Group, Hive, Item, RegSetting, Risk};
 
 const CDM: &str = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
+const DSH: &str = r"SOFTWARE\Policies\Microsoft\Dsh";
+const PAINT: &str = r"Software\Microsoft\Windows\CurrentVersion\Policies\Paint";
+const WINDOWS_AI: &str = r"SOFTWARE\Policies\Microsoft\Windows\WindowsAI";
+const DATA_COLLECTION: &str = r"SOFTWARE\Policies\Microsoft\Windows\DataCollection";
+const SYSTEM_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\System";
+const EDGE: &str = r"SOFTWARE\Policies\Microsoft\Edge";
 const ADVANCED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
 
 const fn user(path: &'static str, name: &'static str, off_value: u32) -> RegSetting {
@@ -217,6 +223,179 @@ static ITEMS: &[Item] = &[
             ),
         ],
     },
+    Item {
+        id: "widgets-policy",
+        group: Group::PrivacyAds,
+        title: "Widgets (news and weather board)",
+        what_changes: "Turns the Widgets feature off for every user of this PC, including the taskbar news and weather.",
+        could_break: "The Widgets panel is gone until you turn this back on.",
+        risk: Risk::Safe,
+        min_edition: Edition::Pro,
+        settings: &[machine(DSH, "AllowNewsAndInterests", 0)],
+    },
+    Item {
+        id: "paint-ai",
+        group: Group::PrivacyAds,
+        title: "AI features in Paint",
+        what_changes: "Turns off Cocreator, Generative fill and Image creator in Paint.",
+        could_break: "Nothing noticeable. Paint works as before without the AI tools.",
+        risk: Risk::Safe,
+        min_edition: Edition::Pro,
+        settings: &[
+            machine(PAINT, "DisableCocreator", 1),
+            machine(PAINT, "DisableGenerativeFill", 1),
+            machine(PAINT, "DisableImageCreator", 1),
+        ],
+    },
+    Item {
+        id: "recall-remove",
+        group: Group::PrivacyAds,
+        title: "Remove Recall",
+        what_changes: "Removes Recall (the feature that takes snapshots of your screen) and deletes the snapshots it already saved. Only matters on Copilot+ PCs.",
+        could_break: "Recall is gone and its saved snapshots are deleted for good. toolboks cannot bring them back, even if you undo this. A restart is needed.",
+        risk: Risk::Careful,
+        min_edition: Edition::Pro,
+        settings: &[machine(WINDOWS_AI, "AllowRecallEnablement", 0)],
+    },
+    Item {
+        id: "recall-snapshots",
+        group: Group::PrivacyAds,
+        title: "Stop Recall saving snapshots",
+        what_changes: "Stops Windows from saving new screen snapshots for Recall. Recall itself stays installed. Only matters on Copilot+ PCs.",
+        could_break: "Snapshots Recall already saved are deleted and toolboks cannot bring them back. No new ones are made.",
+        risk: Risk::Careful,
+        min_edition: Edition::Pro,
+        settings: &[machine(WINDOWS_AI, "DisableAIDataAnalysis", 1)],
+    },
+    Item {
+        id: "click-to-do",
+        group: Group::PrivacyAds,
+        title: "Click to Do",
+        what_changes: "Turns off Click to Do, the AI actions that appear on text and images on your screen.",
+        could_break: "Click to Do shortcuts stop working. Microsoft lists this setting only for Windows Insider builds, so it may do nothing on regular Windows 11.",
+        risk: Risk::Careful,
+        min_edition: Edition::Pro,
+        // verify on build 26300
+        settings: &[machine(WINDOWS_AI, "DisableClickToDo", 1)],
+    },
+    Item {
+        id: "diagnostic-data-minimum",
+        group: Group::PrivacyAds,
+        title: "Send only required diagnostic data",
+        what_changes: "Sets Windows diagnostic data to the lowest level allowed on Home and Pro (Required only), for every user of this PC.",
+        could_break: "Nothing noticeable. Optional diagnostic settings in Windows are greyed out.",
+        risk: Risk::Safe,
+        min_edition: Edition::Pro,
+        settings: &[machine(DATA_COLLECTION, "AllowTelemetry", 1)],
+    },
+    Item {
+        id: "feedback-notifications",
+        group: Group::PrivacyAds,
+        title: "Feedback pop-ups",
+        what_changes: "Stops Windows from asking you for feedback.",
+        could_break: "Nothing noticeable.",
+        risk: Risk::Safe,
+        min_edition: Edition::Pro,
+        settings: &[machine(DATA_COLLECTION, "DoNotShowFeedbackNotifications", 1)],
+    },
+    Item {
+        id: "diagnostic-logs-limit",
+        group: Group::PrivacyAds,
+        title: "Limit diagnostic logs and crash dumps",
+        what_changes: "Limits how much log and crash data Windows collects for Microsoft.",
+        could_break: "Nothing noticeable. Microsoft has less detail if you ask them for help.",
+        risk: Risk::Safe,
+        min_edition: Edition::Pro,
+        settings: &[
+            machine(DATA_COLLECTION, "LimitDiagnosticLogCollection", 1),
+            machine(DATA_COLLECTION, "LimitDumpCollection", 1),
+        ],
+    },
+    Item {
+        id: "onesettings-downloads",
+        group: Group::PrivacyAds,
+        title: "Settings pushed by Microsoft",
+        what_changes: "Stops Windows from downloading configuration changes that Microsoft sends to your PC in the background.",
+        could_break: "Microsoft can no longer adjust some Windows features remotely. The exact effect on staged updates is not confirmed.",
+        risk: Risk::Careful,
+        min_edition: Edition::Pro,
+        settings: &[machine(DATA_COLLECTION, "DisableOneSettingsDownloads", 1)],
+    },
+    Item {
+        id: "advertising-id-policy",
+        group: Group::PrivacyAds,
+        title: "Advertising ID for every user",
+        what_changes: "Stops apps from using an ad ID for every user of this PC, and stops users from turning it back on.",
+        could_break: "Nothing noticeable. You may see less relevant ads in some apps.",
+        risk: Risk::Safe,
+        min_edition: Edition::Pro,
+        settings: &[machine(
+            r"SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo",
+            "DisabledByGroupPolicy",
+            1,
+        )],
+    },
+    Item {
+        id: "clipboard-history",
+        group: Group::PrivacyAds,
+        title: "Clipboard history",
+        what_changes: "Turns off the clipboard history list (Win+V) for every user of this PC.",
+        could_break: "Win+V no longer shows things you copied earlier. Only the latest copy is kept.",
+        risk: Risk::Careful,
+        min_edition: Edition::Pro,
+        settings: &[machine(SYSTEM_POLICY, "AllowClipboardHistory", 0)],
+    },
+    Item {
+        id: "clipboard-cloud-sync",
+        group: Group::PrivacyAds,
+        title: "Clipboard sync between devices",
+        what_changes: "Stops your clipboard from being shared with your other Windows devices.",
+        could_break: "Nothing noticeable unless you copy on one device and paste on another.",
+        risk: Risk::Safe,
+        min_edition: Edition::Pro,
+        settings: &[machine(SYSTEM_POLICY, "AllowCrossDeviceClipboard", 0)],
+    },
+    Item {
+        id: "edge-shopping-sidebar",
+        group: Group::PrivacyAds,
+        title: "Edge shopping, rewards and sidebar",
+        what_changes: "Hides the Edge sidebar and stops Edge from showing shopping helpers and Microsoft Rewards prompts.",
+        could_break: "Nothing noticeable. Edge will say it is managed by your organization.",
+        risk: Risk::Safe,
+        min_edition: Edition::Home,
+        settings: &[
+            machine(EDGE, "HubsSidebarEnabled", 0),
+            machine(EDGE, "EdgeShoppingAssistantEnabled", 0),
+            machine(EDGE, "ShowMicrosoftRewards", 0),
+        ],
+    },
+    Item {
+        id: "edge-background",
+        group: Group::PrivacyAds,
+        title: "Edge background running",
+        what_changes: "Stops Edge from starting early and from staying active in the background after you close it.",
+        could_break: "The first time you open Edge after a restart it opens a little slower.",
+        risk: Risk::Careful,
+        min_edition: Edition::Home,
+        settings: &[
+            machine(EDGE, "StartupBoostEnabled", 0),
+            machine(EDGE, "BackgroundModeEnabled", 0),
+        ],
+    },
+    Item {
+        id: "edge-recommendations",
+        group: Group::PrivacyAds,
+        title: "Edge recommendations and nags",
+        what_changes: "Hides recommended content on the Edge new tab page, stops personalised usage reports and stops Edge asking to be your default browser.",
+        could_break: "Nothing noticeable. Edge will say it is managed by your organization.",
+        risk: Risk::Safe,
+        min_edition: Edition::Home,
+        settings: &[
+            machine(EDGE, "ShowRecommendationsEnabled", 0),
+            machine(EDGE, "PersonalizationReportingEnabled", 0),
+            machine(EDGE, "DefaultBrowserSettingEnabled", 0),
+        ],
+    },
 ];
 
 /// All known items. Phase 1 only has the privacy and ads items (`Group::PrivacyAds`).
@@ -264,18 +443,47 @@ mod tests {
     }
 
     #[test]
-    fn machine_settings_mean_careful() {
+    fn machine_settings_need_pro_and_some_are_careful() {
         for item in items() {
             if item.needs_admin() {
-                assert_eq!(item.risk, Risk::Careful, "{}", item.id);
+                // Edge reads its own policy keys on every edition; the Windows ones need Pro.
+                assert!(
+                    item.min_edition >= Edition::Pro || item.id.starts_with("edge-"),
+                    "{}",
+                    item.id
+                );
             }
         }
         assert!(items().iter().any(|i| i.risk == Risk::Careful));
     }
 
     #[test]
+    fn off_values_are_small_dwords() {
+        for item in items() {
+            for s in item.settings {
+                assert!(s.off_value <= 3, "{} {}", item.id, s.name);
+            }
+        }
+    }
+
+    #[test]
+    fn no_duplicate_settings_across_items() {
+        let mut seen = HashSet::new();
+        for item in items() {
+            for s in item.settings {
+                let key = (
+                    s.hive == Hive::LocalMachine,
+                    s.path.to_lowercase(),
+                    s.name.to_lowercase(),
+                );
+                assert!(seen.insert(key), "{} repeats {}", item.id, s.name);
+            }
+        }
+    }
+
+    #[test]
     fn all_items_are_privacy_and_ads() {
         assert!(items().iter().all(|i| i.group == Group::PrivacyAds));
-        assert!(items().len() >= 12);
+        assert!(items().len() >= 26);
     }
 }
