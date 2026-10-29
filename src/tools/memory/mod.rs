@@ -1,14 +1,16 @@
 mod admin;
 mod advanced;
 mod auto;
+mod commit;
 mod groups;
 mod home;
 mod memlist;
+mod report;
 mod stats;
 mod trim;
 mod workbench;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -73,6 +75,12 @@ pub struct Memory {
     last_opt_check: Instant,
     /// "Where your memory goes" on Home; rebuilt with every refresh. Not stored anywhere.
     breakdown: groups::Breakdown,
+    /// Commit charge on Home; refreshed with the sampler. `None` if the query fails.
+    commit: Option<commit::Commit>,
+    /// The last 20 before/after reports, newest last. In memory only.
+    reports: VecDeque<report::RunReport>,
+    /// The "used memory is not a problem" hint was dismissed (this session only).
+    hint_dismissed: bool,
 }
 
 impl Memory {
@@ -111,6 +119,9 @@ impl Memory {
             last_auto_opt: None,
             last_opt_check: Instant::now(),
             breakdown,
+            commit: commit::query(),
+            reports: VecDeque::new(),
+            hint_dismissed: false,
         }
     }
 
@@ -120,6 +131,7 @@ impl Memory {
             self.breakdown = groups::breakdown(&sampler.processes, sampler.totals.used);
         }
         self.lists = memlist::query();
+        self.commit = commit::query();
         self.last_refresh = Instant::now();
     }
 

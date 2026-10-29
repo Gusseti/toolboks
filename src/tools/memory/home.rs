@@ -11,8 +11,10 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Stroke, Vec2};
 
+use super::commit::{self, Level};
 use super::groups::{Breakdown, Segment};
 use super::memlist::{self, Command};
+use super::report::{self, Snapshot};
 use super::stats::ProcInfo;
 use super::trim::{skip_reason, trim_process};
 use super::{Memory, AUTO_CHECK};
@@ -47,6 +49,8 @@ pub struct Report {
 pub struct Optimizing {
     rx: Receiver<Report>,
     used_before: u64,
+    /// Memory and per-process working sets when the run started.
+    before: Snapshot,
     /// Started by the automatic rule rather than by the button.
     automatic: bool,
 }
@@ -55,6 +59,9 @@ pub struct Optimizing {
 pub struct Outcome {
     report: Report,
     used_before: u64,
+    /// For the before/after report: the start of the run and the moment it finished.
+    before: Snapshot,
+    immediate: Snapshot,
     /// Memory in use now (while settling) or at the end of the watch.
     used_after: u64,
     /// The lowest memory in use seen since the run finished.
@@ -242,6 +249,11 @@ impl Memory {
         );
         let deep = self.elevated && self.opt_deep;
         let used_before = sampler.totals.used;
+        let before = Snapshot::new(
+            sampler.totals.used,
+            sampler.totals.available,
+            &sampler.processes,
+        );
 
         let (tx, rx) = mpsc::channel();
         let wake = ctx.clone();
@@ -252,6 +264,7 @@ impl Memory {
         self.optimizing = Some(Optimizing {
             rx,
             used_before,
+            before,
             automatic,
         });
         self.outcome = None;
@@ -308,6 +321,7 @@ impl Memory {
         };
         self.refresh_now();
         let used_after = self.sampler.as_ref().map_or(0, |s| s.totals.used);
+        let immediate = self.snapshot_now();
         if running.automatic {
             // Flash the taskbar button so a minimized window still tells you.
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
@@ -317,6 +331,8 @@ impl Memory {
         self.outcome = Some(Outcome {
             report,
             used_before: running.used_before,
+            before: running.before,
+            immediate,
             used_after,
             lowest_in_use: used_after,
             settle_until: Some(Instant::now() + SETTLE_FOR),
@@ -345,8 +361,33 @@ impl Memory {
         }
         if Instant::now() >= until {
             outcome.settle_until = None;
+            self.finish_report();
         }
         ctx.request_repaint_after(SETTLE_EVERY);
+    }
+
+    /// Memory and process working sets from the latest sample.
+    fn snapshot_now(&self) -> Snapshot {
+        self.sampler.as_ref().map_or_else(Snapshot::default, |s| {
+            Snapshot::new(s.totals.used, s.totals.available, &s.processes)
+        })
+    }
+
+    /// At the end of the settle watch: take the settled snapshot (one full refresh, no new
+    /// thread), compare it with the start and the finish of the run and keep the report.
+    fn finish_report(&mut self) {
+        self.refresh_now();
+        let settled = self.snapshot_now();
+        let Some(outcome) = self.outcome.as_ref() else {
+            return;
+        };
+        let r = report::compare(
+            &outcome.before,
+            &outcome.immediate,
+            &settled,
+            outcome.automatic,
+        );
+        report::push(&mut self.reports, r);
     }
 
     pub(super) fn home_ui(&mut self, ui: &mut egui::Ui) {
@@ -378,6 +419,7 @@ impl Memory {
         );
 
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
+            self.hint(ui);
             self.memory_goes(ui);
         });
     }
@@ -433,9 +475,75 @@ impl Memory {
             .fill(ACCENT)
             .min_size(Vec2::new(width, 28.0))
             .corner_radius(4.0);
-        if ui.add_enabled(!self.busy(), button).clicked() {
+        let response = ui.add_enabled(!self.busy(), button).on_hover_text(
+            "Moves memory that apps are not using right now out of RAM. Windows does this by              itself when it needs to. You may notice no difference.",
+        );
+        if response.clicked() {
             self.start_optimize(ctx, false);
         }
+        self.commit_row(ui, width);
+    }
+
+    /// Commit charge: promised memory against the limit, amber/red near the limit.
+    fn commit_row(&self, ui: &mut egui::Ui, width: f32) {
+        let Some(c) = self.commit.filter(|c| c.limit > 0) else {
+            return;
+        };
+        let color = match commit::level(&c) {
+            Level::Calm => GREEN,
+            Level::Warn => AMBER,
+            Level::Hot => RED,
+        };
+        ui.add_space(GAP);
+        let head = ui.horizontal(|ui| {
+            ui.label(RichText::new("Commit").weak());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(format!("{:.0}%", commit::percent(&c))).color(color));
+            });
+        });
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 4.0), Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, ui.visuals().widgets.inactive.bg_fill);
+        let mut fill = rect;
+        fill.set_width(width * (commit::percent(&c) / 100.0).clamp(0.0, 1.0));
+        painter.rect_filled(fill, 2.0, color);
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new(format!(
+                "{} of {} promised",
+                size_plain(c.total),
+                size_plain(c.limit)
+            ))
+            .small(),
+        );
+        ui.label(RichText::new(commit::sentence(&c)).weak().small());
+        head.response
+            .on_hover_text(format!("Peak so far: {}", size_plain(c.peak)));
+    }
+
+    /// A one-time hint, hidden for the rest of the session once dismissed.
+    fn hint(&mut self, ui: &mut egui::Ui) {
+        if self.hint_dismissed {
+            return;
+        }
+        egui::Frame::NONE
+            .fill(ui.visuals().extreme_bg_color)
+            .corner_radius(4.0)
+            .inner_margin(6.0)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(
+                            "Used memory is not a problem. Free memory is wasted memory.                              Look at Commit and the last run report if your PC feels slow.",
+                        )
+                        .small(),
+                    );
+                    if ui.small_button("Got it").clicked() {
+                        self.hint_dismissed = true;
+                    }
+                });
+            });
+        ui.add_space(GAP);
     }
 
     /// The right inspector: the options, then the result of the last run.
@@ -452,6 +560,13 @@ impl Memory {
                 self.last_auto_opt = None;
             }
         });
+        ui.label(
+            RichText::new(
+                "Off by default. Cleaning on a timer is the least proven option and can make                  apps briefly slower.",
+            )
+            .weak()
+            .small(),
+        );
         ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(50.0);
         ui.add_enabled_ui(self.auto_opt_on, |ui| {
             ui.label(RichText::new("Start when in use reaches").weak().small());
@@ -492,10 +607,58 @@ impl Memory {
             ui.label(RichText::new("Last run").strong());
             self.result(ui);
         }
+        self.history(ui);
+    }
+
+    /// The before/after report of the last settled run, with its two buttons.
+    fn last_report(&mut self, ui: &mut egui::Ui) {
+        let settled = self
+            .outcome
+            .as_ref()
+            .is_some_and(|o| o.settle_until.is_none());
+        let Some(r) = self.reports.back().filter(|_| settled) else {
+            return;
+        };
+        let text = report::describe(r);
+        let copy = report::copy_text(r);
+        let offer_off = (r.automatic || r.is_small()) && self.auto_opt_on;
+        ui.add_space(2.0);
+        ui.label(RichText::new(text).small());
+        ui.label(RichText::new(report::honest_note()).weak().small());
+        ui.horizontal_wrapped(|ui| {
+            if ui.small_button("Copy report").clicked() {
+                ui.ctx().copy_text(copy);
+            }
+            if offer_off && ui.link("Turn off auto-clean").clicked() {
+                self.auto_opt_on = false;
+            }
+        });
+    }
+
+    /// A collapsed list of the last runs: how long ago and a one-line result.
+    fn history(&self, ui: &mut egui::Ui) {
+        if self.reports.is_empty() {
+            return;
+        }
+        ui.add_space(GAP);
+        egui::CollapsingHeader::new(RichText::new("History").strong())
+            .default_open(false)
+            .show(ui, |ui| {
+                for r in self.reports.iter().rev() {
+                    let mins = r.finished.elapsed().as_secs() / 60;
+                    let when = if mins == 0 {
+                        "just now".to_string()
+                    } else {
+                        format!("{mins} min ago")
+                    };
+                    ui.label(RichText::new(when).weak().small());
+                    ui.label(RichText::new(report::one_line(r)).small());
+                }
+            });
     }
 
     /// The result of the last optimize run in plain words, or the last status message.
-    fn result(&self, ui: &mut egui::Ui) {
+    fn result(&mut self, ui: &mut egui::Ui) {
         if let Some(outcome) = &self.outcome {
             let (headline, detail) = summary(outcome);
             ui.label(RichText::new(headline).strong().color(GREEN));
@@ -513,6 +676,7 @@ impl Memory {
                 .small(),
             );
         }
+        self.last_report(ui);
         if let Some(status) = &self.status {
             ui.label(RichText::new(status).small());
         }
@@ -614,6 +778,8 @@ mod tests {
         Outcome {
             report: Report { apps, deep },
             used_before: before,
+            before: Snapshot::default(),
+            immediate: Snapshot::default(),
             used_after: before - freed_mb * MB,
             lowest_in_use: before - freed_mb * MB,
             settle_until: None,
