@@ -3,8 +3,8 @@
 use eframe::egui::{self, Color32, Mesh, Pos2, RichText, Sense, Shape, Stroke, Vec2};
 
 /// Space between cards, and the padding inside them.
-pub const GAP: f32 = 12.0;
-pub const CARD_PAD: f32 = 16.0;
+pub const GAP: f32 = 8.0;
+pub const CARD_PAD: f32 = 10.0;
 
 pub const ACCENT: Color32 = Color32::from_rgb(38, 110, 214);
 pub const GREEN: Color32 = Color32::from_rgb(52, 168, 107);
