@@ -1,6 +1,6 @@
 # Memory Cleaner: Advanced as a workbench
 
-Status: **built, not looked at on screen**. Checked by fmt, clippy, 139 tests and a release build. Known gaps: the Share and Procs columns are not sortable, the memory-lists bar has no hover tooltip (the legend shows the sizes), Space does not toggle the selection, and Trim selected has no confirmation step. Style: the compact "C" design (see `PLAN-redesign-compact.md`).
+Status: **built, looked at on screen 2026-10-29: layout fine**. Checked by fmt, clippy, 139 tests and a release build. Known gaps: the Share and Procs columns are not sortable, the memory-lists bar has no hover tooltip (the legend shows the sizes), Space does not toggle the selection, and Trim selected has no confirmation step. Style: the compact "C" design (see `PLAN-redesign-compact.md`).
 
 ## Decisions
 

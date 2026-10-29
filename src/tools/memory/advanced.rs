@@ -269,26 +269,32 @@ impl Memory {
                         }
                     });
                     row.col(|ui| {
-                        let [r, g, b] = color_for(&p.name);
-                        dot(ui, Color32::from_rgb(r, g, b));
-                        let label = ui.add(egui::Label::new(&p.name).selectable(false).truncate());
-                        if !grouped {
-                            label.on_hover_text(format!("pid {}", p.pid));
-                        }
+                        ui.horizontal(|ui| {
+                            let [r, g, b] = color_for(&p.name);
+                            dot(ui, Color32::from_rgb(r, g, b));
+                            let label =
+                                ui.add(egui::Label::new(&p.name).selectable(false).truncate());
+                            if !grouped {
+                                label.on_hover_text(format!("pid {}", p.pid));
+                            }
+                        });
                     });
                     row.col(|ui| cell(ui, p.count.to_string()));
                     row.col(|ui| cell(ui, format_bytes(p.working_set)));
                     row.col(|ui| cell(ui, format_bytes(p.private)));
                     row.col(|ui| {
-                        let share = share_of(p.working_set, used);
-                        let w = (ui.available_width() - 38.0).max(10.0);
-                        let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 6.0), Sense::hover());
-                        let painter = ui.painter_at(rect);
-                        painter.rect_filled(rect, 3.0, ui.visuals().widgets.inactive.bg_fill);
-                        let mut fill = rect;
-                        fill.set_width(w * share.clamp(0.0, 1.0));
-                        painter.rect_filled(fill, 3.0, ACCENT);
-                        cell(ui, format!("{:.1}%", share * 100.0));
+                        ui.horizontal(|ui| {
+                            let share = share_of(p.working_set, used);
+                            let w = (ui.available_width() - 44.0).max(10.0);
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::new(w, 6.0), Sense::hover());
+                            let painter = ui.painter_at(rect);
+                            painter.rect_filled(rect, 3.0, ui.visuals().widgets.inactive.bg_fill);
+                            let mut fill = rect;
+                            fill.set_width(w * share.clamp(0.0, 1.0));
+                            painter.rect_filled(fill, 3.0, ACCENT);
+                            cell(ui, format!("{:.1}%", share * 100.0));
+                        });
                     });
                     row.col(|ui| {
                         // System and shell processes are always protected, so they show as
