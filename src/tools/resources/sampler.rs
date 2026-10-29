@@ -498,6 +498,102 @@ impl Drop for DiskBusy {
     }
 }
 
+/// Live clock in MHz from the percent of the nominal frequency (can exceed 100 when boosting)
+/// and the nominal MHz. None if either is not finite or not positive; capped at 2.5x nominal.
+fn live_mhz(performance_percent: f64, nominal_mhz: f64) -> Option<u64> {
+    let ok = |v: f64| v.is_finite() && v > 0.0;
+    if !ok(performance_percent) || !ok(nominal_mhz) {
+        return None;
+    }
+    let mhz = (nominal_mhz * performance_percent / 100.0).round();
+    Some(mhz.min(nominal_mhz * 2.5) as u64)
+}
+
+/// A PDH query with the processor performance (percent of nominal) and nominal frequency
+/// counters, which together give the live clock. Closed on drop.
+struct CpuClock {
+    query: PDH_HQUERY,
+    performance: PDH_HCOUNTER,
+    nominal: PDH_HCOUNTER,
+}
+
+impl CpuClock {
+    fn new() -> Option<CpuClock> {
+        let mut query = PDH_HQUERY::default();
+        // SAFETY: `query` is a valid out pointer; a null data source means live data.
+        let status = unsafe { PdhOpenQueryW(None, 0, &mut query) };
+        if status != 0 {
+            return None;
+        }
+        let mut performance = PDH_HCOUNTER::default();
+        let mut nominal = PDH_HCOUNTER::default();
+        // SAFETY: `query` was opened above and both counters are valid out pointers. The English
+        // API is used so the paths work on any display language.
+        let failed = unsafe {
+            PdhAddEnglishCounterW(
+                query,
+                w!("\\Processor Information(_Total)\\% Processor Performance"),
+                0,
+                &mut performance,
+            ) != 0
+                || PdhAddEnglishCounterW(
+                    query,
+                    w!("\\Processor Information(_Total)\\Processor Frequency"),
+                    0,
+                    &mut nominal,
+                ) != 0
+        };
+        if failed {
+            // SAFETY: `query` is a valid open handle that nothing else owns.
+            unsafe { PdhCloseQuery(query) };
+            return None;
+        }
+        let clock = CpuClock {
+            query,
+            performance,
+            nominal,
+        };
+        clock.collect();
+        Some(clock)
+    }
+
+    /// Takes a new reading of the query data. Returns false on failure.
+    fn collect(&self) -> bool {
+        // SAFETY: `self.query` is a valid open handle for the life of `self`.
+        unsafe { PdhCollectQueryData(self.query) == 0 }
+    }
+
+    /// Formats one counter as a double. None if the call fails or the value is not ready.
+    fn value(&self, counter: PDH_HCOUNTER) -> Option<f64> {
+        let mut value = PDH_FMT_COUNTERVALUE::default();
+        // SAFETY: `counter` belongs to `self.query`, which is open; `value` is a valid out
+        // pointer.
+        let status =
+            unsafe { PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, None, &mut value) };
+        if status != 0 || value.CStatus != 0 {
+            return None;
+        }
+        // SAFETY: the format was PDH_FMT_DOUBLE and the status was success, so the double field
+        // is the one that was written.
+        Some(unsafe { value.Anonymous.doubleValue })
+    }
+
+    /// Collects and returns the live clock in MHz. None if any call fails or no value yet.
+    fn read_mhz(&self) -> Option<u64> {
+        if !self.collect() {
+            return None;
+        }
+        live_mhz(self.value(self.performance)?, self.value(self.nominal)?)
+    }
+}
+
+impl Drop for CpuClock {
+    fn drop(&mut self) {
+        // SAFETY: `self.query` is a valid open handle, closed only here.
+        unsafe { PdhCloseQuery(self.query) };
+    }
+}
+
 /// Sums bytes read and written by all disks since the previous refresh.
 fn disk_totals(disks: &Disks) -> (u64, u64) {
     disks.iter().fold((0, 0), |(r, w), d| {
@@ -557,6 +653,7 @@ impl Sampler {
                 let mut disks = Disks::new_with_refreshed_list_specifics(disk_kind).ok();
                 let mut nets = Networks::new_with_refreshed_list().ok();
                 let busy = DiskBusy::new();
+                let clock = CpuClock::new();
                 let mut gpu_reader = GpuReader::new();
                 let nvml = Nvml::open();
                 let mut last_tick = Instant::now();
@@ -585,6 +682,9 @@ impl Sampler {
                         }
                         if let Some(b) = busy.as_ref() {
                             b.collect();
+                        }
+                        if let Some(c) = clock.as_ref() {
+                            c.collect();
                         }
                         // Resets the GPU counter baseline; the reading itself is dropped.
                         refresh_procs(&mut sys);
@@ -633,7 +733,10 @@ impl Sampler {
                     let sample = Sample {
                         cpu: sys.global_cpu_usage(),
                         cores: sys.cpus().iter().map(|c| c.usage()).collect(),
-                        cpu_mhz: mean_mhz(&freqs),
+                        cpu_mhz: clock
+                            .as_ref()
+                            .and_then(|c| c.read_mhz())
+                            .unwrap_or_else(|| mean_mhz(&freqs)),
                         mem_used: sys.total_memory().saturating_sub(sys.available_memory()),
                         uptime_secs: System::uptime().unwrap_or(0),
                         disk_read_bps: bytes_per_second(read, secs),
@@ -716,6 +819,18 @@ mod tests {
         assert_eq!(mean_mhz(&[]), 0);
         assert_eq!(mean_mhz(&[3000]), 3000);
         assert_eq!(mean_mhz(&[2000, 4000, 3000]), 3000);
+    }
+
+    #[test]
+    fn live_mhz_cases() {
+        assert_eq!(live_mhz(50.0, 3600.0), Some(1800));
+        assert_eq!(live_mhz(100.0, 3600.0), Some(3600));
+        assert_eq!(live_mhz(130.5, 3600.0), Some(4698));
+        assert_eq!(live_mhz(0.0, 3600.0), None);
+        assert_eq!(live_mhz(100.0, 0.0), None);
+        assert_eq!(live_mhz(f64::NAN, 3600.0), None);
+        assert_eq!(live_mhz(100.0, f64::INFINITY), None);
+        assert_eq!(live_mhz(1_000_000.0, 3600.0), Some(9000));
     }
 
     #[test]
