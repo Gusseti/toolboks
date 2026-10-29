@@ -1,5 +1,6 @@
 use eframe::egui;
 
+mod debloat;
 mod memory;
 mod resources;
 
@@ -30,5 +31,6 @@ pub fn all() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(memory::Memory::new()),
         Box::new(resources::Resources::new()),
+        Box::new(debloat::Debloater::new()),
     ]
 }

@@ -1,6 +1,6 @@
 # Debloater plan
 
-A new tool in toolboks (its own top tab): turn off Windows ads, suggestions and tracking toggles, and remove preinstalled consumer apps, safely and with undo. Status: **planned, not started**. Style: the compact "C" design, same inspector pattern as the other tools.
+A new tool in toolboks (its own top tab): turn off Windows ads, suggestions and tracking toggles, and remove preinstalled consumer apps, safely and with undo. Status: **phase 1 built (engine + page shell, writes disabled), not looked at on screen**. Style: the compact "C" design, same inspector pattern as the other tools.
 
 ## Decisions
 
