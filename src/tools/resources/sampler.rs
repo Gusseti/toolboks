@@ -60,6 +60,45 @@ pub struct Sample {
     pub gpu: Option<GpuSample>,
     /// The biggest users of CPU, memory, GPU and disk.
     pub top: TopProcesses,
+    /// One entry per drive, for the Details page.
+    pub drives: Vec<DriveInfo>,
+    /// One entry per network adapter that counts (loopback and tunnel adapters excluded).
+    pub adapters: Vec<AdapterInfo>,
+    /// System-wide process, thread and handle counts, if Windows reports them.
+    pub counts: Option<SystemCounts>,
+}
+
+/// A drive (disk volume) with its capacity and current throughput.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DriveInfo {
+    /// Mount point, e.g. "C:\\".
+    pub mount: String,
+    /// Volume label or device name, may be empty.
+    pub label: String,
+    /// "SSD", "HDD" or "" when unknown.
+    pub kind: String,
+    pub total: u64,
+    pub free: u64,
+    pub read_bps: f64,
+    pub write_bps: f64,
+}
+
+/// A network adapter with its current speed and its totals.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AdapterInfo {
+    pub name: String,
+    pub down_bps: f64,
+    pub up_bps: f64,
+    /// Bytes received and sent since the counters started (as reported by sysinfo).
+    pub total_down: u64,
+    pub total_up: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SystemCounts {
+    pub processes: u32,
+    pub threads: u32,
+    pub handles: u32,
 }
 
 /// The main GPU, merged from the generic readings and, on NVIDIA, the driver library.
@@ -491,6 +530,10 @@ impl Sampler {
                             merge_gpu(basic, nv)
                         }),
                         top,
+                        // Filled in by the phase 5 work.
+                        drives: Vec::new(),
+                        adapters: Vec::new(),
+                        counts: None,
                     };
                     if tx.send(Msg::Sample(Box::new(sample))).is_err() {
                         return;
