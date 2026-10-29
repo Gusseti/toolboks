@@ -9,6 +9,7 @@ mod gpu;
 mod history;
 mod nvml;
 mod overview;
+mod processes;
 mod sampler;
 
 use history::History;
@@ -101,6 +102,7 @@ pub struct Resources {
     gpu: Option<GpuSample>,
     /// Samples in a row that arrived without GPU data.
     gpu_missing: u32,
+    processes: processes::Page,
 }
 
 impl Resources {
@@ -124,6 +126,7 @@ impl Resources {
             adapters: Keyed::new(),
             gpu: None,
             gpu_missing: 0,
+            processes: processes::Page::new(),
         }
     }
 }
@@ -134,7 +137,7 @@ impl crate::tools::Tool for Resources {
     }
 
     fn pages(&self) -> &'static [&'static str] {
-        &["Overview", "Details"]
+        &["Overview", "Details", "Processes"]
     }
 
     fn status(&self) -> Vec<String> {
@@ -150,6 +153,7 @@ impl crate::tools::Tool for Resources {
     }
 
     fn tick(&mut self, _ctx: &egui::Context) {
+        self.processes.tick();
         let Some(sampler) = &self.sampler else {
             return;
         };
@@ -206,6 +210,10 @@ impl crate::tools::Tool for Resources {
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {
         let sampler = self.sampler.get_or_insert_with(|| Sampler::start(ui.ctx()));
         sampler.ping();
+        if page == 2 {
+            self.processes.ui(ui);
+            return;
+        }
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match page {
