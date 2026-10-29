@@ -7,9 +7,10 @@ use eframe::egui::{self, Color32, RichText, Sense, Stroke, Vec2};
 use super::apps::{self, AppRow, AppRun};
 use super::model::{Applicable, Edition, Group, Hive, Item, RegValue, Risk, State, Status};
 use super::restore::{self, RestoreStatus};
+use super::services::{self, ServiceDef, ServiceState};
 use super::startup::{self, Class, Entry, Source};
 use super::tasks::{self, TaskDef, TaskState};
-use super::{backend, catalog, plan, Debloater, TaskJob};
+use super::{backend, catalog, plan, Debloater, ServiceJob, TaskJob};
 use crate::elevation;
 use crate::ui::{self, AMBER, CARD_PAD, GAP, GREEN};
 
@@ -208,6 +209,13 @@ impl Debloater {
             }
         }
 
+        if page == 4 {
+            self.services_poll();
+            if !self.services.started {
+                self.services_refresh(ui.ctx());
+            }
+        }
+
         let inspector = egui::Frame::NONE
             .fill(ui.visuals().extreme_bg_color)
             .inner_margin(INSPECTOR_PAD);
@@ -222,7 +230,8 @@ impl Debloater {
                         0 => self.inspector(ui),
                         1 => self.apps_inspector(ui),
                         2 => self.startup_inspector(ui),
-                        _ => self.tasks_inspector(ui),
+                        3 => self.tasks_inspector(ui),
+                        _ => self.services_inspector(ui),
                     });
             });
         let rect = panel.response.rect;
@@ -239,7 +248,8 @@ impl Debloater {
                 0 => self.privacy_page(ui),
                 1 => self.apps_page(ui),
                 2 => self.startup_page(ui),
-                _ => self.tasks_page(ui),
+                3 => self.tasks_page(ui),
+                _ => self.services_page(ui),
             }
         });
     }
@@ -1710,6 +1720,484 @@ impl Debloater {
     }
 }
 
+const SERVICES_NEVER_NOTE: &str =
+    "Update, security, firewall and system services are never offered.";
+const SERVICES_CAREFUL_NOTE: &str =
+    "Careful items are set to Manual, not Disabled, so Windows can still start them when needed.";
+const SERVICES_TAKES_EFFECT: &str =
+    "This takes effect when Windows restarts or the service stops. \
+                                     toolboks never stops a running service.";
+const SERVICES_NOTE: &str = "Undo works until you close toolboks.";
+const SERVICES_CHANGED_TIP: &str = "Use Undo, or Services in Windows, to change it back";
+
+/// Text for the small start type column of a service row.
+fn service_state_text(state: &ServiceState) -> String {
+    match state {
+        ServiceState::Present { start, running, .. } => {
+            let label = match start {
+                services::StartType::Other(_) => "Unknown",
+                other => other.label(),
+            };
+            if *running {
+                format!("{label} (running)")
+            } else {
+                label.to_string()
+            }
+        }
+        ServiceState::NotPresent => "Not on this PC".to_string(),
+        ServiceState::Locked => "Protected by Windows".to_string(),
+        ServiceState::Unknown(_) => "Unknown".to_string(),
+    }
+}
+
+/// Only services that exist and are readable have a usable switch.
+fn service_switchable(state: &ServiceState) -> bool {
+    matches!(state, ServiceState::Present { .. })
+}
+
+/// The switch is on while the service still has its original (non-target) start type.
+fn service_on(def: &ServiceDef, state: &ServiceState) -> bool {
+    match state {
+        ServiceState::Present { start, .. } => *start != def.target,
+        _ => true,
+    }
+}
+
+/// Catalog joined with statuses by id; a service without a status reads as Unknown.
+fn join_services(
+    defs: &[ServiceDef],
+    statuses: &[services::ServiceStatus],
+) -> Vec<(ServiceDef, ServiceState)> {
+    defs.iter()
+        .map(|d| {
+            let state = statuses.iter().find(|s| s.id == d.id).map_or_else(
+                || ServiceState::Unknown("not read".into()),
+                |s| s.state.clone(),
+            );
+            (*d, state)
+        })
+        .collect()
+}
+
+type ServiceRow = (ServiceDef, ServiceState);
+
+/// Joined rows split into (safe, advanced), order kept.
+fn group_services(rows: &[ServiceRow]) -> [Vec<&ServiceRow>; 2] {
+    let mut groups: [Vec<&ServiceRow>; 2] = [Vec::new(), Vec::new()];
+    for row in rows {
+        match row.0.risk {
+            Risk::Safe => groups[0].push(row),
+            Risk::Careful => groups[1].push(row),
+        }
+    }
+    groups
+}
+
+/// Undoes the newest step of one service. A step that fails stays in the list.
+/// Returns (undone, failed).
+fn undo_for_id(
+    steps: &mut Vec<services::UndoStep>,
+    id: &str,
+    undo_one: impl FnOnce(&services::UndoStep) -> Result<(), String>,
+) -> (usize, usize) {
+    let Some(index) = steps.iter().rposition(|s| s.id == id) else {
+        return (0, 0);
+    };
+    if undo_one(&steps[index]).is_ok() {
+        steps.remove(index);
+        (1, 0)
+    } else {
+        (0, 1)
+    }
+}
+
+impl Debloater {
+    fn services_refresh(&mut self, ctx: &egui::Context) {
+        self.services.started = true;
+        if self.services.loading.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(services::statuses(&services::WinServices));
+            ctx.request_repaint();
+        });
+        self.services.loading = Some(rx);
+    }
+
+    fn services_poll(&mut self) {
+        if let Some(rx) = &self.services.loading {
+            match rx.try_recv() {
+                Ok(list) => {
+                    self.services.loading = None;
+                    self.services.statuses = list;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.services.loading = None;
+                    self.services.message =
+                        Some("Reading the services stopped unexpectedly.".into());
+                }
+            }
+        }
+        let Some(rx) = &self.services.working else {
+            return;
+        };
+        let job = match rx.try_recv() {
+            Ok(job) => Some(job),
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => None,
+        };
+        self.services.working = None;
+        self.services.started = false; // reload right away
+        self.services.message = Some(match job {
+            Some(ServiceJob::Set(title, result, point)) => {
+                if let Some(status) = &point {
+                    self.restore.status = Some(restore::status_text(status));
+                }
+                match result {
+                    Ok(step) => {
+                        self.services.steps.push(step);
+                        format!("{title} is now switched off.")
+                    }
+                    Err(e) => format!("Could not change {title}: {e}"),
+                }
+            }
+            Some(ServiceJob::Undo {
+                remaining,
+                done,
+                failed,
+            }) => {
+                self.services.steps = remaining;
+                startup_undo_summary(done, failed)
+            }
+            None => "The change stopped unexpectedly.".to_string(),
+        });
+    }
+
+    fn services_set_off(&mut self, ctx: &egui::Context, def: ServiceDef) {
+        self.services.pending = None;
+        if self.services.working.is_some() {
+            return;
+        }
+        let make_point = should_create(
+            self.restore.on,
+            self.env.elevated,
+            self.restore.services_done,
+        );
+        if make_point {
+            self.restore.services_done = true;
+        }
+        self.restore.status = None;
+        let elevated = self.env.elevated;
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let point = make_point.then(|| {
+                restore::create(
+                    &mut restore::WinRestore,
+                    &restore_description(&format!("switch off service {}", def.title)),
+                    elevated,
+                )
+            });
+            let result = match &point {
+                Some(status) if restore::is_blocking(status) => Err(restore::status_text(status)),
+                _ => services::set_off(&mut services::WinServices, &def),
+            };
+            let _ = tx.send(ServiceJob::Set(def.title.to_string(), result, point));
+            ctx.request_repaint();
+        });
+        self.services.working = Some(rx);
+    }
+
+    /// Undo everything (`all`), the newest step, or the newest step of one service (`only`).
+    fn services_undo(&mut self, ctx: &egui::Context, all: bool, only: Option<&'static str>) {
+        self.services.pending = None;
+        if self.services.working.is_some() {
+            return;
+        }
+        let mut steps = std::mem::take(&mut self.services.steps);
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let undo_one = |s: &services::UndoStep| services::undo(&mut services::WinServices, s);
+            let (done, failed) = match only {
+                Some(id) => undo_for_id(&mut steps, id, undo_one),
+                None => run_undo(&mut steps, all, undo_one),
+            };
+            let _ = tx.send(ServiceJob::Undo {
+                remaining: steps,
+                done,
+                failed,
+            });
+            ctx.request_repaint();
+        });
+        self.services.working = Some(rx);
+    }
+
+    fn services_busy(&self) -> bool {
+        self.services.loading.is_some() || self.services.working.is_some()
+    }
+
+    fn services_page(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let admin = if self.env.elevated {
+                "Running as administrator"
+            } else {
+                "Not running as administrator"
+            };
+            ui.label(RichText::new(admin).small().weak());
+            if ui
+                .add_enabled(
+                    !self.services_busy(),
+                    egui::Link::new(RichText::new("Refresh").small()),
+                )
+                .clicked()
+            {
+                self.services_refresh(ui.ctx());
+            }
+        });
+        if let Some(message) = &self.services.message {
+            ui.label(RichText::new(message).small().weak());
+        }
+        if let Some(line) = &self.restore.status {
+            ui.label(RichText::new(line).small().weak());
+        }
+        ui.add_space(GAP - 2.0);
+
+        let mut action: Option<(ServiceDef, bool)> = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let rows = join_services(services::catalog(), &self.services.statuses);
+                if self.services.loading.is_some() && self.services.statuses.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("Loading...");
+                    });
+                } else if rows.is_empty() {
+                    ui.weak("No services to show.");
+                }
+                let [safe, advanced] = group_services(&rows);
+                if !safe.is_empty() {
+                    ui.label(RichText::new("Safe to switch off").strong());
+                    for (def, state) in safe {
+                        action = action.take().or(self.service_row(ui, def, state));
+                    }
+                    ui.add_space(GAP);
+                }
+                if !advanced.is_empty() {
+                    egui::CollapsingHeader::new(
+                        RichText::new("Advanced: may affect your hardware or apps").strong(),
+                    )
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(SERVICES_CAREFUL_NOTE).small().weak());
+                        for (def, state) in advanced {
+                            action = action.take().or(self.service_row(ui, def, state));
+                        }
+                    });
+                    ui.add_space(GAP);
+                }
+                ui.label(RichText::new(SERVICES_NEVER_NOTE).small().weak());
+            });
+
+        if let Some((def, enable)) = action {
+            self.services.focus = Some(def.id);
+            if enable {
+                self.services_undo(&ui.ctx().clone(), false, Some(def.id));
+            } else {
+                self.services.pending = Some(def.id);
+            }
+        }
+    }
+
+    /// Draws one row; returns the requested new state if the switch was clicked.
+    fn service_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        def: &ServiceDef,
+        state: &ServiceState,
+    ) -> Option<(ServiceDef, bool)> {
+        let focused = self.services.focus == Some(def.id);
+        let switchable = service_switchable(state);
+        let on = service_on(def, state);
+        let has_step = self.services.steps.iter().any(|s| s.id == def.id);
+        let can_revert = on || has_step;
+        let usable = switchable && self.env.elevated && !self.services_busy() && can_revert;
+
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
+        if focused || response.hovered() {
+            let fill = if focused {
+                ui.visuals().widgets.active.weak_bg_fill
+            } else {
+                ui.visuals().widgets.hovered.weak_bg_fill
+            };
+            ui.painter().rect_filled(rect, 3.0, fill);
+        }
+        if response.clicked() {
+            self.services.focus = Some(def.id);
+        }
+
+        let weak = ui.visuals().weak_text_color();
+        let text_color = if switchable {
+            ui.visuals().text_color()
+        } else {
+            weak
+        };
+        let tip = if !switchable {
+            None
+        } else if !self.env.elevated {
+            Some("Needs admin")
+        } else if !can_revert {
+            Some(SERVICES_CHANGED_TIP)
+        } else {
+            None
+        };
+        let mut on_now = on;
+        let mut changed = false;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(usable, |ui| {
+                    let r = ui::toggle_switch(ui, &mut on_now);
+                    changed = r.changed();
+                    if let Some(tip) = tip {
+                        r.on_disabled_hover_text(tip);
+                    }
+                });
+                ui.add(
+                    egui::Label::new(RichText::new(def.title).color(text_color)).selectable(false),
+                );
+                ui.add(
+                    egui::Label::new(RichText::new(service_state_text(state)).small().color(weak))
+                        .selectable(false),
+                );
+            });
+        });
+        // Risk pill, right aligned.
+        let color = if switchable {
+            risk_color(def.risk)
+        } else {
+            weak
+        };
+        let galley = ui.painter().layout_no_wrap(
+            risk_text(def.risk).to_string(),
+            egui::TextStyle::Small.resolve(ui.style()),
+            color,
+        );
+        let pill = egui::Rect::from_center_size(
+            rect.right_center() - Vec2::new(4.0 + galley.size().x / 2.0 + 5.0, 0.0),
+            galley.size() + Vec2::new(10.0, 2.0),
+        );
+        ui.painter()
+            .rect_filled(pill, 8.0, color.gamma_multiply(0.15));
+        ui.painter()
+            .galley(pill.center() - galley.size() / 2.0, galley, color);
+        changed.then_some((*def, on_now))
+    }
+
+    fn services_inspector(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        ui.spacing_mut().item_spacing.y = 4.0;
+
+        // Inline confirm, always, for Safe and Careful services.
+        if let Some(id) = self.services.pending {
+            match services::catalog().iter().find(|d| d.id == id) {
+                Some(def) => {
+                    ui.label(RichText::new("Switch off?").strong());
+                    ui.label(format!("Switch off {}? {}", def.title, def.could_break));
+                    ui.label(RichText::new(SERVICES_TAKES_EFFECT).small().weak());
+                    ui.horizontal(|ui| {
+                        if ui.button("Switch off").clicked() {
+                            self.services_set_off(&ctx, *def);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.services.pending = None;
+                        }
+                    });
+                    ui.add_space(GAP);
+                }
+                None => self.services.pending = None,
+            }
+        }
+
+        ui.label(RichText::new("About this item").strong());
+        let def = self
+            .services
+            .focus
+            .and_then(|id| services::catalog().iter().find(|d| d.id == id));
+        match def {
+            None => {
+                ui.weak("Click an item to see what it changes.");
+            }
+            Some(def) => {
+                ui.label(RichText::new(def.title).strong());
+                ui.label(def.what_changes);
+                ui.label(RichText::new("What could break").small().weak());
+                ui.label(def.could_break);
+                ui.label(RichText::new("Service name").small().weak());
+                ui.add(egui::Label::new(RichText::new(def.name).small()).wrap());
+            }
+        }
+
+        if !self.env.elevated {
+            ui.add_space(GAP);
+            ui.label("Needs admin: changing a service needs administrator rights.");
+            if ui.button("Restart as admin").clicked() {
+                if elevation::relaunch_elevated_with_args(&["--open", "Debloater/Services"]) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    self.services.message = Some("Elevation was cancelled.".to_string());
+                }
+            }
+            ui.label(
+                RichText::new("Undo history is lost when restarting")
+                    .small()
+                    .weak(),
+            );
+        }
+
+        ui.add_space(GAP);
+        let busy = self.services_busy();
+        self.restore_switch(ui, busy);
+        if self.restore.on && self.env.elevated && self.restore.services_done {
+            ui.label(
+                RichText::new("A restore point was already made this session.")
+                    .small()
+                    .weak(),
+            );
+        }
+
+        ui.add_space(GAP);
+        ui.label(RichText::new("Undo").strong());
+        let working = self.services.working.is_some();
+        if working {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Working...");
+            });
+        }
+        let count = self.services.steps.len();
+        ui.label(plural(count, "change this session", "changes this session"));
+        let has = count > 0 && !working;
+        if ui
+            .add_enabled(has, egui::Button::new("Undo last change"))
+            .clicked()
+        {
+            self.services_undo(&ctx, false, None);
+        }
+        if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
+            self.services_undo(&ctx, true, None);
+        }
+        if count > 0 && ui.link(RichText::new("Copy undo steps").small()).clicked() {
+            ctx.copy_text(services::undo_text(&self.services.steps));
+        }
+        ui.label(RichText::new(SERVICES_NOTE).small().weak());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2034,6 +2522,111 @@ mod tests {
         );
         assert_eq!(app_state_text(true), "Installed");
         assert_eq!(app_state_text(false), "Not installed");
+    }
+
+    fn svc_def(id: &'static str, risk: Risk, target: services::StartType) -> ServiceDef {
+        ServiceDef {
+            id,
+            name: id,
+            title: id,
+            what_changes: "",
+            could_break: "",
+            risk,
+            target,
+        }
+    }
+
+    fn present(start: services::StartType, running: bool) -> ServiceState {
+        ServiceState::Present {
+            start,
+            running,
+            active_dependents: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn services_join_group_and_state_text() {
+        use services::StartType::*;
+        let defs = [
+            svc_def("a", Risk::Careful, Manual),
+            svc_def("b", Risk::Safe, Disabled),
+            svc_def("c", Risk::Safe, Disabled),
+        ];
+        let statuses = [
+            services::ServiceStatus {
+                id: "b",
+                state: present(Auto, true),
+            },
+            services::ServiceStatus {
+                id: "a",
+                state: ServiceState::Locked,
+            },
+        ];
+        let rows = join_services(&defs, &statuses);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].1, ServiceState::Locked);
+        assert!(matches!(rows[2].1, ServiceState::Unknown(_)));
+        let [safe, adv] = group_services(&rows);
+        assert_eq!(safe.iter().map(|r| r.0.id).collect::<Vec<_>>(), ["b", "c"]);
+        assert_eq!(adv.len(), 1);
+        assert!(join_services(&[], &statuses).is_empty());
+
+        assert_eq!(service_state_text(&present(Auto, false)), "Automatic");
+        assert_eq!(
+            service_state_text(&present(Manual, true)),
+            "Manual (running)"
+        );
+        assert_eq!(service_state_text(&present(Disabled, false)), "Disabled");
+        assert_eq!(service_state_text(&present(Other(1), false)), "Unknown");
+        assert_eq!(
+            service_state_text(&ServiceState::NotPresent),
+            "Not on this PC"
+        );
+        assert_eq!(
+            service_state_text(&ServiceState::Locked),
+            "Protected by Windows"
+        );
+        assert_eq!(
+            service_state_text(&ServiceState::Unknown("x".into())),
+            "Unknown"
+        );
+        assert!(service_switchable(&present(Auto, false)));
+        assert!(!service_switchable(&ServiceState::Locked));
+    }
+
+    #[test]
+    fn services_on_off_derivation() {
+        use services::StartType::*;
+        let safe = svc_def("s", Risk::Safe, Disabled);
+        let careful = svc_def("c", Risk::Careful, Manual);
+        assert!(service_on(&safe, &present(Auto, true)));
+        assert!(service_on(&safe, &present(Manual, false)));
+        assert!(!service_on(&safe, &present(Disabled, false)));
+        assert!(service_on(&careful, &present(Auto, false)));
+        assert!(!service_on(&careful, &present(Manual, false)));
+        assert!(service_on(&safe, &ServiceState::NotPresent));
+    }
+
+    #[test]
+    fn undo_for_id_takes_newest_matching_step() {
+        use services::StartType::*;
+        let step = |id: &'static str, previous| services::UndoStep {
+            id,
+            name: id,
+            previous,
+        };
+        let mut steps = vec![step("a", Auto), step("b", Auto), step("a", Manual)];
+        let mut seen = None;
+        let r = undo_for_id(&mut steps, "a", |s| {
+            seen = Some(s.previous);
+            Ok(())
+        });
+        assert_eq!(r, (1, 0));
+        assert_eq!(seen, Some(Manual));
+        assert_eq!(steps.len(), 2);
+        assert_eq!(undo_for_id(&mut steps, "b", |_| Err("no".into())), (0, 1));
+        assert_eq!(steps.len(), 2);
+        assert_eq!(undo_for_id(&mut steps, "zzz", |_| Ok(())), (0, 0));
     }
 
     #[test]

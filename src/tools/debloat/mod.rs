@@ -17,6 +17,7 @@ pub mod model;
 mod page;
 pub mod plan;
 pub mod restore;
+pub mod services;
 pub mod startup;
 pub mod tasks;
 
@@ -63,6 +64,8 @@ struct RestoreState {
     on: bool,
     /// Tasks page: a restore point was already tried this session, so do not repeat it.
     tasks_done: bool,
+    /// Services page: same, once per session.
+    services_done: bool,
     /// Privacy and ads: creating before an apply, with the ids to apply afterwards.
     creating: Option<Receiver<(restore::RestoreStatus, Vec<&'static str>)>>,
     /// Last result line.
@@ -103,6 +106,40 @@ struct TasksState {
     message: Option<String>,
 }
 
+/// Result of a short worker run on the Services page.
+enum ServiceJob {
+    /// One service was switched off: (title, outcome, restore point result if one was made first).
+    Set(
+        String,
+        Result<services::UndoStep, String>,
+        Option<restore::RestoreStatus>,
+    ),
+    /// Undo ran; the steps that failed come back with the counts.
+    Undo {
+        remaining: Vec<services::UndoStep>,
+        done: usize,
+        failed: usize,
+    },
+}
+
+/// State of the Services page. Service Control Manager calls run on worker threads only.
+#[derive(Default)]
+struct ServicesState {
+    statuses: Vec<services::ServiceStatus>,
+    /// A load was started and not yet invalidated.
+    started: bool,
+    loading: Option<Receiver<Vec<services::ServiceStatus>>>,
+    /// A change or undo is running.
+    working: Option<Receiver<ServiceJob>>,
+    /// The service shown in the inspector.
+    focus: Option<&'static str>,
+    /// A service waiting for the inline "Switch off?" confirm.
+    pending: Option<&'static str>,
+    /// Changes of this session, oldest first.
+    steps: Vec<services::UndoStep>,
+    message: Option<String>,
+}
+
 pub struct Debloater {
     env: model::Env,
     statuses: Vec<model::Status>,
@@ -121,6 +158,7 @@ pub struct Debloater {
     apps: AppsState,
     startup: StartupState,
     tasks: TasksState,
+    services: ServicesState,
     restore: RestoreState,
 }
 
@@ -139,6 +177,7 @@ impl Debloater {
             apps: AppsState::default(),
             startup: StartupState::default(),
             tasks: TasksState::default(),
+            services: ServicesState::default(),
             restore: RestoreState::default(),
         }
     }
@@ -150,7 +189,7 @@ impl Tool for Debloater {
     }
 
     fn pages(&self) -> &'static [&'static str] {
-        &["Privacy and ads", "Apps", "Startup", "Tasks"]
+        &["Privacy and ads", "Apps", "Startup", "Tasks", "Services"]
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {
