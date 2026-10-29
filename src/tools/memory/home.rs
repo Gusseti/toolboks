@@ -15,14 +15,12 @@ use eframe::egui::{
 
 use super::groups::{Breakdown, Segment};
 use super::memlist::{self, Command};
-use super::stats::{group_by_name, ProcInfo};
+use super::stats::ProcInfo;
 use super::trim::{skip_reason, trim_process};
 use super::{Memory, AUTO_CHECK};
 use crate::elevation;
-use crate::format::{friendly_name, size_plain};
-use crate::ui::{
-    card, stacked_bar, toggle_switch, BarPart, ACCENT, AMBER, CARD_PAD, GAP, GREEN, RED,
-};
+use crate::format::size_plain;
+use crate::ui::{card, stacked_bar, toggle_switch, BarPart, ACCENT, AMBER, GAP, GREEN, RED};
 
 const MB: u64 = 1024 * 1024;
 pub const DEFAULT_MIN_APP_MB: u32 = 32;
@@ -32,7 +30,6 @@ const NOTABLE_RELEASE: u64 = 50 * MB;
 const SETTLE_FOR: Duration = Duration::from_secs(10);
 /// How often the cheap RAM totals are re-read while settling.
 const SETTLE_EVERY: Duration = Duration::from_millis(500);
-const TOP_APPS: usize = 4;
 /// The Home grid: spacing, card padding and the heights of the top row.
 const HERO_HEIGHT: f32 = 364.0;
 const STAT_HEIGHT: f32 = 112.0;
@@ -447,7 +444,6 @@ impl Memory {
             card(ui, total, 0.0, |ui| self.result(ui));
         }
         card(ui, total, 0.0, |ui| self.memory_goes(ui));
-        card(ui, total, 0.0, |ui| self.top_apps(ui, total));
         card(ui, total, 0.0, |ui| self.options_card(ui));
     }
 
@@ -576,35 +572,51 @@ impl Memory {
         let half = (ui.available_width() - 24.0) / 2.0;
         let (swatch, pct_w) = (12.0, 36.0);
         let name_w = (half - swatch - 64.0 - pct_w - 3.0 * 8.0).max(40.0);
+        // Two columns filled top to bottom (largest first down the left column), so reading
+        // down a column goes in size order.
+        let n = b.segments.len();
+        let rows = n.div_ceil(2);
+        let mut cell = |ui: &mut egui::Ui, i: usize| {
+            let seg = &b.segments[i];
+            let row = ui.horizontal(|ui| {
+                ui.set_width(half);
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(swatch), Sense::hover());
+                let c = seg.color;
+                ui.painter()
+                    .rect_filled(r, 4.0, Color32::from_rgb(c[0], c[1], c[2]));
+                // A fixed-width, left-aligned name (add_sized would centre it).
+                ui.allocate_ui_with_layout(
+                    Vec2::new(name_w, 18.0),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.add(egui::Label::new(&seg.name).truncate().selectable(false));
+                    },
+                );
+                ui.label(RichText::new(size_plain(seg.bytes)).weak());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(format!("{:.0}%", seg.percent));
+                });
+            });
+            if ui.rect_contains_pointer(row.response.rect) {
+                hovered = Some(i);
+            }
+        };
         egui::Grid::new("memory_legend")
             .num_columns(2)
             .spacing([8.0, 8.0])
             .show(ui, |ui| {
-                for (i, seg) in b.segments.iter().enumerate() {
-                    let row = ui.horizontal(|ui| {
-                        ui.set_width(half);
-                        let (r, _) = ui.allocate_exact_size(Vec2::splat(swatch), Sense::hover());
-                        let c = seg.color;
-                        ui.painter()
-                            .rect_filled(r, 4.0, Color32::from_rgb(c[0], c[1], c[2]));
-                        ui.add_sized(
-                            [name_w, 18.0],
-                            egui::Label::new(&seg.name).truncate().selectable(false),
-                        );
-                        ui.label(RichText::new(size_plain(seg.bytes)).weak());
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(format!("{:.0}%", seg.percent));
-                        });
-                    });
-                    if ui.rect_contains_pointer(row.response.rect) {
-                        hovered = Some(i);
+                for r in 0..rows {
+                    for col in 0..2 {
+                        let i = r + col * rows;
+                        if i < n {
+                            cell(ui, i);
+                        } else {
+                            ui.label("");
+                        }
                     }
-                    if i % 2 == 1 {
-                        ui.end_row();
-                    }
+                    ui.end_row();
                 }
             });
-
         if let Some(seg) = hovered.and_then(|i| b.segments.get(i)) {
             egui::Tooltip::always_open(
                 ui.ctx().clone(),
@@ -614,38 +626,6 @@ impl Memory {
             )
             .show(|ui| ui.label(segment_tooltip(seg)));
         }
-    }
-
-    fn top_apps(&self, ui: &mut egui::Ui, total: f32) {
-        ui.label(RichText::new("Apps using the most memory").strong());
-        let Some(sampler) = self.sampler.as_ref() else {
-            return;
-        };
-        let mut apps = group_by_name(&sampler.processes);
-        apps.sort_by_key(|a| std::cmp::Reverse(a.working_set));
-        apps.truncate(TOP_APPS);
-        let biggest = apps.first().map_or(1, |a| a.working_set.max(1));
-
-        let (name_w, size_w, gap) = (100.0, 64.0, 14.0);
-        let bar_w = (total - 2.0 * (CARD_PAD + 1.0) - name_w - size_w - 2.0 * gap).max(80.0);
-        egui::Grid::new("top_apps")
-            .num_columns(3)
-            .spacing([gap, 10.0])
-            .show(ui, |ui| {
-                for app in &apps {
-                    ui.add_sized(
-                        [name_w, 18.0],
-                        egui::Label::new(friendly_name(&app.name)).truncate(),
-                    );
-                    ui.add(
-                        egui::ProgressBar::new(app.working_set as f32 / biggest as f32)
-                            .desired_width(bar_w)
-                            .fill(ACCENT),
-                    );
-                    ui.label(RichText::new(size_plain(app.working_set)).weak());
-                    ui.end_row();
-                }
-            });
     }
 
     /// The few knobs behind the one button: a slider and tick boxes, nothing technical.

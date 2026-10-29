@@ -30,13 +30,13 @@ fn value_label(tab: TopTab, value: f64) -> String {
 }
 
 pub(super) const MAX_WIDTH: f32 = 880.0;
-const GRAPH_HEIGHT: f32 = 120.0;
+const GRAPH_HEIGHT: f32 = 196.0;
 const SMALL_CARD_HEIGHT: f32 = 150.0;
 const SMALL_GRAPH_HEIGHT: f32 = 40.0;
 /// Samples without GPU data in a row before the card says no GPU was found.
 pub(super) const GPU_MISSING_AFTER: u32 = 3;
 const IO_CARD_HEIGHT: f32 = 210.0;
-const IO_GRAPH_HEIGHT: f32 = 60.0;
+const IO_GRAPH_HEIGHT: f32 = 94.0;
 pub(super) const DISK_FLOOR: f32 = 1024.0 * 1024.0;
 pub(super) const NET_FLOOR: f32 = 128.0 * 1024.0;
 const VIOLET: Color32 = Color32::from_rgb(167, 139, 250);

@@ -1,6 +1,6 @@
 # Memory breakdown bar plan
 
-A card on the Memory Cleaner Home page, "Where your memory goes": one thick stacked bar where each app family has its own color and a segment sized by its share of the memory in use, with a legend of sizes and percentages. Status: **planned, not started**.
+A card on the Memory Cleaner Home page, "Where your memory goes": one thick stacked bar where each app family has its own color and a segment sized by its share of the memory in use, with a legend of sizes and percentages. Status: **built and looked at in the real window**. The Home page has the bar and legend; the old Apps using the most memory card was removed afterwards at the owner's request (the legend already lists the biggest apps). The legend fills top to bottom, largest first, with left-aligned names.
 
 ## Decisions
 

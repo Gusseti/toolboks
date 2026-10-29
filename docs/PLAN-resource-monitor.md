@@ -1,6 +1,6 @@
 # Resource Monitor plan
 
-A second tool in toolboks: a Task Manager style overview of CPU, GPU, memory, disk and network with live graphs and numbers. Same design language as Memory Cleaner (bento cards, rounded corners, 12 px gaps). Status: **planned, not started**.
+A second tool in toolboks: a Task Manager style overview of CPU, GPU, memory, disk and network with live graphs and numbers. Same design language as Memory Cleaner (bento cards, rounded corners, 12 px gaps). Status: **phases 1-5 built and looked at in the real window (Overview and Details); release pending**.
 
 ## Decisions
 
