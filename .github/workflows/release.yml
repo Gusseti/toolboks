@@ -27,13 +27,14 @@ jobs:
 
       - run: cargo build --release --locked
 
+      # The bare exe is the asset: the in-app updater downloads it directly and checks the .sha256.
       - name: Package
         shell: pwsh
         run: |
-          $name = "toolboks-${{ github.ref_name }}-x86_64-pc-windows-msvc"
-          Compress-Archive -Path target/release/toolboks.exe -DestinationPath "$name.zip"
-          (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" | Out-File "$name.zip.sha256" -Encoding ascii
-          "ASSET=$name.zip" | Out-File $env:GITHUB_ENV -Append
+          $name = "toolboks-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe"
+          Copy-Item target/release/toolboks.exe $name
+          (Get-FileHash $name -Algorithm SHA256).Hash.ToLower() + "  $name" | Out-File "$name.sha256" -Encoding ascii
+          "ASSET=$name" | Out-File $env:GITHUB_ENV -Append
 
       - name: Publish GitHub release
         shell: pwsh

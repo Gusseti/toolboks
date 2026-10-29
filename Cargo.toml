@@ -3,13 +3,17 @@ name = "toolboks"
 version = "0.1.0"
 edition = "2021"
 description = "A lightweight toolbox of system utilities"
+license = "MIT"
+repository = "https://github.com/Gusseti/toolboks"
 
 [dependencies]
 # glow (OpenGL) instead of the default wgpu renderer: far smaller and lighter on RAM.
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
 egui_extras = { version = "0.37", default-features = false }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
 sysinfo = "0.40.0"
-windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_Networking_WinHttp", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 opt-level = "z"

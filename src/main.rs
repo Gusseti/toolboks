@@ -5,9 +5,14 @@ use eframe::egui;
 mod app;
 mod elevation;
 mod tools;
+mod update;
 mod win;
+mod winhttp;
 
 fn main() -> eframe::Result {
+    // Removes the previous exe left behind by an update; does nothing otherwise.
+    update::cleanup_old_exe();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(concat!("toolboks ", env!("CARGO_PKG_VERSION")))
