@@ -10,11 +10,12 @@ A lightweight Windows 11 toolbox of small utilities (Rust, egui/eframe with the 
 | Admin rights | Run unelevated; relaunch elevated on demand (UAC) only for admin actions. |
 | Repo and signing | Public, open source, free signing via SignPath Foundation. Do not copy GPL-3.0 code from Mem Reduct; reimplement from Windows API docs. Making the repo public and choosing a license (MIT or Apache-2.0) need the owner's explicit go-ahead. |
 | v1 extras | Auto-clean rules, process exclusions. Tray, hide-to-tray and start-with-Windows are NOT in v1, so auto-clean only runs while the window is open or minimized. |
+| Single exe, no files | The app is one self-contained exe. It never creates folders, config, logs or caches anywhere. All state (exclusions, auto-clean rules, sort/filter) is in memory only and resets on every launch. The C runtime is linked statically (`.cargo/config.toml`), and eframe persistence stays off. Anything that needs persistence (autostart, saved rules) is out unless the owner changes this rule. |
 | Updater | `self_update` (pure Rust, single exe) with checksum verification; releases come from the public repo, so no token is embedded in the exe. |
 
 ## Memory tool phases
 
-1. **Dashboard.** Read-only. Totals (used, available, commit) via `GlobalMemoryStatusEx`, plus a sortable per-process table (working set, private bytes, page faults) via `GetProcessMemoryInfo`. Standby/modified/free breakdown only if the memory-list query works without admin (verify).
+1. **Dashboard (done).** Read-only. Used, available and total RAM, plus a filterable, sortable per-process table (working set, private bytes) via `sysinfo`. Not yet: commit totals, page faults, standby/modified/free breakdown (needs the windows crate or the NT memory-list query; verify whether it works without admin).
 2. **Trim and exclusions.** Per-process `EmptyWorkingSet` with confirm and before/after delta, and an exclusion list. No admin. Skip system and protected processes (System, Idle, Registry, Memory Compression, PPL, our own pid, the shell); access-denied means skip, not error.
 3. **Elevation and purge.** "Relaunch as admin" via `ShellExecute` with the `runas` verb. Opt-in purge of the standby list and low-priority standby list via `NtSetSystemInformation(SystemMemoryListInformation)`. Needs `SeProfileSingleProcessPrivilege`. The API is undocumented: resolve it dynamically, fail soft, verify the command values against sources and test on this Win11 build.
 4. **Auto-clean rules.** Trigger on low free memory and a large standby list, with a cooldown and a notification. Trim runs unelevated; purge only when elevated.
@@ -26,6 +27,7 @@ One-click "free RAM", a scheduled blanket trim of all processes, registry flush,
 
 ## Risks and open items
 
+- Auto-update vs "no files": the updater downloads the new exe and swaps it in, which briefly writes a temp file and the replaced exe next to it. Check that `self_update` leaves nothing behind, or download into memory only.
 - Real benefit on Win11 is unproven; the UI shows measured deltas only.
 - AV and SmartScreen false positives are likely until releases are signed; submit false positives to Microsoft.
 - NT memory-list command values must be checked before use (`EmptyWorkingSets` = 2, `FlushModifiedList` = 3, `PurgePageList` = 4, `PurgeStandbyList` = 5, `PurgeLowPriorityStandbyList` = 6 are from memory, unverified).

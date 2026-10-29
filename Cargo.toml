@@ -7,6 +7,7 @@ description = "A lightweight toolbox of system utilities"
 [dependencies]
 # glow (OpenGL) instead of the default wgpu renderer: far smaller and lighter on RAM.
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
+egui_extras = { version = "0.37", default-features = false }
 sysinfo = "0.40.0"
 
 [profile.release]
