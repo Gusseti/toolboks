@@ -48,19 +48,24 @@ impl Sampler {
         Some(sampler)
     }
 
-    pub fn refresh(&mut self) {
+    /// Cheap refresh of the RAM totals only, for background checks.
+    pub fn refresh_totals(&mut self) {
         self.sys.refresh_memory();
-        self.sys.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing().with_memory(),
-        );
-
         self.totals = Totals {
             total: self.sys.total_memory(),
             used: self.sys.used_memory(),
             available: self.sys.available_memory(),
         };
+    }
+
+    /// Full refresh: totals and the process list.
+    pub fn refresh(&mut self) {
+        self.refresh_totals();
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_memory(),
+        );
         self.processes = self
             .sys
             .processes()

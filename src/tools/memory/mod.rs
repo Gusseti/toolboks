@@ -1,3 +1,4 @@
+mod auto;
 mod memlist;
 mod stats;
 mod trim;
@@ -8,13 +9,16 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
+use self::auto::{decide, AutoClean, Reason, Snapshot, STANDBY_RULE_AVAILABLE_LIMIT_PERCENT};
 use self::memlist::{Command, Lists, MemListError};
 use self::stats::{format_bytes, sort_and_filter, Sampler, SortKey};
 use self::trim::{skip_reason, trim_process, SkipReason, TrimError};
 use super::Tool;
-use crate::elevation;
+use crate::{elevation, win};
 
 const REFRESH: Duration = Duration::from_secs(2);
+/// How often the auto-clean rules are checked, in the background too.
+const AUTO_CHECK: Duration = Duration::from_secs(5);
 const ROW_HEIGHT: f32 = 22.0;
 
 /// Live RAM usage, a per-process table, manual per-process trimming and, with admin rights,
@@ -38,6 +42,8 @@ pub struct Memory {
     pending_system: Option<Command>,
     /// Result of the last action, shown above the table.
     status: Option<String>,
+    auto: AutoClean,
+    last_auto_check: Instant,
 }
 
 impl Memory {
@@ -54,6 +60,8 @@ impl Memory {
             pending: None,
             pending_system: None,
             status: None,
+            auto: AutoClean::new(),
+            last_auto_check: Instant::now(),
         }
     }
 
@@ -164,6 +172,136 @@ impl Memory {
         });
     }
 
+    /// Runs the unattended purge for `reason` and records the outcome in the log.
+    fn run_auto(&mut self, reason: Reason, ctx: &egui::Context) {
+        let command = Command::PurgeLowPriorityStandbyList;
+        let available = |m: &Self| m.sampler.as_ref().map_or(0, |s| s.totals.available);
+        let (avail_before, lists_before) = (available(self), self.lists);
+
+        let entry = match memlist::run(command) {
+            Ok(()) => {
+                self.refresh_now();
+                let mut text = format!(
+                    "Ran {} ({}): available {} \u{2192} {}",
+                    command.title(),
+                    reason.describe(),
+                    format_bytes(avail_before),
+                    format_bytes(available(self))
+                );
+                if let (Some(before), Some(after)) = (lists_before, self.lists) {
+                    text += &format!(
+                        ", standby {} \u{2192} {}",
+                        format_bytes(before.standby),
+                        format_bytes(after.standby)
+                    );
+                }
+                // Flash the taskbar button so a minimized window still tells you.
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                    egui::UserAttentionType::Informational,
+                ));
+                text
+            }
+            Err(MemListError::NotElevated) => {
+                self.auto.rules.enabled = false;
+                "Auto-clean switched off: admin rights are missing.".to_string()
+            }
+            Err(MemListError::Unavailable) => {
+                self.auto.rules.enabled = false;
+                "Auto-clean switched off: not available on this version of Windows.".to_string()
+            }
+            Err(MemListError::Status(code)) => {
+                format!(
+                    "Auto-clean failed ({}): Windows returned status {code:#010x}.",
+                    reason.describe()
+                )
+            }
+        };
+        // Also after a failure, so a persistent error is retried at the cooldown pace, not every check.
+        self.auto.mark_run();
+        self.auto
+            .push_log(format!("{}  {entry}", win::local_time_hms()));
+    }
+
+    fn auto_panel(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Auto-clean (admin)").show(ui, |ui| {
+            if !self.elevated {
+                ui.label(
+                    "Auto-clean runs the low-priority standby purge, which needs administrator \
+                     rights. Relaunch as admin from the panel above to use it.",
+                );
+                return;
+            }
+
+            let rules = &mut self.auto.rules;
+            let mut switched_on = false;
+            if ui
+                .checkbox(&mut rules.enabled, "Enable auto-clean")
+                .changed()
+            {
+                switched_on = rules.enabled;
+            }
+            ui.weak(
+                "Only works while this window is open or minimized. Settings are not saved and \
+                 reset when the app closes.",
+            );
+
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut rules.low_available, "Available memory below");
+                ui.add(
+                    egui::DragValue::new(&mut rules.low_available_percent)
+                        .range(1..=50)
+                        .suffix(" %"),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut rules.big_standby, "Standby list above");
+                ui.add(
+                    egui::DragValue::new(&mut rules.big_standby_gib)
+                        .range(0.5..=64.0)
+                        .speed(0.1)
+                        .suffix(" GiB"),
+                );
+                ui.weak(format!(
+                    "while available is under {STANDBY_RULE_AVAILABLE_LIMIT_PERCENT:.0} %"
+                ));
+            });
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut rules.interval, "Every");
+                ui.add(
+                    egui::DragValue::new(&mut rules.interval_minutes)
+                        .range(1..=1440)
+                        .suffix(" min"),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("At most once every");
+                ui.add(
+                    egui::DragValue::new(&mut rules.cooldown_minutes)
+                        .range(1..=120)
+                        .suffix(" min"),
+                );
+            });
+
+            if switched_on {
+                // Count the cooldown and interval from the moment it was switched on.
+                self.auto.mark_run();
+            }
+
+            ui.add_space(4.0);
+            ui.label("Activity");
+            if self.auto.log.is_empty() {
+                ui.weak("Nothing yet.");
+            }
+            egui::ScrollArea::vertical()
+                .max_height(120.0)
+                .show(ui, |ui| {
+                    for entry in &self.auto.log {
+                        ui.label(entry);
+                    }
+                });
+        });
+    }
+
     fn system_panel(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("System-wide cleaning (admin)").show(ui, |ui| {
             if let Some(command) = self.pending_system {
@@ -235,6 +373,31 @@ impl Tool for Memory {
         "Memory"
     }
 
+    fn tick(&mut self, ctx: &egui::Context) {
+        if !self.elevated || !self.auto.rules.enabled {
+            return;
+        }
+        ctx.request_repaint_after(AUTO_CHECK);
+        if self.last_auto_check.elapsed() < AUTO_CHECK {
+            return;
+        }
+        self.last_auto_check = Instant::now();
+
+        let Some(sampler) = self.sampler.as_mut() else {
+            return;
+        };
+        sampler.refresh_totals();
+        self.lists = memlist::query();
+        let snapshot = Snapshot {
+            total: sampler.totals.total,
+            available: sampler.totals.available,
+            standby: self.lists.map(|l| l.standby),
+        };
+        if let Some(reason) = decide(&self.auto.rules, &snapshot, self.auto.since_last_run()) {
+            self.run_auto(reason, ctx);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         if self.sampler.is_none() {
             ui.label("Memory information is not available on this system.");
@@ -271,6 +434,7 @@ impl Tool for Memory {
             ui.add_space(4.0);
         }
         self.system_panel(ui);
+        self.auto_panel(ui);
         self.exclusions_list(ui);
 
         let process_count = self.sampler.as_ref().map_or(0, |s| s.processes.len());
