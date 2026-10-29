@@ -1,5 +1,6 @@
 mod admin;
 mod auto;
+mod groups;
 mod home;
 mod memlist;
 mod stats;
