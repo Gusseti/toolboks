@@ -476,7 +476,7 @@ impl Memory {
             .min_size(Vec2::new(width, 28.0))
             .corner_radius(4.0);
         let response = ui.add_enabled(!self.busy(), button).on_hover_text(
-            "Moves memory that apps are not using right now out of RAM. Windows does this by              itself when it needs to. You may notice no difference.",
+            "Moves memory that apps are not using right now out of RAM. Windows does this by itself when it needs to. You may notice no difference.",
         );
         if response.clicked() {
             self.start_optimize(ctx, false);
@@ -531,17 +531,15 @@ impl Memory {
             .corner_radius(4.0)
             .inner_margin(6.0)
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new(
-                            "Used memory is not a problem. Free memory is wasted memory.                              Look at Commit and the last run report if your PC feels slow.",
-                        )
-                        .small(),
-                    );
-                    if ui.small_button("Got it").clicked() {
-                        self.hint_dismissed = true;
-                    }
-                });
+                ui.label(
+                    RichText::new(
+                        "Used memory is not a problem. Free memory is wasted memory. Look at Commit and the last run report if your PC feels slow.",
+                    )
+                    .small(),
+                );
+                if ui.small_button("Got it").clicked() {
+                    self.hint_dismissed = true;
+                }
             });
         ui.add_space(GAP);
     }
@@ -562,7 +560,7 @@ impl Memory {
         });
         ui.label(
             RichText::new(
-                "Off by default. Cleaning on a timer is the least proven option and can make                  apps briefly slower.",
+                "Off by default. Cleaning on a timer is the least proven option and can make apps briefly slower.",
             )
             .weak()
             .small(),
