@@ -17,6 +17,7 @@ pub mod model;
 mod page;
 pub mod plan;
 pub mod startup;
+pub mod tasks;
 
 /// State of the Apps page. Package calls are slow, so they run on worker threads and report
 /// back over these channels.
@@ -54,6 +55,36 @@ struct StartupState {
     message: Option<String>,
 }
 
+/// Result of a short worker run on the Tasks page.
+enum TaskJob {
+    /// One task was switched: (title, outcome).
+    Set(String, Result<tasks::UndoStep, String>),
+    /// Undo ran; the steps that failed come back with the counts.
+    Undo {
+        remaining: Vec<tasks::UndoStep>,
+        done: usize,
+        failed: usize,
+    },
+}
+
+/// State of the Tasks page. Task Scheduler (COM) calls run on worker threads only.
+#[derive(Default)]
+struct TasksState {
+    statuses: Vec<tasks::TaskStatus>,
+    /// A load was started and not yet invalidated.
+    started: bool,
+    loading: Option<Receiver<Vec<tasks::TaskStatus>>>,
+    /// A change or undo is running.
+    working: Option<Receiver<TaskJob>>,
+    /// The task shown in the inspector.
+    focus: Option<&'static str>,
+    /// A Careful task waiting for the inline "Switch off?" confirm.
+    pending: Option<&'static str>,
+    /// Changes of this session, oldest first.
+    steps: Vec<tasks::UndoStep>,
+    message: Option<String>,
+}
+
 pub struct Debloater {
     env: model::Env,
     statuses: Vec<model::Status>,
@@ -71,6 +102,7 @@ pub struct Debloater {
     loaded: bool,
     apps: AppsState,
     startup: StartupState,
+    tasks: TasksState,
 }
 
 impl Debloater {
@@ -87,6 +119,7 @@ impl Debloater {
             loaded: false,
             apps: AppsState::default(),
             startup: StartupState::default(),
+            tasks: TasksState::default(),
         }
     }
 }
@@ -97,7 +130,7 @@ impl Tool for Debloater {
     }
 
     fn pages(&self) -> &'static [&'static str] {
-        &["Privacy and ads", "Apps", "Startup"]
+        &["Privacy and ads", "Apps", "Startup", "Tasks"]
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {

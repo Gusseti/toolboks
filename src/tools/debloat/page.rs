@@ -6,8 +6,9 @@ use eframe::egui::{self, Color32, RichText, Sense, Stroke, Vec2};
 
 use super::apps::{self, AppRow, AppRun};
 use super::model::{Applicable, Edition, Group, Hive, Item, RegValue, Risk, State, Status};
-use super::startup::{self, Class, Entry, Source, UndoStep};
-use super::{backend, catalog, plan, Debloater};
+use super::startup::{self, Class, Entry, Source};
+use super::tasks::{self, TaskDef, TaskState};
+use super::{backend, catalog, plan, Debloater, TaskJob};
 use crate::elevation;
 use crate::ui::{self, AMBER, CARD_PAD, GAP, GREEN};
 
@@ -118,6 +119,13 @@ impl Debloater {
             }
         }
 
+        if page == 3 {
+            self.tasks_poll();
+            if !self.tasks.started {
+                self.tasks_refresh(ui.ctx());
+            }
+        }
+
         let inspector = egui::Frame::NONE
             .fill(ui.visuals().extreme_bg_color)
             .inner_margin(INSPECTOR_PAD);
@@ -131,7 +139,8 @@ impl Debloater {
                     .show(ui, |ui| match page {
                         0 => self.inspector(ui),
                         1 => self.apps_inspector(ui),
-                        _ => self.startup_inspector(ui),
+                        2 => self.startup_inspector(ui),
+                        _ => self.tasks_inspector(ui),
                     });
             });
         let rect = panel.response.rect;
@@ -147,7 +156,8 @@ impl Debloater {
             match page {
                 0 => self.privacy_page(ui),
                 1 => self.apps_page(ui),
-                _ => self.startup_page(ui),
+                2 => self.startup_page(ui),
+                _ => self.tasks_page(ui),
             }
         });
     }
@@ -843,13 +853,13 @@ fn confirm_off_text(entry: &Entry) -> String {
 
 /// Undoes steps newest first through `undo_one`: the last one only, or all. Steps that fail stay
 /// in the list (original order). Returns (undone, failed).
-fn run_undo(
-    steps: &mut Vec<UndoStep>,
+fn run_undo<T>(
+    steps: &mut Vec<T>,
     all: bool,
-    mut undo_one: impl FnMut(&UndoStep) -> Result<(), String>,
+    mut undo_one: impl FnMut(&T) -> Result<(), String>,
 ) -> (usize, usize) {
     let take = if all { steps.len() } else { steps.len().min(1) };
-    let batch: Vec<UndoStep> = steps.split_off(steps.len() - take);
+    let batch: Vec<T> = steps.split_off(steps.len() - take);
     let (mut done, mut kept) = (0, Vec::new());
     for step in batch.into_iter().rev() {
         if undo_one(&step).is_ok() {
@@ -1183,10 +1193,466 @@ impl Debloater {
     }
 }
 
+const TASKS_NEVER_NOTE: &str =
+    "Update, security, repair and system maintenance tasks are never offered.";
+const TASKS_NOTE: &str =
+    "Switching a task off only pauses it. Undo works until you close toolboks; \
+                          you can switch it back on here.";
+
+/// Text for the small state column of a task row.
+fn task_state_text(state: &TaskState) -> &'static str {
+    match state {
+        TaskState::Enabled => "On",
+        TaskState::Disabled => "Off",
+        TaskState::NotPresent => "Not on this PC",
+        TaskState::Protected => "Protected by Windows",
+        TaskState::Unknown(_) => "Unknown",
+    }
+}
+
+/// Only tasks that exist and are readable have a usable switch.
+fn task_switchable(state: &TaskState) -> bool {
+    matches!(state, TaskState::Enabled | TaskState::Disabled)
+}
+
+/// Catalog joined with statuses by id; a task without a status reads as Unknown.
+fn join_tasks(defs: &[TaskDef], statuses: &[tasks::TaskStatus]) -> Vec<(TaskDef, TaskState)> {
+    defs.iter()
+        .map(|d| {
+            let state = statuses.iter().find(|s| s.id == d.id).map_or_else(
+                || TaskState::Unknown("not read".into()),
+                |s| s.state.clone(),
+            );
+            (*d, state)
+        })
+        .collect()
+}
+
+/// Joined rows split into (safe, advanced), order kept.
+fn group_tasks(rows: &[(TaskDef, TaskState)]) -> [Vec<&(TaskDef, TaskState)>; 2] {
+    let mut groups: [Vec<&(TaskDef, TaskState)>; 2] = [Vec::new(), Vec::new()];
+    for row in rows {
+        match row.0.risk {
+            Risk::Safe => groups[0].push(row),
+            Risk::Careful => groups[1].push(row),
+        }
+    }
+    groups
+}
+
+fn confirm_task_text(def: &TaskDef) -> String {
+    format!(
+        "Switch off {}? {} You can switch it back on.",
+        def.title, def.could_break
+    )
+}
+
+impl Debloater {
+    fn tasks_refresh(&mut self, ctx: &egui::Context) {
+        self.tasks.started = true;
+        if self.tasks.loading.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(tasks::statuses(&tasks::WinTasks));
+            ctx.request_repaint();
+        });
+        self.tasks.loading = Some(rx);
+    }
+
+    fn tasks_poll(&mut self) {
+        if let Some(rx) = &self.tasks.loading {
+            match rx.try_recv() {
+                Ok(list) => {
+                    self.tasks.loading = None;
+                    self.tasks.statuses = list;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.tasks.loading = None;
+                    self.tasks.message = Some("Reading the tasks stopped unexpectedly.".into());
+                }
+            }
+        }
+        let Some(rx) = &self.tasks.working else {
+            return;
+        };
+        let job = match rx.try_recv() {
+            Ok(job) => Some(job),
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => None,
+        };
+        self.tasks.working = None;
+        self.tasks.started = false; // reload right away
+        self.tasks.message = Some(match job {
+            Some(TaskJob::Set(title, Ok(step))) => {
+                let now = if step.was_enabled { "off" } else { "on" };
+                self.tasks.steps.push(step);
+                format!("{title} is now {now}.")
+            }
+            Some(TaskJob::Set(title, Err(e))) => format!("Could not change {title}: {e}"),
+            Some(TaskJob::Undo {
+                remaining,
+                done,
+                failed,
+            }) => {
+                self.tasks.steps = remaining;
+                startup_undo_summary(done, failed)
+            }
+            None => "The change stopped unexpectedly.".to_string(),
+        });
+    }
+
+    fn tasks_set(&mut self, ctx: &egui::Context, def: TaskDef, enable: bool) {
+        self.tasks.pending = None;
+        if self.tasks.working.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = tasks::set_enabled(&mut tasks::WinTasks, &def, enable);
+            let _ = tx.send(TaskJob::Set(def.title.to_string(), result));
+            ctx.request_repaint();
+        });
+        self.tasks.working = Some(rx);
+    }
+
+    fn tasks_undo(&mut self, ctx: &egui::Context, all: bool) {
+        self.tasks.pending = None;
+        if self.tasks.working.is_some() {
+            return;
+        }
+        let mut steps = std::mem::take(&mut self.tasks.steps);
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let (done, failed) =
+                run_undo(&mut steps, all, |s| tasks::undo(&mut tasks::WinTasks, s));
+            let _ = tx.send(TaskJob::Undo {
+                remaining: steps,
+                done,
+                failed,
+            });
+            ctx.request_repaint();
+        });
+        self.tasks.working = Some(rx);
+    }
+
+    fn tasks_busy(&self) -> bool {
+        self.tasks.loading.is_some() || self.tasks.working.is_some()
+    }
+
+    fn tasks_page(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let admin = if self.env.elevated {
+                "Running as administrator"
+            } else {
+                "Not running as administrator"
+            };
+            ui.label(RichText::new(admin).small().weak());
+            if ui
+                .add_enabled(
+                    !self.tasks_busy(),
+                    egui::Link::new(RichText::new("Refresh").small()),
+                )
+                .clicked()
+            {
+                self.tasks_refresh(ui.ctx());
+            }
+        });
+        if let Some(message) = &self.tasks.message {
+            ui.label(RichText::new(message).small().weak());
+        }
+        ui.add_space(GAP - 2.0);
+
+        let mut action: Option<(TaskDef, bool)> = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let rows = join_tasks(tasks::catalog(), &self.tasks.statuses);
+                if self.tasks.loading.is_some() && self.tasks.statuses.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("Loading...");
+                    });
+                } else if rows.is_empty() {
+                    ui.weak("No tasks to show.");
+                }
+                let [safe, advanced] = group_tasks(&rows);
+                if !safe.is_empty() {
+                    ui.label(RichText::new("Safe to switch off").strong());
+                    for (def, state) in safe {
+                        action = action.take().or(self.task_row(ui, def, state));
+                    }
+                    ui.add_space(GAP);
+                }
+                if !advanced.is_empty() {
+                    egui::CollapsingHeader::new(
+                        RichText::new("Advanced: may affect your hardware or apps").strong(),
+                    )
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        for (def, state) in advanced {
+                            action = action.take().or(self.task_row(ui, def, state));
+                        }
+                    });
+                    ui.add_space(GAP);
+                }
+                ui.label(RichText::new(TASKS_NEVER_NOTE).small().weak());
+            });
+
+        if let Some((def, enable)) = action {
+            self.tasks.focus = Some(def.id);
+            if !enable && def.risk == Risk::Careful {
+                self.tasks.pending = Some(def.id);
+            } else {
+                self.tasks_set(&ui.ctx().clone(), def, enable);
+            }
+        }
+    }
+
+    /// Draws one row; returns the requested new state if the switch was clicked.
+    fn task_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        def: &TaskDef,
+        state: &TaskState,
+    ) -> Option<(TaskDef, bool)> {
+        let focused = self.tasks.focus == Some(def.id);
+        let switchable = task_switchable(state);
+        let usable = switchable && self.env.elevated && !self.tasks_busy();
+
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
+        if focused || response.hovered() {
+            let fill = if focused {
+                ui.visuals().widgets.active.weak_bg_fill
+            } else {
+                ui.visuals().widgets.hovered.weak_bg_fill
+            };
+            ui.painter().rect_filled(rect, 3.0, fill);
+        }
+        if response.clicked() {
+            self.tasks.focus = Some(def.id);
+        }
+
+        let weak = ui.visuals().weak_text_color();
+        let text_color = if switchable {
+            ui.visuals().text_color()
+        } else {
+            weak
+        };
+        let mut on = *state == TaskState::Enabled;
+        let mut changed = false;
+        let small = if switchable && !self.env.elevated {
+            "Needs admin"
+        } else {
+            task_state_text(state)
+        };
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(usable, |ui| {
+                    changed = ui::toggle_switch(ui, &mut on).changed();
+                });
+                ui.add(
+                    egui::Label::new(RichText::new(def.title).color(text_color)).selectable(false),
+                );
+                ui.add(
+                    egui::Label::new(RichText::new(small).small().color(weak)).selectable(false),
+                );
+            });
+        });
+        // Risk pill, right aligned.
+        let color = if switchable {
+            risk_color(def.risk)
+        } else {
+            weak
+        };
+        let galley = ui.painter().layout_no_wrap(
+            risk_text(def.risk).to_string(),
+            egui::TextStyle::Small.resolve(ui.style()),
+            color,
+        );
+        let pill = egui::Rect::from_center_size(
+            rect.right_center() - Vec2::new(4.0 + galley.size().x / 2.0 + 5.0, 0.0),
+            galley.size() + Vec2::new(10.0, 2.0),
+        );
+        ui.painter()
+            .rect_filled(pill, 8.0, color.gamma_multiply(0.15));
+        ui.painter()
+            .galley(pill.center() - galley.size() / 2.0, galley, color);
+        changed.then_some((*def, on))
+    }
+
+    fn tasks_inspector(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        ui.spacing_mut().item_spacing.y = 4.0;
+
+        // Inline confirm for a Careful task.
+        if let Some(id) = self.tasks.pending {
+            match tasks::catalog().iter().find(|d| d.id == id) {
+                Some(def) => {
+                    ui.label(RichText::new("Switch off?").strong());
+                    ui.label(confirm_task_text(def));
+                    ui.horizontal(|ui| {
+                        if ui.button("Switch off").clicked() {
+                            self.tasks_set(&ctx, *def, false);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.tasks.pending = None;
+                        }
+                    });
+                    ui.add_space(GAP);
+                }
+                None => self.tasks.pending = None,
+            }
+        }
+
+        ui.label(RichText::new("About this item").strong());
+        let def = self
+            .tasks
+            .focus
+            .and_then(|id| tasks::catalog().iter().find(|d| d.id == id));
+        match def {
+            None => {
+                ui.weak("Click an item to see what it changes.");
+            }
+            Some(def) => {
+                ui.label(RichText::new(def.title).strong());
+                ui.label(def.what_changes);
+                ui.label(RichText::new("What could break").small().weak());
+                ui.label(def.could_break);
+                ui.label(RichText::new("Task").small().weak());
+                ui.add(egui::Label::new(RichText::new(def.path).small()).wrap());
+            }
+        }
+
+        if !self.env.elevated {
+            ui.add_space(GAP);
+            ui.label("Changing a task needs administrator rights.");
+            if ui.button("Restart as admin").clicked() {
+                if elevation::relaunch_elevated_with_args(&["--open", "Debloater/Tasks"]) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    self.tasks.message = Some("Elevation was cancelled.".to_string());
+                }
+            }
+            ui.label(
+                RichText::new("Undo history is lost when restarting")
+                    .small()
+                    .weak(),
+            );
+        }
+
+        ui.add_space(GAP);
+        ui.label(RichText::new("Undo").strong());
+        let working = self.tasks.working.is_some();
+        if working {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Working...");
+            });
+        }
+        let count = self.tasks.steps.len();
+        ui.label(plural(count, "change this session", "changes this session"));
+        let has = count > 0 && !working;
+        if ui
+            .add_enabled(has, egui::Button::new("Undo last change"))
+            .clicked()
+        {
+            self.tasks_undo(&ctx, false);
+        }
+        if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
+            self.tasks_undo(&ctx, true);
+        }
+        if count > 0 && ui.link(RichText::new("Copy undo steps").small()).clicked() {
+            ctx.copy_text(tasks::undo_text(&self.tasks.steps));
+        }
+        ui.label(RichText::new(TASKS_NOTE).small().weak());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tools::debloat::model::Edition;
+    use crate::tools::debloat::startup::UndoStep;
+
+    fn task_def(id: &'static str, risk: Risk) -> TaskDef {
+        TaskDef {
+            id,
+            path: "\\T",
+            title: id,
+            what_changes: "",
+            could_break: "It may stop X.",
+            risk,
+        }
+    }
+
+    #[test]
+    fn tasks_join_group_and_labels() {
+        let defs = [
+            task_def("a", Risk::Careful),
+            task_def("b", Risk::Safe),
+            task_def("c", Risk::Safe),
+        ];
+        let statuses = [
+            tasks::TaskStatus {
+                id: "b",
+                state: TaskState::Enabled,
+            },
+            tasks::TaskStatus {
+                id: "a",
+                state: TaskState::Protected,
+            },
+        ];
+        let rows = join_tasks(&defs, &statuses);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].1, TaskState::Protected);
+        assert_eq!(rows[1].1, TaskState::Enabled);
+        assert!(matches!(rows[2].1, TaskState::Unknown(_)));
+        let [safe, adv] = group_tasks(&rows);
+        assert_eq!(safe.iter().map(|r| r.0.id).collect::<Vec<_>>(), ["b", "c"]);
+        assert_eq!(adv.len(), 1);
+        let [s, a] = group_tasks(&[]);
+        assert!(s.is_empty() && a.is_empty());
+        assert!(join_tasks(&[], &statuses).is_empty());
+
+        assert_eq!(task_state_text(&TaskState::Enabled), "On");
+        assert_eq!(task_state_text(&TaskState::Disabled), "Off");
+        assert_eq!(task_state_text(&TaskState::NotPresent), "Not on this PC");
+        assert_eq!(
+            task_state_text(&TaskState::Protected),
+            "Protected by Windows"
+        );
+        assert_eq!(task_state_text(&TaskState::Unknown("x".into())), "Unknown");
+        assert!(task_switchable(&TaskState::Disabled));
+        assert!(!task_switchable(&TaskState::Protected));
+        assert!(!task_switchable(&TaskState::NotPresent));
+        assert!(confirm_task_text(&defs[0]).contains("It may stop X."));
+    }
+
+    #[test]
+    fn run_undo_works_for_task_steps() {
+        let step = |id: &'static str| tasks::UndoStep {
+            id,
+            path: "\\T",
+            was_enabled: true,
+        };
+        let mut steps = vec![step("a"), step("b")];
+        let (done, failed) = run_undo(&mut steps, true, |s| {
+            if s.id == "a" {
+                Err("no".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!((done, failed), (1, 1));
+        assert_eq!(steps[0].id, "a");
+    }
 
     fn entry(name: &str, class: Class, source: Source) -> Entry {
         Entry {
@@ -1272,7 +1738,7 @@ mod tests {
         let (done, failed) = run_undo(&mut steps, false, |_| Ok(()));
         assert_eq!((done, failed), (1, 0));
         assert_eq!(steps[0].name, "a");
-        assert_eq!(run_undo(&mut Vec::new(), true, |_| Ok(())), (0, 0));
+        assert_eq!(run_undo(&mut Vec::<u8>::new(), true, |_| Ok(())), (0, 0));
     }
 
     fn item(id: &'static str, group: Group, risk: Risk) -> Item {
