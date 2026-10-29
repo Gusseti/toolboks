@@ -1,7 +1,10 @@
 //! The Debloater pages: a centered item list and a right-hand Review inspector.
 
+use std::sync::mpsc;
+
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, Vec2};
 
+use super::apps::{self, AppRow, AppRun};
 use super::model::{Applicable, Edition, Group, Hive, Item, RegValue, Risk, State, Status};
 use super::{backend, catalog, plan, Debloater};
 use crate::elevation;
@@ -100,6 +103,13 @@ impl Debloater {
             self.refresh();
         }
 
+        if page == 1 {
+            self.apps_poll();
+            if !self.apps.started {
+                self.apps_refresh(ui.ctx());
+            }
+        }
+
         let inspector = egui::Frame::NONE
             .fill(ui.visuals().extreme_bg_color)
             .inner_margin(INSPECTOR_PAD);
@@ -110,7 +120,13 @@ impl Debloater {
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| self.inspector(ui));
+                    .show(ui, |ui| {
+                        if page == 0 {
+                            self.inspector(ui);
+                        } else {
+                            self.apps_inspector(ui);
+                        }
+                    });
             });
         let rect = panel.response.rect;
         ui.painter().vline(
@@ -125,9 +141,7 @@ impl Debloater {
             if page == 0 {
                 self.privacy_page(ui);
             } else {
-                ui.centered_and_justified(|ui| {
-                    ui.weak("App removal comes in a later step.");
-                });
+                self.apps_page(ui);
             }
         });
     }
@@ -462,6 +476,290 @@ fn undo_text(run: &plan::Run) -> String {
     out
 }
 
+const PROTECTED_NOTE: &str = "Store, Edge, Windows security, Photos, Calculator, Xbox services, \
+                              and system components are never offered.";
+const REINSTALL_NOTE: &str = "Removed apps can be reinstalled from the Microsoft Store. Removal applies to your account only.";
+
+fn app_state_text(installed: bool) -> &'static str {
+    if installed {
+        "Installed"
+    } else {
+        "Not installed"
+    }
+}
+
+/// Result line for a removal run, plus the failed apps with their reason. `title` maps an app id
+/// to its display title.
+fn app_summary(run: &AppRun, title: impl Fn(&str) -> String) -> String {
+    let mut out = format!("Removed {}, failed {}", run.removed.len(), run.failed.len());
+    for (id, reason) in &run.failed {
+        out.push_str(&format!("\n{}: {reason}", title(id)));
+    }
+    out
+}
+
+fn app_title(id: &str) -> String {
+    apps::curated()
+        .iter()
+        .find(|c| c.id == id)
+        .map_or_else(|| id.to_string(), |c| c.title.to_string())
+}
+
+/// Opens the Microsoft Store start page.
+fn open_store() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "", "ms-windows-store://home"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
+}
+
+impl Debloater {
+    /// Starts reading the installed apps on a worker thread (no-op while one is running).
+    fn apps_refresh(&mut self, ctx: &egui::Context) {
+        self.apps.started = true;
+        if self.apps.loading.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(apps::rows(&apps::WinPackages));
+            ctx.request_repaint();
+        });
+        self.apps.loading = Some(rx);
+    }
+
+    /// Picks up finished worker results.
+    fn apps_poll(&mut self) {
+        if let Some(rx) = &self.apps.loading {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.apps.loading = None;
+                    match result {
+                        Ok(rows) => {
+                            self.apps.rows = rows;
+                            self.apps.error = None;
+                            let rows = &self.apps.rows;
+                            self.apps.selected.retain(|id| {
+                                rows.iter()
+                                    .any(|r| r.entry.id == *id && r.installed.is_some())
+                            });
+                        }
+                        Err(e) => self.apps.error = Some(e),
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.apps.loading = None;
+                    self.apps.error = Some("Reading the apps stopped unexpectedly.".to_string());
+                }
+            }
+        }
+        if let Some(rx) = &self.apps.removing {
+            match rx.try_recv() {
+                Ok(run) => {
+                    self.apps.removing = None;
+                    self.apps.message = Some(app_summary(&run, app_title));
+                    self.apps.last_run = Some(run);
+                    self.apps.selected.clear();
+                    self.apps.started = false; // reload right away
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.apps.removing = None;
+                    self.apps.message = Some("Removal stopped unexpectedly.".to_string());
+                    self.apps.started = false;
+                }
+            }
+        }
+    }
+
+    fn apps_start_remove(&mut self, ctx: &egui::Context) {
+        self.apps.confirming = false;
+        if self.apps.removing.is_some() {
+            return;
+        }
+        let rows = self.apps.rows.clone();
+        let ids: Vec<&'static str> = self.apps.selected.iter().copied().collect();
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let run = apps::remove_apps(&rows, &ids, &mut apps::WinPackages);
+            let _ = tx.send(run);
+            ctx.request_repaint();
+        });
+        self.apps.removing = Some(rx);
+    }
+
+    fn apps_page(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Apps for your account").small().weak());
+            let busy = self.apps.loading.is_some() || self.apps.removing.is_some();
+            if ui
+                .add_enabled(!busy, egui::Link::new(RichText::new("Refresh").small()))
+                .clicked()
+            {
+                self.apps_refresh(ui.ctx());
+            }
+        });
+        ui.add_space(GAP - 2.0);
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if let Some(error) = &self.apps.error {
+                    ui.label(error.as_str());
+                } else if self.apps.loading.is_some() && self.apps.rows.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("Loading apps...");
+                    });
+                } else if self.apps.rows.is_empty() {
+                    ui.weak("No apps to show.");
+                }
+                let rows = self.apps.rows.clone();
+                for row in &rows {
+                    self.app_row(ui, row);
+                }
+                ui.add_space(GAP);
+                ui.label(RichText::new("Protected by toolboks").small().weak());
+                ui.label(RichText::new(PROTECTED_NOTE).small().weak());
+                ui.add_space(GAP);
+                self.about_app(ui);
+            });
+    }
+
+    fn app_row(&mut self, ui: &mut egui::Ui, row: &AppRow) {
+        let id = row.entry.id;
+        let installed = row.installed.is_some();
+        let focused = self.apps.focus == Some(id);
+
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
+        if focused || response.hovered() {
+            let fill = if focused {
+                ui.visuals().widgets.active.weak_bg_fill
+            } else {
+                ui.visuals().widgets.hovered.weak_bg_fill
+            };
+            ui.painter().rect_filled(rect, 3.0, fill);
+        }
+        if response.clicked() {
+            self.apps.focus = Some(id);
+        }
+
+        let mut ticked = self.apps.selected.contains(id);
+        let text_color = if installed {
+            ui.visuals().text_color()
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        let state_color = ui.visuals().weak_text_color();
+        let mut checkbox_clicked = false;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(installed, |ui| {
+                    checkbox_clicked = ui.add(egui::Checkbox::without_text(&mut ticked)).changed();
+                });
+                ui.add(
+                    egui::Label::new(RichText::new(row.entry.title).color(text_color))
+                        .selectable(false),
+                );
+            });
+        });
+        ui.painter().text(
+            rect.right_center() - Vec2::new(4.0, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            app_state_text(installed),
+            egui::TextStyle::Small.resolve(ui.style()),
+            state_color,
+        );
+        if checkbox_clicked {
+            self.apps.focus = Some(id);
+            if ticked {
+                self.apps.selected.insert(id);
+            } else {
+                self.apps.selected.remove(id);
+            }
+        }
+    }
+
+    fn about_app(&self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("About this app").strong());
+        let entry = self
+            .apps
+            .focus
+            .and_then(|id| self.apps.rows.iter().find(|r| r.entry.id == id))
+            .map(|r| r.entry);
+        let Some(entry) = entry else {
+            ui.weak("Click an app to see what removing it changes.");
+            return;
+        };
+        ui.label(RichText::new(entry.title).strong());
+        ui.label(entry.what_changes);
+        ui.label(RichText::new("What could break").small().weak());
+        ui.label(entry.could_break);
+    }
+
+    fn apps_inspector(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.label(RichText::new("Review").strong());
+
+        let count = self.apps.selected.len();
+        ui.label(plural(count, "app selected", "apps selected"));
+
+        ui.add_space(GAP);
+        let removing = self.apps.removing.is_some();
+        if count == 0 || removing {
+            self.apps.confirming = false;
+        }
+        if self.apps.confirming {
+            ui.label(format!(
+                "Remove {} for your account? Removed apps can be reinstalled from the \
+                 Microsoft Store.",
+                plural(count, "app", "apps")
+            ));
+            ui.horizontal(|ui| {
+                if ui.button("Remove").clicked() {
+                    self.apps_start_remove(&ctx);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.apps.confirming = false;
+                }
+            });
+        } else if ui
+            .add_enabled(
+                count > 0 && !removing,
+                egui::Button::new(format!("Remove {}", plural(count, "app", "apps"))),
+            )
+            .clicked()
+        {
+            self.apps.confirming = true;
+        }
+        if removing {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Removing...");
+            });
+        }
+        if let Some(message) = &self.apps.message {
+            ui.label(RichText::new(message).small().weak());
+        }
+
+        ui.add_space(GAP);
+        if ui
+            .link(RichText::new("Open Microsoft Store").small())
+            .clicked()
+        {
+            open_store();
+        }
+        ui.label(RichText::new(REINSTALL_NOTE).small().weak());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,6 +894,22 @@ mod tests {
         assert!(text.contains("previous: number 1"));
         assert!(text.contains("HKEY_LOCAL_MACHINE"));
         assert!(text.contains("previous: not set"));
+    }
+
+    #[test]
+    fn app_summary_lists_failures() {
+        let run = AppRun {
+            removed: vec![("a", "A_1".into()), ("b", "B_1".into())],
+            failed: vec![("c", "denied".into())],
+        };
+        let text = app_summary(&run, |id| id.to_uppercase());
+        assert_eq!(text, "Removed 2, failed 1\nC: denied");
+        assert_eq!(
+            app_summary(&AppRun::default(), |id| id.into()),
+            "Removed 0, failed 0"
+        );
+        assert_eq!(app_state_text(true), "Installed");
+        assert_eq!(app_state_text(false), "Not installed");
     }
 
     #[test]

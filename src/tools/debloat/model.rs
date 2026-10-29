@@ -41,6 +41,8 @@ pub struct RegSetting {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
     PrivacyAds,
+    /// Apps are handled by `apps.rs`, not by registry items, so no `Item` uses this yet.
+    #[allow(dead_code)]
     Apps,
 }
 
