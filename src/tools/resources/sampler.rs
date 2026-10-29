@@ -99,7 +99,8 @@ pub struct TopProcesses {
 
 pub enum Msg {
     Info(Info),
-    Sample(Sample),
+    /// Boxed: a sample is large, and the enum would otherwise be as big as one.
+    Sample(Box<Sample>),
 }
 
 pub struct Sampler {
@@ -368,7 +369,7 @@ impl Sampler {
                         // Filled in by the phase 4 work.
                         top: TopProcesses::default(),
                     };
-                    if tx.send(Msg::Sample(sample)).is_err() {
+                    if tx.send(Msg::Sample(Box::new(sample))).is_err() {
                         return;
                     }
                     ctx.request_repaint();
@@ -552,7 +553,7 @@ mod tests {
         let samples: Vec<&Sample> = msgs
             .iter()
             .filter_map(|m| match m {
-                Msg::Sample(s) => Some(s),
+                Msg::Sample(s) => Some(&**s),
                 _ => None,
             })
             .collect();

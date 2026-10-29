@@ -82,7 +82,7 @@ impl crate::tools::Tool for Resources {
                         }
                         None => self.gpu_missing = self.gpu_missing.saturating_add(1),
                     }
-                    self.last = Some(sample);
+                    self.last = Some(*sample);
                 }
             }
         }
