@@ -30,6 +30,9 @@ const STATUS_PRIVILEGE_NOT_HELD: i32 = 0xC000_0061_u32 as i32;
 pub enum Command {
     /// Trim the working set of every process.
     EmptyWorkingSets = 2,
+    /// Write the modified (dirty) pages to disk so they become cached pages. Used by the Home
+    /// page's deeper clean only; not part of `ALL`.
+    FlushModifiedList = 3,
     /// Drop all cached (standby) pages.
     PurgeStandbyList = 4,
     /// Drop only the lowest-priority cached pages.
@@ -46,6 +49,7 @@ impl Command {
     pub fn title(self) -> &'static str {
         match self {
             Command::EmptyWorkingSets => "Trim all working sets",
+            Command::FlushModifiedList => "Flush modified pages",
             Command::PurgeStandbyList => "Purge standby list",
             Command::PurgeLowPriorityStandbyList => "Purge low-priority standby",
         }
@@ -56,6 +60,10 @@ impl Command {
             Command::EmptyWorkingSets => {
                 "Trims every process. Their memory moves to the standby list and is read back \
                  when used. This rarely helps in practice."
+            }
+            Command::FlushModifiedList => {
+                "Writes changed memory pages to disk so they can be reused right away. \
+                 Safe, but it can cause a short burst of disk activity."
             }
             Command::PurgeStandbyList => {
                 "Drops all cached file data from RAM. Programs and games read from disk again, \
@@ -225,6 +233,7 @@ mod tests {
         // SYSTEM_MEMORY_LIST_COMMAND: ... MemoryEmptyWorkingSets = 2, MemoryFlushModifiedList = 3,
         // MemoryPurgeStandbyList = 4, MemoryPurgeLowPriorityStandbyList = 5.
         assert_eq!(Command::EmptyWorkingSets as u32, 2);
+        assert_eq!(Command::FlushModifiedList as u32, 3);
         assert_eq!(Command::PurgeStandbyList as u32, 4);
         assert_eq!(Command::PurgeLowPriorityStandbyList as u32, 5);
     }

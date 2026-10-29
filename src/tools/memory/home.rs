@@ -23,8 +23,12 @@ use crate::ui::{card, toggle_switch, ACCENT, AMBER, CARD_PAD, GAP, GREEN, RED};
 
 const MB: u64 = 1024 * 1024;
 pub const DEFAULT_MIN_APP_MB: u32 = 32;
-/// Releasing less than this is reported as "already in good shape".
+/// Freeing less than this is reported as "already in good shape".
 const NOTABLE_RELEASE: u64 = 50 * MB;
+/// After a run, keep watching memory in use for this long, as Windows settles.
+const SETTLE_FOR: Duration = Duration::from_secs(10);
+/// How often the cheap RAM totals are re-read while settling.
+const SETTLE_EVERY: Duration = Duration::from_millis(500);
 const TOP_APPS: usize = 4;
 /// The Home grid: spacing, card padding and the heights of the top row.
 const HERO_HEIGHT: f32 = 364.0;
@@ -37,7 +41,6 @@ pub const DEFAULT_AUTO_PERCENT: u32 = 85;
 /// What an optimize run did.
 pub struct Report {
     apps: usize,
-    released: u64,
     /// `Some(true)` if the cache cleanup ran and worked, `Some(false)` if it was tried and failed.
     deep: Option<bool>,
 }
@@ -54,8 +57,27 @@ pub struct Optimizing {
 pub struct Outcome {
     report: Report,
     used_before: u64,
+    /// Memory in use now (while settling) or at the end of the watch.
     used_after: u64,
+    /// The lowest memory in use seen since the run finished.
+    lowest_in_use: u64,
+    /// Keep watching until this moment; `None` once settled.
+    settle_until: Option<Instant>,
+    last_check: Instant,
     automatic: bool,
+}
+
+/// How much memory in use really dropped: `before` minus the lowest value seen afterwards.
+fn freed_bytes(before: u64, lowest_in_use: u64) -> u64 {
+    before.saturating_sub(lowest_in_use)
+}
+
+/// The commands of a deeper clean, in order: write out dirty pages first, then drop cache.
+fn deep_commands() -> [Command; 2] {
+    [
+        Command::FlushModifiedList,
+        Command::PurgeLowPriorityStandbyList,
+    ]
 }
 
 /// Whether the automatic rule should start an optimize run now: memory in use is at or above
@@ -124,44 +146,53 @@ fn select_targets(
 }
 
 fn run_optimize(targets: &[u32], deep: bool) -> Report {
-    let mut released = 0u64;
     let mut apps = 0usize;
     for &pid in targets {
         // Apps that refuse (other users, protected) or just exited are skipped quietly.
         if let Ok(t) = trim_process(pid) {
             if t.before > t.after {
-                released += t.before - t.after;
                 apps += 1;
             }
         }
     }
-    let deep = deep.then(|| memlist::run(Command::PurgeLowPriorityStandbyList).is_ok());
-    Report {
-        apps,
-        released,
-        deep,
-    }
+    let deep = deep.then(|| {
+        // Run every step even if one fails; all must work for a clean report.
+        deep_commands()
+            .into_iter()
+            .map(|c| memlist::run(c).is_ok())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .all(|ok| ok)
+    });
+    Report { apps, deep }
 }
 
 /// Headline and detail lines for the result card.
 fn summary(outcome: &Outcome) -> (String, String) {
     let r = &outcome.report;
-    let (headline, mut detail) = if r.released < NOTABLE_RELEASE {
+    let freed = freed_bytes(outcome.used_before, outcome.lowest_in_use);
+    let settling = outcome.settle_until.is_some();
+    let (headline, mut detail) = if freed < NOTABLE_RELEASE && !settling {
         (
             "Your memory was already in good shape".to_string(),
             "There was not much to release. Nothing was closed.".to_string(),
         )
     } else {
-        (
-            format!(
-                "Released about {} from {} {}",
-                size_plain(r.released),
+        let headline = if settling {
+            format!("Freed about {} so far", size_plain(freed))
+        } else {
+            format!("Freed about {}", size_plain(freed))
+        };
+        let mut detail = "Nothing was closed. Apps gave back what they were not using and load it again if they need it."
+            .to_string();
+        if r.apps > 0 {
+            detail.push_str(&format!(
+                " {} {} gave back memory they were not using.",
                 r.apps,
                 if r.apps == 1 { "app" } else { "apps" }
-            ),
-            "Nothing was closed. Apps gave back what they were not using and load it again if they need it."
-                .to_string(),
-        )
+            ));
+        }
+        (headline, detail)
     };
     match r.deep {
         Some(true) => detail.push_str(" Cached memory was cleared too."),
@@ -275,6 +306,7 @@ impl Memory {
 
     /// Picks up a finished optimize run. Runs every frame, also while the window is hidden.
     pub(super) fn poll_optimize(&mut self, ctx: &egui::Context) {
+        self.settle_tick(ctx);
         let outcome = match self.optimizing.as_ref() {
             None => return,
             Some(o) => o.rx.try_recv(),
@@ -306,8 +338,35 @@ impl Memory {
             report,
             used_before: running.used_before,
             used_after,
+            lowest_in_use: used_after,
+            settle_until: Some(Instant::now() + SETTLE_FOR),
+            last_check: Instant::now(),
             automatic: running.automatic,
         });
+        ctx.request_repaint_after(SETTLE_EVERY);
+    }
+
+    /// After a run, re-read only the cheap RAM totals every ~500 ms for 10 s and remember the
+    /// lowest memory in use, so the result shows the real drop as Windows settles.
+    fn settle_tick(&mut self, ctx: &egui::Context) {
+        let Some(outcome) = self.outcome.as_mut() else {
+            return;
+        };
+        let Some(until) = outcome.settle_until else {
+            return;
+        };
+        if outcome.last_check.elapsed() >= SETTLE_EVERY {
+            outcome.last_check = Instant::now();
+            if let Some(sampler) = self.sampler.as_mut() {
+                sampler.refresh_totals();
+                outcome.used_after = sampler.totals.used;
+                outcome.lowest_in_use = outcome.lowest_in_use.min(sampler.totals.used);
+            }
+        }
+        if Instant::now() >= until {
+            outcome.settle_until = None;
+        }
+        ctx.request_repaint_after(SETTLE_EVERY);
     }
 
     pub(super) fn home_ui(&mut self, ui: &mut egui::Ui) {
@@ -445,6 +504,9 @@ impl Memory {
         if let Some(outcome) = &self.outcome {
             let (headline, detail) = summary(outcome);
             ui.label(RichText::new(headline).strong().color(GREEN));
+            if outcome.settle_until.is_some() {
+                ui.label(RichText::new("Still settling...").weak());
+            }
             ui.label(detail);
             ui.label(
                 RichText::new(format!(
@@ -539,15 +601,16 @@ mod tests {
         }
     }
 
-    fn outcome(released_mb: u64, apps: usize, deep: Option<bool>) -> Outcome {
+    /// A finished (settled) run that freed `freed_mb`.
+    fn outcome(freed_mb: u64, apps: usize, deep: Option<bool>) -> Outcome {
+        let before = 10 * 1024 * MB;
         Outcome {
-            report: Report {
-                apps,
-                released: released_mb * MB,
-                deep,
-            },
-            used_before: 10 * 1024 * MB,
-            used_after: 9 * 1024 * MB,
+            report: Report { apps, deep },
+            used_before: before,
+            used_after: before - freed_mb * MB,
+            lowest_in_use: before - freed_mb * MB,
+            settle_until: None,
+            last_check: Instant::now(),
             automatic: false,
         }
     }
@@ -573,7 +636,7 @@ mod tests {
     fn automatic_runs_are_labelled() {
         let mut o = outcome(900, 4, None);
         o.automatic = true;
-        assert!(summary(&o).0.starts_with("Automatic clean: Released about"));
+        assert!(summary(&o).0.starts_with("Automatic clean: Freed about"));
     }
 
     #[test]
@@ -610,13 +673,43 @@ mod tests {
     }
 
     #[test]
+    fn freed_bytes_is_the_measured_drop() {
+        assert_eq!(freed_bytes(10 * MB, 4 * MB), 6 * MB);
+        assert_eq!(freed_bytes(4 * MB, 10 * MB), 0, "growth is not negative");
+    }
+
+    #[test]
+    fn deep_clean_flushes_before_purging() {
+        assert_eq!(
+            deep_commands(),
+            [
+                Command::FlushModifiedList,
+                Command::PurgeLowPriorityStandbyList
+            ]
+        );
+    }
+
+    #[test]
     fn summary_in_plain_words() {
         let (headline, detail) = summary(&outcome(1200, 1, None));
-        assert_eq!(headline, "Released about 1.2 GB from 1 app");
+        assert_eq!(headline, "Freed about 1.2 GB");
         assert!(detail.contains("Nothing was closed"));
+        assert!(detail.contains("1 app gave back memory"));
 
-        let (headline, _) = summary(&outcome(850, 7, None));
-        assert_eq!(headline, "Released about 850 MB from 7 apps");
+        let (headline, detail) = summary(&outcome(850, 7, None));
+        assert_eq!(headline, "Freed about 850 MB");
+        assert!(detail.contains("7 apps gave back memory"));
+    }
+
+    #[test]
+    fn summary_while_settling_says_so_far() {
+        let mut o = outcome(300, 2, None);
+        o.settle_until = Some(Instant::now() + SETTLE_FOR);
+        assert_eq!(summary(&o).0, "Freed about 300 MB so far");
+        // Even nothing yet is "so far" while the watch is running.
+        let mut o = outcome(0, 2, None);
+        o.settle_until = Some(Instant::now() + SETTLE_FOR);
+        assert!(summary(&o).0.ends_with("so far"));
     }
 
     #[test]
@@ -638,8 +731,8 @@ mod tests {
     }
 
     #[test]
-    fn a_run_with_no_targets_releases_nothing() {
+    fn a_run_with_no_targets_does_nothing() {
         let report = run_optimize(&[], false);
-        assert_eq!((report.apps, report.released, report.deep), (0, 0, None));
+        assert_eq!((report.apps, report.deep), (0, None));
     }
 }
