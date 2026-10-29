@@ -2,7 +2,9 @@
 
 use eframe::egui;
 
+mod gpu;
 mod history;
+mod nvml;
 mod overview;
 mod sampler;
 

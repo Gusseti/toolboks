@@ -49,6 +49,25 @@ pub struct Sample {
     /// tunnel adapters excluded) since the previous sample.
     pub net_down_bps: f64,
     pub net_up_bps: f64,
+    /// The main GPU, `None` if the PC has no usable GPU.
+    pub gpu: Option<GpuSample>,
+}
+
+/// The main GPU, merged from the generic readings and, on NVIDIA, the driver library.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuSample {
+    pub name: String,
+    /// Busiest engine, 0 to 100.
+    pub load: Option<f32>,
+    pub mem_used: Option<u64>,
+    pub mem_total: Option<u64>,
+    /// Load per engine type (3D, Copy, Video Decode, ...), 0 to 100 each.
+    pub engines: Vec<(String, f32)>,
+    /// NVIDIA only; `None` on other GPUs or without the driver library.
+    pub temp_c: Option<f32>,
+    pub power_w: Option<f32>,
+    pub clock_mhz: Option<u32>,
+    pub mem_clock_mhz: Option<u32>,
 }
 
 pub enum Msg {
@@ -285,6 +304,8 @@ impl Sampler {
                         disk_active: busy.as_ref().and_then(|b| b.read()),
                         net_down_bps: bytes_per_second(down, secs),
                         net_up_bps: bytes_per_second(up, secs),
+                        // Filled in by the phase 3 GPU work.
+                        gpu: None,
                     };
                     if tx.send(Msg::Sample(sample)).is_err() {
                         return;
