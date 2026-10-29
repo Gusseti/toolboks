@@ -28,6 +28,12 @@ pub struct App {
     selected: (usize, usize),
     update: UpdateState,
     update_rx: Option<Receiver<UpdateMsg>>,
+    /// The check at launch has been started (it runs once per launch).
+    launch_check_started: bool,
+    /// The running check is the launch check: say nothing unless an update exists.
+    silent_check: bool,
+    /// Show the "update available" prompt window.
+    prompt_open: bool,
 }
 
 impl App {
@@ -37,7 +43,28 @@ impl App {
             selected: (0, 0),
             update: UpdateState::Idle,
             update_rx: None,
+            launch_check_started: false,
+            silent_check: false,
+            prompt_open: false,
         }
+    }
+
+    /// Checks for an update once, right after launch. Offline, a private repo or an unreadable
+    /// answer are ignored without a word; only a newer version shows the prompt.
+    fn check_on_launch(&mut self, ctx: &egui::Context) {
+        if self.launch_check_started {
+            return;
+        }
+        self.launch_check_started = true;
+        self.silent_check = true;
+        self.update = UpdateState::Checking;
+        self.spawn_update_job(ctx, || UpdateMsg::Checked(update::check()));
+    }
+
+    fn start_install(&mut self, ctx: &egui::Context, release: Release) {
+        self.prompt_open = false;
+        self.update = UpdateState::Installing;
+        self.spawn_update_job(ctx, move || UpdateMsg::Installed(update::install(&release)));
     }
 
     /// Runs `work` on a thread and wakes the UI when it reports back.
@@ -66,11 +93,15 @@ impl App {
         };
         self.update_rx = None;
 
+        let silent = std::mem::take(&mut self.silent_check);
         self.update = match msg {
+            UpdateMsg::Checked(Ok(CheckOutcome::UpToDate)) if silent => UpdateState::Idle,
             UpdateMsg::Checked(Ok(CheckOutcome::UpToDate)) => UpdateState::UpToDate,
             UpdateMsg::Checked(Ok(CheckOutcome::Available(release))) => {
+                self.prompt_open = true;
                 UpdateState::Available(release)
             }
+            UpdateMsg::Checked(Err(_)) if silent => UpdateState::Idle,
             UpdateMsg::Checked(Err(e)) | UpdateMsg::Installed(Err(e)) => {
                 UpdateState::Failed(e.to_string())
             }
@@ -111,10 +142,7 @@ impl App {
                 let release = release.clone();
                 ui.small(format!("Version {} is available.", release.version));
                 if ui.button("Install and restart").clicked() {
-                    self.update = UpdateState::Installing;
-                    self.spawn_update_job(&ctx, move || {
-                        UpdateMsg::Installed(update::install(&release))
-                    });
+                    self.start_install(&ctx, release);
                 }
             }
             UpdateState::Installing => {
@@ -132,6 +160,7 @@ fn restart() -> std::io::Result<()> {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.check_on_launch(ctx);
         self.poll_update(ctx);
         for tool in &mut self.tools {
             tool.tick(ctx);
@@ -176,5 +205,64 @@ impl eframe::App for App {
                     tool.ui(ui, page);
                 }
             });
+
+        self.update_prompt(&ui.ctx().clone());
+    }
+}
+
+impl App {
+    /// The "update available" question: shown once a newer release is found, and dismissed
+    /// with "Not now" until the next launch (the sidebar keeps an Install button).
+    fn update_prompt(&mut self, ctx: &egui::Context) {
+        if !self.prompt_open {
+            return;
+        }
+        let UpdateState::Available(release) = &self.update else {
+            self.prompt_open = false;
+            return;
+        };
+        let release = release.clone();
+
+        let (mut install, mut later) = (false, false);
+        egui::Window::new("Update available")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(340.0);
+                ui.label(
+                    egui::RichText::new(format!("toolboks {} is ready", release.version))
+                        .strong()
+                        .size(17.0),
+                );
+                ui.label(format!(
+                    "You are using version {}. Do you want to update now? \
+                     The app will restart.",
+                    Version::current()
+                ));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("Update now").color(egui::Color32::WHITE),
+                            )
+                            .fill(egui::Color32::from_rgb(38, 110, 214)),
+                        )
+                        .clicked()
+                    {
+                        install = true;
+                    }
+                    if ui.button("Not now").clicked() {
+                        later = true;
+                    }
+                });
+            });
+
+        if install {
+            self.start_install(ctx, release);
+        } else if later {
+            self.prompt_open = false;
+        }
     }
 }
