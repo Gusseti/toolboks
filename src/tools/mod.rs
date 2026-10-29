@@ -21,5 +21,8 @@ pub trait Tool {
 }
 
 pub fn all() -> Vec<Box<dyn Tool>> {
-    vec![Box::new(memory::Memory::new())]
+    vec![
+        Box::new(memory::Memory::new()),
+        Box::new(resources::Resources::new()),
+    ]
 }

@@ -48,7 +48,7 @@ Counter names on this PC are localized (Norwegian). All PDH access goes through 
 
 ## Phases
 
-1. Foundation: sampler thread, history buffers, `Sparkline`, shared UI module, sidebar tool, Overview with CPU and Memory cards.
+1. Foundation (built, UI not looked at yet): sampler thread, history buffers, graph widget, shared UI module (`src/ui.rs`, `src/format.rs`), sidebar tool, Overview with CPU and Memory cards. Checked by fmt, clippy, unit tests (including a real sampler smoke test) and a release build only; nobody has seen the page on screen.
 2. Disk and Network cards.
 3. GPU card: `sysinfo` basics, then the engine split, then NVIDIA extras.
 4. Top processes card with CPU, Memory, GPU and Disk pills.
