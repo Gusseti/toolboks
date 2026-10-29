@@ -48,8 +48,9 @@ fn failure_text(error: MemListError) -> String {
 }
 
 impl Memory {
+    /// A system-wide command or an optimize run is in progress.
     pub(super) fn busy(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.optimizing.is_some()
     }
 
     /// Runs `command` on a worker thread; ignored while another job is running.
@@ -133,6 +134,8 @@ impl Memory {
     /// Background work for the memory tool: finish jobs, then check the auto-clean rules.
     pub(super) fn background(&mut self, ctx: &egui::Context) {
         self.poll_job(ctx);
+        self.poll_optimize(ctx);
+        self.auto_optimize_tick(ctx);
 
         if !self.elevated || !self.auto.rules.enabled {
             return;
@@ -239,33 +242,33 @@ impl Memory {
                  exists, since there is nothing to purge.",
             );
 
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut rules.big_standby, "Standby list above");
-                ui.add(
-                    egui::DragValue::new(&mut rules.big_standby_gib)
-                        .range(0.5..=64.0)
-                        .speed(0.1)
-                        .suffix(" GiB"),
-                );
-                ui.weak(format!(
-                    "while free memory is under {STANDBY_RULE_FREE_LIMIT_PERCENT:.0} %"
-                ));
+            ui.checkbox(
+                &mut rules.big_standby,
+                format!(
+                    "Clean when cached memory is large and free memory is under \
+                     {STANDBY_RULE_FREE_LIMIT_PERCENT:.0} %"
+                ),
+            );
+            ui.add_enabled_ui(rules.big_standby, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Cached memory above");
+                    ui.add(
+                        egui::Slider::new(&mut rules.big_standby_gib, 0.5..=32.0)
+                            .step_by(0.5)
+                            .suffix(" GiB"),
+                    );
+                });
             });
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut rules.interval, "Every");
-                ui.add(
-                    egui::DragValue::new(&mut rules.interval_minutes)
-                        .range(1..=1440)
-                        .suffix(" min"),
-                );
+            ui.checkbox(&mut rules.interval, "Also clean on a schedule");
+            ui.add_enabled_ui(rules.interval, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Every");
+                    ui.add(egui::Slider::new(&mut rules.interval_minutes, 1..=240).suffix(" min"));
+                });
             });
             ui.horizontal(|ui| {
                 ui.label("At most once every");
-                ui.add(
-                    egui::DragValue::new(&mut rules.cooldown_minutes)
-                        .range(1..=120)
-                        .suffix(" min"),
-                );
+                ui.add(egui::Slider::new(&mut rules.cooldown_minutes, 1..=60).suffix(" min"));
             });
 
             if switched_on {

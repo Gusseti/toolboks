@@ -24,7 +24,8 @@ enum UpdateState {
 
 pub struct App {
     tools: Vec<Box<dyn Tool>>,
-    selected: usize,
+    /// (tool, page) shown in the main area.
+    selected: (usize, usize),
     update: UpdateState,
     update_rx: Option<Receiver<UpdateMsg>>,
 }
@@ -33,7 +34,7 @@ impl App {
     pub fn new() -> Self {
         Self {
             tools: tools::all(),
-            selected: 0,
+            selected: (0, 0),
             update: UpdateState::Idle,
             update_rx: None,
         }
@@ -140,27 +141,40 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::Panel::left("tools")
             .resizable(false)
-            .exact_size(160.0)
+            .exact_size(170.0)
             .show(ui, |ui| {
-                ui.heading("toolboks");
-                ui.separator();
-                for (i, tool) in self.tools.iter().enumerate() {
-                    ui.selectable_value(&mut self.selected, i, tool.name());
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("toolboks").heading().strong());
+                ui.add_space(8.0);
+
+                for (ti, tool) in self.tools.iter().enumerate() {
+                    let pages = tool.pages();
+                    if pages.is_empty() {
+                        ui.selectable_value(&mut self.selected, (ti, 0), tool.name());
+                        continue;
+                    }
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(tool.name()).small().weak());
+                    for (pi, page) in pages.iter().enumerate() {
+                        ui.selectable_value(&mut self.selected, (ti, pi), *page);
+                    }
                 }
 
                 // Bottom-up: the first item added sits lowest.
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    ui.add_space(4.0);
                     ui.weak(format!("v{}", Version::current()));
                     self.update_ui(ui);
                 });
             });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            if let Some(tool) = self.tools.get_mut(self.selected) {
-                ui.heading(tool.name());
-                ui.separator();
-                tool.ui(ui);
-            }
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(ui.style()).inner_margin(24.0))
+            .show(ui, |ui| {
+                let (tool, page) = self.selected;
+                if let Some(tool) = self.tools.get_mut(tool) {
+                    tool.ui(ui, page);
+                }
+            });
     }
 }

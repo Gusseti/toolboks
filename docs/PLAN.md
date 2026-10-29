@@ -6,12 +6,21 @@ A lightweight Windows 11 toolbox of small utilities (Rust, egui/eframe with the 
 
 | Topic | Decision |
 |---|---|
-| Cleaner scope | "Honest tool": live dashboard, per-process trim with before/after, opt-in admin purge, warning that cleaning can slow disk reads. No one-click "free RAM". |
+| Cleaner scope | (Superseded in part by "UX direction" below: a safe one-click Optimize now exists.) "Honest tool": live dashboard, per-process trim with before/after, opt-in admin purge, warning that cleaning can slow disk reads. No one-click "free RAM". |
 | Admin rights | Run unelevated; relaunch elevated on demand (UAC) only for admin actions. |
 | Repo and signing | Public, open source, free signing via SignPath Foundation. Do not copy GPL-3.0 code from Mem Reduct; reimplement from Windows API docs. License: MIT (chosen). Making the repo public still needs the owner's explicit go-ahead; it is private for now. |
 | v1 extras | Auto-clean rules, process exclusions. Tray, hide-to-tray and start-with-Windows are NOT in v1, so auto-clean only runs while the window is open or minimized. |
 | Single exe, no files | The app is one self-contained exe. It never creates folders, config, logs or caches anywhere. All state (exclusions, auto-clean rules, sort/filter) is in memory only and resets on every launch. The C runtime is linked statically (`.cargo/config.toml`), and eframe persistence stays off. Anything that needs persistence (autostart, saved rules) is out unless the owner changes this rule. |
 | Updater | Built in, manual only: a "Check for updates" button, no network traffic until clicked. Own implementation over WinHTTP (no TLS library, +0.1 MB) instead of `self_update`, because that crate writes temp files. The exe is downloaded into memory, checked against the release's `.sha256`, swapped by renaming the running exe to `<exe>.old` and writing the new one, then the app restarts and the next start deletes `.old`. Releases come from the public repo, so no token is embedded; while the repo is private the button reports "No public release found". |
+
+## UX direction (changed 2026-10-29)
+
+The owner wants a non-technical, single-click experience with the technical controls as a bonus. The tool is called **Memory Cleaner** and has two sidebar pages:
+
+- **Home**: a ring gauge of memory in use, a plain-words health message, one big **Optimize memory** button and a plain-words result ("Released about 1.2 GB from 7 apps"). Under it: a **Clean automatically** tick box with a slider for the percentage in use that starts it (50-95 %, default 85 %, at most once every 5 minutes, runs while the window is open or minimized, works without admin), and two collapsed sections: **More options** (slider: skip apps below N MB; tick box: also clear cached memory when running as admin; optional "Restart with permission" link) and **What is using my memory?**.
+- **Advanced**: everything from Phases 1-4, unchanged in capability: process table (filter, group by name, sort, Trim, Protect tick box), system-wide cleaning, auto-clean rules (sliders and tick boxes), exclusions.
+
+**Optimize** is the "gentle" run: it asks running apps to give back memory they are not using (never Windows, the desktop, audio, this app or protected apps, and not apps under the size limit), closes and deletes nothing, and needs no admin. With admin and the tick box on it also runs the low-priority cache cleanup. This supersedes the earlier "no one-click" scope. Trimming raises *available* memory (pages move to the standby list), so the gauge visibly drops; the app still says plainly that apps reload what they need. Technical terms (standby, working set) appear only on Advanced.
 
 ## Memory tool phases
 

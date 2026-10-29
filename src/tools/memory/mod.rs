@@ -1,5 +1,6 @@
 mod admin;
 mod auto;
+mod home;
 mod memlist;
 mod stats;
 mod trim;
@@ -12,6 +13,7 @@ use egui_extras::{Column, TableBuilder};
 
 use self::admin::Job;
 use self::auto::AutoClean;
+use self::home::{Optimizing, Outcome, DEFAULT_AUTO_PERCENT, DEFAULT_MIN_APP_MB};
 use self::memlist::Lists;
 use self::stats::{format_bytes, group_by_name, sort_and_filter, ProcInfo, Sampler, SortKey};
 use self::trim::{skip_reason, trim_process, SkipReason, TrimError};
@@ -50,6 +52,18 @@ pub struct Memory {
     status: Option<String>,
     auto: AutoClean,
     last_auto_check: Instant,
+    /// The one-click optimize run in progress, and the result of the last one (Home page).
+    optimizing: Option<Optimizing>,
+    outcome: Option<Outcome>,
+    /// Home options: skip apps below this size, and also clear cached memory when elevated.
+    opt_min_mb: u32,
+    opt_deep: bool,
+    /// Home "Clean automatically": on/off, the percentage in use that starts it, when it last
+    /// started (for the pause between runs) and when the rule was last evaluated.
+    auto_opt_on: bool,
+    auto_opt_percent: u32,
+    last_auto_opt: Option<Instant>,
+    last_opt_check: Instant,
 }
 
 impl Memory {
@@ -70,6 +84,14 @@ impl Memory {
             status: None,
             auto: AutoClean::new(),
             last_auto_check: Instant::now(),
+            optimizing: None,
+            outcome: None,
+            opt_min_mb: DEFAULT_MIN_APP_MB,
+            opt_deep: true,
+            auto_opt_on: false,
+            auto_opt_percent: DEFAULT_AUTO_PERCENT,
+            last_auto_opt: None,
+            last_opt_check: Instant::now(),
         }
     }
 
@@ -164,7 +186,9 @@ impl Memory {
         names.sort();
         egui::CollapsingHeader::new(format!("Exclusions ({})", names.len())).show(ui, |ui| {
             if names.is_empty() {
-                ui.weak("None. Use Exclude on a process to protect it from trimming.");
+                ui.weak(
+                    "None. Tick Protect on an app in the list below to keep it from being trimmed.",
+                );
             }
             for name in &names {
                 ui.horizontal(|ui| {
@@ -180,22 +204,27 @@ impl Memory {
 
 fn sort_arrow(active: bool, descending: bool) -> &'static str {
     match (active, descending) {
-        (true, true) => " \u{25BC}",
-        (true, false) => " \u{25B2}",
+        // Plain letters: the bundled font has none of the arrow or triangle glyphs.
+        (true, true) => " v",
+        (true, false) => " ^",
         _ => "",
     }
 }
 
 impl Tool for Memory {
     fn name(&self) -> &'static str {
-        "Memory"
+        "Memory Cleaner"
+    }
+
+    fn pages(&self) -> &'static [&'static str] {
+        &["Home", "Advanced"]
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
         self.background(ctx);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui) {
+    fn ui(&mut self, ui: &mut egui::Ui, page: usize) {
         if self.sampler.is_none() {
             ui.label("Memory information is not available on this system.");
             return;
@@ -205,6 +234,22 @@ impl Tool for Memory {
             self.refresh_now();
         }
         ui.request_repaint_after(REFRESH);
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| match page {
+                0 => self.home_ui(ui),
+                _ => self.advanced_ui(ui),
+            });
+    }
+}
+
+impl Memory {
+    /// Everything for people who want control: process list, trimming, protection, system-wide
+    /// cleaning and auto-clean.
+    fn advanced_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("Advanced").size(24.0).strong());
+        ui.add_space(8.0);
 
         let totals = self.sampler.as_ref().map(|s| s.totals).unwrap_or_default();
         ui.add(egui::ProgressBar::new(totals.used_fraction()).text(format!(
@@ -273,7 +318,8 @@ impl Tool for Memory {
             .column(Column::exact(64.0))
             .column(Column::exact(100.0))
             .column(Column::exact(100.0))
-            .column(Column::exact(120.0))
+            .column(Column::exact(64.0))
+            .column(Column::exact(64.0))
             .header(ROW_HEIGHT + 4.0, |mut header| {
                 for (label, key) in [
                     ("Name", SortKey::Name),
@@ -291,6 +337,10 @@ impl Tool for Memory {
                         }
                     });
                 }
+                header.col(|ui| {
+                    ui.label(egui::RichText::new("Protect").strong())
+                        .on_hover_text("Tick to keep this app from ever being trimmed");
+                });
                 header.col(|_| {});
             })
             .body(|body| {
@@ -316,31 +366,30 @@ impl Tool for Memory {
                         ui.label(format_bytes(p.private));
                     });
                     row.col(|ui| {
-                        ui.horizontal(|ui| {
-                            let can_trim = reason.is_none() && !several;
-                            let mut trim_btn =
-                                ui.add_enabled(can_trim, egui::Button::new("Trim").small());
-                            if several {
-                                trim_btn = trim_btn.on_disabled_hover_text(
-                                    "Turn off grouping to trim one process",
-                                );
-                            } else if let Some(reason) = reason {
-                                trim_btn = trim_btn.on_disabled_hover_text(reason.describe());
-                            }
-                            if trim_btn.clicked() {
-                                trim_click = Some((p.pid, p.name.clone()));
-                            }
-
-                            let excluded = reason == Some(SkipReason::Excluded);
-                            let can_toggle = matches!(reason, None | Some(SkipReason::Excluded));
-                            let label = if excluded { "Include" } else { "Exclude" };
-                            if ui
-                                .add_enabled(can_toggle, egui::Button::new(label).small())
-                                .clicked()
-                            {
-                                exclude_click = Some(p.name.to_lowercase());
-                            }
-                        });
+                        // System and shell processes are always protected, so they show as
+                        // ticked and locked.
+                        let locked = matches!(reason, Some(SkipReason::System | SkipReason::Own));
+                        let mut protected = reason.is_some();
+                        let tick = ui
+                            .add_enabled(!locked, egui::Checkbox::without_text(&mut protected))
+                            .on_hover_text("Tick to keep this app from ever being trimmed");
+                        if tick.changed() {
+                            exclude_click = Some(p.name.to_lowercase());
+                        }
+                    });
+                    row.col(|ui| {
+                        let can_trim = reason.is_none() && !several;
+                        let mut trim_btn =
+                            ui.add_enabled(can_trim, egui::Button::new("Trim").small());
+                        if several {
+                            trim_btn = trim_btn
+                                .on_disabled_hover_text("Turn off grouping to trim one process");
+                        } else if let Some(reason) = reason {
+                            trim_btn = trim_btn.on_disabled_hover_text(reason.describe());
+                        }
+                        if trim_btn.clicked() {
+                            trim_click = Some((p.pid, p.name.clone()));
+                        }
                     });
                 });
             });

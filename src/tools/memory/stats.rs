@@ -144,6 +144,31 @@ pub fn sort_and_filter<'a>(
     rows
 }
 
+/// Sizes for non-technical screens: "850 MB", "1.2 GB".
+pub fn format_size_plain(bytes: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.1} GB", b / GB)
+    } else {
+        format!("{:.0} MB", b / MB)
+    }
+}
+
+/// A process name for people: "chrome.exe" becomes "Chrome".
+pub fn friendly_name(exe: &str) -> String {
+    let stem = match exe.get(exe.len().saturating_sub(4)..) {
+        Some(tail) if exe.len() > 4 && tail.eq_ignore_ascii_case(".exe") => &exe[..exe.len() - 4],
+        _ => exe,
+    };
+    let mut chars = stem.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 pub fn format_bytes(bytes: u64) -> String {
     const MIB: f64 = 1024.0 * 1024.0;
     const GIB: f64 = MIB * 1024.0;
@@ -236,6 +261,23 @@ mod tests {
         assert_eq!(format_bytes(0), "0.0 MiB");
         assert_eq!(format_bytes(5 * 1024 * 1024), "5.0 MiB");
         assert_eq!(format_bytes(3 * 1024 * 1024 * 1024), "3.00 GiB");
+    }
+
+    #[test]
+    fn formats_plain_sizes() {
+        assert_eq!(format_size_plain(0), "0 MB");
+        assert_eq!(format_size_plain(850 * 1024 * 1024), "850 MB");
+        assert_eq!(format_size_plain(1536 * 1024 * 1024), "1.5 GB");
+    }
+
+    #[test]
+    fn makes_process_names_friendly() {
+        assert_eq!(friendly_name("chrome.exe"), "Chrome");
+        assert_eq!(friendly_name("Code.EXE"), "Code");
+        assert_eq!(friendly_name("System"), "System");
+        assert_eq!(friendly_name(".exe"), ".exe");
+        assert_eq!(friendly_name(""), "");
+        assert_eq!(friendly_name("\u{e9}diteur.exe"), "\u{c9}diteur");
     }
 
     #[test]
