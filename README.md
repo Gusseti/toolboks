@@ -1,6 +1,11 @@
 # toolboks
 
-A lightweight toolbox of system utilities, written in Rust.
+A lightweight toolbox of system utilities, written in Rust. One exe, nothing written to disk.
+
+## Tools
+
+- **Memory Cleaner**: one-click Optimize memory (gentle, no admin needed), a colored "Where your memory goes" bar grouped by app, automatic cleaning with a start-percentage slider, and an Advanced page with the process list, protection, system-wide cleaning and auto-clean rules.
+- **Resource Monitor**: a Task Manager style Overview (CPU with live clock, GPU, memory, disk, network, top processes) and a Details page (per-core CPU, GPU engines, per-drive disk, per-adapter network), with live graphs.
 
 ## Branches
 
