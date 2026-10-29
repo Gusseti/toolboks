@@ -13,13 +13,16 @@ use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, RichText, Sense, Shape, Stroke, Vec2,
 };
 
+use super::groups::{Breakdown, Segment};
 use super::memlist::{self, Command};
 use super::stats::{group_by_name, ProcInfo};
 use super::trim::{skip_reason, trim_process};
 use super::{Memory, AUTO_CHECK};
 use crate::elevation;
 use crate::format::{friendly_name, size_plain};
-use crate::ui::{card, toggle_switch, ACCENT, AMBER, CARD_PAD, GAP, GREEN, RED};
+use crate::ui::{
+    card, stacked_bar, toggle_switch, BarPart, ACCENT, AMBER, CARD_PAD, GAP, GREEN, RED,
+};
 
 const MB: u64 = 1024 * 1024;
 pub const DEFAULT_MIN_APP_MB: u32 = 32;
@@ -203,6 +206,36 @@ fn summary(outcome: &Outcome) -> (String, String) {
         return (format!("Automatic clean: {headline}"), detail);
     }
     (headline, detail)
+}
+
+/// The bar's parts: each segment's share of the memory in use. Empty when nothing is in use.
+fn bar_parts(b: &Breakdown) -> Vec<BarPart> {
+    if b.in_use == 0 {
+        return Vec::new();
+    }
+    b.segments
+        .iter()
+        .map(|s| BarPart {
+            fraction: s.bytes as f32 / b.in_use as f32,
+            color: Color32::from_rgb(s.color[0], s.color[1], s.color[2]),
+        })
+        .collect()
+}
+
+/// The hover text of a segment, in plain words.
+fn segment_tooltip(seg: &Segment) -> String {
+    let size = size_plain(seg.bytes);
+    match seg.count {
+        0 => format!("{}: {}, {:.0}%", seg.name, size, seg.percent),
+        1 => format!(
+            "{}: 1 process, {}, {:.0}% of memory in use",
+            seg.name, size, seg.percent
+        ),
+        n => format!(
+            "{}: {} processes, {}, {:.0}% of memory in use",
+            seg.name, n, size, seg.percent
+        ),
+    }
 }
 
 /// A ring that fills with `fraction`, with a big number in the middle.
@@ -413,6 +446,7 @@ impl Memory {
         if self.outcome.is_some() || self.status.is_some() {
             card(ui, total, 0.0, |ui| self.result(ui));
         }
+        card(ui, total, 0.0, |ui| self.memory_goes(ui));
         card(ui, total, 0.0, |ui| self.top_apps(ui, total));
         card(ui, total, 0.0, |ui| self.options_card(ui));
     }
@@ -522,6 +556,66 @@ impl Memory {
         }
     }
 
+    /// "Where your memory goes": one stacked bar plus a legend, both with hover details.
+    fn memory_goes(&self, ui: &mut egui::Ui) {
+        let b = &self.breakdown;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Where your memory goes").strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(format!("{} in use", size_plain(b.in_use))).weak());
+            });
+        });
+        if b.segments.is_empty() {
+            ui.label(RichText::new("Collecting...").weak());
+            return;
+        }
+        ui.add_space(4.0);
+        let mut hovered = stacked_bar(ui, 34.0, &bar_parts(b));
+        ui.add_space(6.0);
+
+        let half = (ui.available_width() - 24.0) / 2.0;
+        let (swatch, pct_w) = (12.0, 36.0);
+        let name_w = (half - swatch - 64.0 - pct_w - 3.0 * 8.0).max(40.0);
+        egui::Grid::new("memory_legend")
+            .num_columns(2)
+            .spacing([8.0, 8.0])
+            .show(ui, |ui| {
+                for (i, seg) in b.segments.iter().enumerate() {
+                    let row = ui.horizontal(|ui| {
+                        ui.set_width(half);
+                        let (r, _) = ui.allocate_exact_size(Vec2::splat(swatch), Sense::hover());
+                        let c = seg.color;
+                        ui.painter()
+                            .rect_filled(r, 4.0, Color32::from_rgb(c[0], c[1], c[2]));
+                        ui.add_sized(
+                            [name_w, 18.0],
+                            egui::Label::new(&seg.name).truncate().selectable(false),
+                        );
+                        ui.label(RichText::new(size_plain(seg.bytes)).weak());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(format!("{:.0}%", seg.percent));
+                        });
+                    });
+                    if ui.rect_contains_pointer(row.response.rect) {
+                        hovered = Some(i);
+                    }
+                    if i % 2 == 1 {
+                        ui.end_row();
+                    }
+                }
+            });
+
+        if let Some(seg) = hovered.and_then(|i| b.segments.get(i)) {
+            egui::Tooltip::always_open(
+                ui.ctx().clone(),
+                ui.layer_id(),
+                egui::Id::unique("memory_goes_tip"),
+                egui::PopupAnchor::Pointer,
+            )
+            .show(|ui| ui.label(segment_tooltip(seg)));
+        }
+    }
+
     fn top_apps(&self, ui: &mut egui::Ui, total: f32) {
         ui.label(RichText::new("Apps using the most memory").strong());
         let Some(sampler) = self.sampler.as_ref() else {
@@ -613,6 +707,46 @@ mod tests {
             last_check: Instant::now(),
             automatic: false,
         }
+    }
+
+    fn seg(name: &str, mb: u64, count: usize, percent: f32) -> Segment {
+        Segment {
+            name: name.to_string(),
+            bytes: mb * MB,
+            count,
+            percent,
+            color: [1, 2, 3],
+        }
+    }
+
+    #[test]
+    fn segment_tooltip_wording() {
+        assert_eq!(
+            segment_tooltip(&seg("Chrome", 2048, 12, 25.0)),
+            "Chrome: 12 processes, 2.0 GB, 25% of memory in use"
+        );
+        assert_eq!(
+            segment_tooltip(&seg("Slack", 500, 1, 6.0)),
+            "Slack: 1 process, 500 MB, 6% of memory in use"
+        );
+        assert_eq!(
+            segment_tooltip(&seg("Windows and other", 1024, 0, 12.0)),
+            "Windows and other: 1.0 GB, 12%"
+        );
+    }
+
+    #[test]
+    fn bar_parts_are_shares_of_memory_in_use() {
+        let b = Breakdown {
+            in_use: 1000 * MB,
+            segments: vec![seg("A", 250, 2, 25.0), seg("B", 750, 0, 75.0)],
+        };
+        let parts = bar_parts(&b);
+        assert_eq!(parts.len(), 2);
+        assert!((parts[0].fraction - 0.25).abs() < 1e-6);
+        assert!((parts[1].fraction - 0.75).abs() < 1e-6);
+        assert_eq!(parts[0].color, Color32::from_rgb(1, 2, 3));
+        assert!(bar_parts(&Breakdown::default()).is_empty());
     }
 
     #[test]

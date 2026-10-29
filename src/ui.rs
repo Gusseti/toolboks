@@ -163,3 +163,69 @@ pub fn graph(ui: &mut egui::Ui, height: f32, lines: &[Line], capacity: usize, ma
         painter.add(Shape::line(points, Stroke::new(1.8, line.color)));
     }
 }
+
+/// One piece of a [`stacked_bar`]: its share of the whole (0 to 1) and its color.
+pub struct BarPart {
+    pub fraction: f32,
+    pub color: Color32,
+}
+
+/// One thick bar of the full available width. The parts sit left to right, sized by their
+/// `fraction` of the whole, with 2 px gaps; the outer ends are rounded, the inner corners square
+/// and tiny parts stay at least 3 px wide. Any unfilled remainder is drawn as the track color.
+/// Returns the index of the part under the pointer, if any.
+pub fn stacked_bar(ui: &mut egui::Ui, height: f32, parts: &[BarPart]) -> Option<usize> {
+    const SPLIT: f32 = 2.0;
+    const MIN_W: f32 = 3.0;
+    const ROUND: u8 = 10;
+
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    let n = parts.len();
+    let usable = (rect.width() - SPLIT * n.saturating_sub(1) as f32).max(0.0);
+    let widths: Vec<f32> = parts
+        .iter()
+        .map(|p| (p.fraction.clamp(0.0, 1.0) * usable).max(MIN_W))
+        .collect();
+
+    // (x range, color, part index); the remainder has no index.
+    let mut pieces: Vec<(f32, f32, Color32, Option<usize>)> = Vec::new();
+    let mut x = rect.left();
+    for (i, (p, w)) in parts.iter().zip(&widths).enumerate() {
+        let right = (x + w).min(rect.right());
+        pieces.push((x, right, p.color, Some(i)));
+        x = right + SPLIT;
+    }
+    if x < rect.right() - 1.0 {
+        pieces.push((x, rect.right(), ui.visuals().widgets.inactive.bg_fill, None));
+    }
+    if let Some(last) = pieces.last_mut() {
+        last.1 = rect.right();
+    }
+
+    let hovered = response.hover_pos().and_then(|pos| {
+        pieces
+            .iter()
+            .find(|(l, r, _, _)| pos.x >= *l - SPLIT / 2.0 && pos.x <= *r + SPLIT / 2.0)
+            .and_then(|piece| piece.3)
+    });
+
+    let painter = ui.painter_at(rect);
+    let count = pieces.len();
+    for (k, (l, r, color, _)) in pieces.iter().enumerate() {
+        let (round_l, round_r) = (
+            if k == 0 { ROUND } else { 0 },
+            if k + 1 == count { ROUND } else { 0 },
+        );
+        let radius = egui::CornerRadius {
+            nw: round_l,
+            sw: round_l,
+            ne: round_r,
+            se: round_r,
+        };
+        let piece =
+            egui::Rect::from_min_max(Pos2::new(*l, rect.top()), Pos2::new(*r, rect.bottom()));
+        painter.rect_filled(piece, radius, *color);
+    }
+    hovered
+}

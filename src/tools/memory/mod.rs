@@ -65,12 +65,19 @@ pub struct Memory {
     auto_opt_percent: u32,
     last_auto_opt: Option<Instant>,
     last_opt_check: Instant,
+    /// "Where your memory goes" on Home; rebuilt with every refresh. Not stored anywhere.
+    breakdown: groups::Breakdown,
 }
 
 impl Memory {
     pub fn new() -> Self {
+        let sampler = Sampler::new();
+        let breakdown = sampler
+            .as_ref()
+            .map(|s| groups::breakdown(&s.processes, s.totals.used))
+            .unwrap_or_default();
         Self {
-            sampler: Sampler::new(),
+            sampler,
             lists: memlist::query(),
             elevated: elevation::is_elevated(),
             last_refresh: Instant::now(),
@@ -93,12 +100,14 @@ impl Memory {
             auto_opt_percent: DEFAULT_AUTO_PERCENT,
             last_auto_opt: None,
             last_opt_check: Instant::now(),
+            breakdown,
         }
     }
 
     fn refresh_now(&mut self) {
         if let Some(sampler) = self.sampler.as_mut() {
             sampler.refresh();
+            self.breakdown = groups::breakdown(&sampler.processes, sampler.totals.used);
         }
         self.lists = memlist::query();
         self.last_refresh = Instant::now();

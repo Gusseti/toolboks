@@ -1,6 +1,4 @@
-//! SKELETON: the backend builder replaces the body of `breakdown` and adds the helpers. Keep the
-//! public types and the function signature exactly; the Home card is being written against them.
-#![allow(dead_code)]
+//! Groups processes into the colored segments of the Home "Where your memory goes" bar.
 
 use super::stats::ProcInfo;
 
@@ -27,10 +25,340 @@ pub struct Breakdown {
     pub segments: Vec<Segment>,
 }
 
+const OTHER_COLOR: [u8; 3] = [120, 124, 132];
+const WINDOWS_COLOR: [u8; 3] = [91, 96, 104];
+const MAX_GROUPS: usize = 10;
+
+const WINDOWS_NAMES: &[&str] = &[
+    "system",
+    "registry",
+    "memory compression",
+    "secure system",
+    "smss",
+    "csrss",
+    "wininit",
+    "winlogon",
+    "services",
+    "lsass",
+    "svchost",
+    "dwm",
+    "explorer",
+    "fontdrvhost",
+    "audiodg",
+    "sihost",
+    "ctfmon",
+    "taskhostw",
+    "runtimebroker",
+    "searchhost",
+    "startmenuexperiencehost",
+    "shellexperiencehost",
+    "textinputhost",
+    "conhost",
+    "wmiprvse",
+    "spoolsv",
+    "dllhost",
+    "securityhealthservice",
+    "msmpeng",
+    "nissrv",
+];
+
+/// Distinct colors that avoid the brand colors and the greys.
+const PALETTE: [[u8; 3]; 12] = [
+    [239, 71, 111],
+    [255, 209, 102],
+    [17, 138, 178],
+    [155, 93, 229],
+    [241, 91, 181],
+    [0, 187, 249],
+    [254, 228, 64],
+    [181, 101, 29],
+    [199, 125, 255],
+    [255, 159, 28],
+    [0, 150, 136],
+    [200, 60, 60],
+];
+
+fn normalize(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    lower.strip_suffix(".exe").unwrap_or(&lower).to_string()
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// Brand display name and color for a normalized process name.
+fn alias(n: &str) -> Option<(&'static str, [u8; 3])> {
+    let r = if n.starts_with("claude") {
+        ("Claude", [217, 119, 87])
+    } else if n == "chrome" || n == "chromium" {
+        ("Chrome", [66, 133, 244])
+    } else if n == "msedge" || n == "msedgewebview2" {
+        ("Edge", [47, 184, 166])
+    } else if n.starts_with("discord") {
+        ("Discord", [88, 101, 242])
+    } else if n.starts_with("steam") {
+        ("Steam", [102, 192, 244])
+    } else if n == "chatgpt" {
+        ("ChatGPT", [16, 163, 127])
+    } else if n == "node" {
+        ("Node.js", [139, 195, 74])
+    } else if n == "firefox" {
+        ("Firefox", [255, 113, 57])
+    } else if n == "spotify" {
+        ("Spotify", [29, 185, 84])
+    } else if n == "code" {
+        ("VS Code", [59, 156, 255])
+    } else if n.starts_with("battle.net") {
+        ("Battle.net", [20, 142, 255])
+    } else {
+        return None;
+    };
+    Some(r)
+}
+
+/// Stable palette color for a group name (FNV-1a over the lowercase name).
+pub fn color_for(name: &str) -> [u8; 3] {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.to_lowercase().bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    PALETTE[(h % PALETTE.len() as u64) as usize]
+}
+
+fn group_name(n: &str) -> String {
+    let key: String = n.chars().take_while(|c| c.is_alphabetic()).collect();
+    if key.chars().count() >= 4 {
+        capitalize(&key)
+    } else {
+        capitalize(n)
+    }
+}
+
 /// Groups the running processes into colored segments that fill `in_use` bytes.
-pub fn breakdown(_procs: &[ProcInfo], in_use: u64) -> Breakdown {
-    Breakdown {
-        in_use,
-        segments: Vec::new(),
+pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
+    if in_use == 0 {
+        return Breakdown::default();
+    }
+    // (name, bytes, count, color)
+    let mut groups: Vec<(String, u64, usize, [u8; 3])> = Vec::new();
+    let mut win_bytes: u64 = 0;
+    let mut win_count = 0usize;
+    for p in procs {
+        let n = normalize(&p.name);
+        if WINDOWS_NAMES.contains(&n.as_str()) {
+            win_bytes = win_bytes.saturating_add(p.working_set);
+            win_count += 1;
+            continue;
+        }
+        let (name, color) = match alias(&n) {
+            Some((name, color)) => (name.to_string(), color),
+            None => {
+                let name = group_name(&n);
+                let color = color_for(&name);
+                (name, color)
+            }
+        };
+        match groups.iter_mut().find(|g| g.0 == name) {
+            Some(g) => {
+                g.1 = g.1.saturating_add(p.working_set);
+                g.2 += 1;
+            }
+            None => groups.push((name, p.working_set, 1, color)),
+        }
+    }
+
+    let apps: u128 = groups.iter().map(|g| u128::from(g.1)).sum();
+    let total = apps + u128::from(win_bytes);
+    if total > u128::from(in_use) {
+        for g in &mut groups {
+            g.1 = (u128::from(g.1) * u128::from(in_use) / total) as u64;
+        }
+    }
+    let apps_scaled: u64 = groups.iter().map(|g| g.1).sum();
+    // Leftover (or the scaled Windows share plus rounding) goes to "Windows and other".
+    let windows = in_use.saturating_sub(apps_scaled);
+
+    groups.retain(|g| g.1 > 0);
+    groups.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    let pct = |bytes: u64| (bytes as f64 / in_use as f64 * 100.0) as f32;
+    let mut segments = Vec::new();
+    let mut other_bytes = 0u64;
+    let mut other_count = 0usize;
+    for (i, (name, bytes, count, color)) in groups.into_iter().enumerate() {
+        let small = u128::from(bytes) * 100 < u128::from(in_use);
+        if i >= MAX_GROUPS || small {
+            other_bytes += bytes;
+            other_count += count;
+        } else {
+            segments.push(Segment {
+                name,
+                bytes,
+                count,
+                percent: pct(bytes),
+                color,
+            });
+        }
+    }
+    if other_bytes > 0 {
+        segments.push(Segment {
+            name: "Other apps".to_string(),
+            bytes: other_bytes,
+            count: other_count,
+            percent: pct(other_bytes),
+            color: OTHER_COLOR,
+        });
+    }
+    if windows > 0 {
+        segments.push(Segment {
+            name: "Windows and other".to_string(),
+            bytes: windows,
+            count: win_count,
+            percent: pct(windows),
+            color: WINDOWS_COLOR,
+        });
+    }
+    Breakdown { in_use, segments }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(name: &str, ws: u64) -> ProcInfo {
+        ProcInfo {
+            pid: 1,
+            name: name.to_string(),
+            working_set: ws,
+            private: 0,
+            count: 1,
+        }
+    }
+
+    fn seg<'a>(b: &'a Breakdown, name: &str) -> &'a Segment {
+        b.segments.iter().find(|s| s.name == name).unwrap()
+    }
+
+    #[test]
+    fn claude_helpers_merge() {
+        let b = breakdown(&[p("claude.exe", 100), p("Claude Helper.exe", 50)], 1000);
+        let s = seg(&b, "Claude");
+        assert_eq!((s.bytes, s.count, s.color), (150, 2, [217, 119, 87]));
+    }
+
+    #[test]
+    fn edge_variants() {
+        let b = breakdown(&[p("msedge.exe", 100), p("msedgewebview2.exe", 100)], 1000);
+        assert_eq!(seg(&b, "Edge").bytes, 200);
+    }
+
+    #[test]
+    fn windows_names_go_to_windows() {
+        let b = breakdown(&[p("svchost.exe", 100), p("DWM.exe", 50)], 1000);
+        assert_eq!(b.segments.len(), 1);
+        let s = seg(&b, "Windows and other");
+        assert_eq!((s.bytes, s.count), (1000, 2));
+    }
+
+    #[test]
+    fn shared_prefix_merges() {
+        let b = breakdown(
+            &[
+                p("foobar.exe", 100),
+                p("foobar2.exe", 100),
+                p("foobar_x.exe", 100),
+            ],
+            1000,
+        );
+        assert_eq!(seg(&b, "Foobar").count, 3);
+        let b = breakdown(&[p("ab1.exe", 100), p("ab2.exe", 100)], 1000);
+        assert!(b.segments.iter().any(|s| s.name == "Ab1"));
+        assert!(b.segments.iter().any(|s| s.name == "Ab2"));
+    }
+
+    #[test]
+    fn rollup_small_and_cap() {
+        let b = breakdown(
+            &[
+                p("bigapp.exe", 500),
+                p("tinyapp.exe", 5),
+                p("minyapp.exe", 4),
+            ],
+            1000,
+        );
+        let o = seg(&b, "Other apps");
+        assert_eq!((o.bytes, o.count), (9, 2));
+
+        let names = [
+            "alpha", "bravo", "delta", "echoo", "foxes", "golfs", "hotel", "india", "julia",
+            "kilos", "limas", "mikes",
+        ];
+        let procs: Vec<ProcInfo> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| p(&format!("{n}.exe"), 100 - i as u64))
+            .collect();
+        let b = breakdown(&procs, 1200);
+        let named = b
+            .segments
+            .iter()
+            .filter(|s| s.name != "Other apps" && s.name != "Windows and other")
+            .count();
+        assert_eq!(named, 10);
+        assert_eq!(seg(&b, "Other apps").count, 2);
+    }
+
+    #[test]
+    fn scales_when_over() {
+        let b = breakdown(
+            &[
+                p("aaaa.exe", 700),
+                p("bbbb.exe", 500),
+                p("svchost.exe", 300),
+            ],
+            600,
+        );
+        assert_eq!(b.segments.iter().map(|s| s.bytes).sum::<u64>(), 600);
+    }
+
+    #[test]
+    fn remainder_when_under() {
+        let b = breakdown(&[p("aaaa.exe", 300), p("svchost.exe", 100)], 1000);
+        assert_eq!(seg(&b, "Aaaa").bytes, 300);
+        let w = seg(&b, "Windows and other");
+        assert_eq!((w.bytes, w.count), (700, 1));
+        assert!((w.percent - 70.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn zero_in_use() {
+        assert!(breakdown(&[p("aaaa.exe", 5)], 0).segments.is_empty());
+    }
+
+    #[test]
+    fn colors_stable() {
+        assert_eq!(color_for("Foobar"), color_for("foobar"));
+        assert!(PALETTE.contains(&color_for("anything")));
+    }
+
+    #[test]
+    fn ordering_special_last() {
+        let b = breakdown(
+            &[
+                p("small.exe", 100),
+                p("large.exe", 400),
+                p("tiny.exe", 1),
+                p("svchost.exe", 50),
+            ],
+            1000,
+        );
+        let names: Vec<&str> = b.segments.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Large", "Small", "Other apps", "Windows and other"]);
     }
 }
