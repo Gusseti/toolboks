@@ -16,6 +16,7 @@ pub mod catalog;
 pub mod model;
 mod page;
 pub mod plan;
+pub mod startup;
 
 /// State of the Apps page. Package calls are slow, so they run on worker threads and report
 /// back over these channels.
@@ -35,6 +36,24 @@ struct AppsState {
     message: Option<String>,
 }
 
+/// State of the Startup page. Reading versions of every startup file is slow, so the list loads
+/// on a worker thread; a single switch change runs on the UI thread.
+#[derive(Default)]
+struct StartupState {
+    entries: Vec<startup::Entry>,
+    /// A load was started and not yet invalidated.
+    started: bool,
+    loading: Option<Receiver<Result<Vec<startup::Entry>, String>>>,
+    error: Option<String>,
+    /// The row shown in the inspector, as (source, name).
+    focus: Option<(startup::Source, String)>,
+    /// A Careful entry waiting for the inline "Switch off?" confirm.
+    pending: Option<(startup::Source, String)>,
+    /// Changes of this session, oldest first.
+    steps: Vec<startup::UndoStep>,
+    message: Option<String>,
+}
+
 pub struct Debloater {
     env: model::Env,
     statuses: Vec<model::Status>,
@@ -51,6 +70,7 @@ pub struct Debloater {
     /// The state has been read from Windows at least once.
     loaded: bool,
     apps: AppsState,
+    startup: StartupState,
 }
 
 impl Debloater {
@@ -66,6 +86,7 @@ impl Debloater {
             confirming: false,
             loaded: false,
             apps: AppsState::default(),
+            startup: StartupState::default(),
         }
     }
 }
@@ -76,7 +97,7 @@ impl Tool for Debloater {
     }
 
     fn pages(&self) -> &'static [&'static str] {
-        &["Privacy and ads", "Apps"]
+        &["Privacy and ads", "Apps", "Startup"]
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {

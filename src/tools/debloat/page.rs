@@ -6,9 +6,10 @@ use eframe::egui::{self, Color32, RichText, Sense, Stroke, Vec2};
 
 use super::apps::{self, AppRow, AppRun};
 use super::model::{Applicable, Edition, Group, Hive, Item, RegValue, Risk, State, Status};
+use super::startup::{self, Class, Entry, Source, UndoStep};
 use super::{backend, catalog, plan, Debloater};
 use crate::elevation;
-use crate::ui::{AMBER, CARD_PAD, GAP, GREEN};
+use crate::ui::{self, AMBER, CARD_PAD, GAP, GREEN};
 
 const INSPECTOR_WIDTH: f32 = 190.0;
 const INSPECTOR_PAD: f32 = 8.0;
@@ -110,6 +111,13 @@ impl Debloater {
             }
         }
 
+        if page == 2 {
+            self.startup_poll();
+            if !self.startup.started {
+                self.startup_refresh(ui.ctx());
+            }
+        }
+
         let inspector = egui::Frame::NONE
             .fill(ui.visuals().extreme_bg_color)
             .inner_margin(INSPECTOR_PAD);
@@ -120,12 +128,10 @@ impl Debloater {
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if page == 0 {
-                            self.inspector(ui);
-                        } else {
-                            self.apps_inspector(ui);
-                        }
+                    .show(ui, |ui| match page {
+                        0 => self.inspector(ui),
+                        1 => self.apps_inspector(ui),
+                        _ => self.startup_inspector(ui),
                     });
             });
         let rect = panel.response.rect;
@@ -138,10 +144,10 @@ impl Debloater {
         let side = egui::Frame::NONE.inner_margin(CARD_PAD);
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
-            if page == 0 {
-                self.privacy_page(ui);
-            } else {
-                self.apps_page(ui);
+            match page {
+                0 => self.privacy_page(ui),
+                1 => self.apps_page(ui),
+                _ => self.startup_page(ui),
             }
         });
     }
@@ -760,10 +766,514 @@ impl Debloater {
     }
 }
 
+const FILETIME_UNIX_EPOCH: u64 = 116_444_736_000_000_000;
+const NEVER_TIP: &str = "Security and system items cannot be changed here";
+const STARTUP_NOTE: &str = "Changes are the same switch Task Manager uses. Undo works until you \
+                            close toolboks; you can always switch an app back on here or in \
+                            Task Manager.";
+
+/// Windows FILETIME (100 ns ticks since 1601) for a point in time.
+fn filetime_at(time: std::time::SystemTime) -> u64 {
+    let since_unix = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    FILETIME_UNIX_EPOCH + (since_unix.as_nanos() / 100) as u64
+}
+
+fn filetime_now() -> u64 {
+    filetime_at(std::time::SystemTime::now())
+}
+
+/// Startup entries split by class: (safe to switch off, advanced, protected), order kept.
+fn group_startup(entries: &[Entry]) -> [Vec<&Entry>; 3] {
+    let mut groups: [Vec<&Entry>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for e in entries {
+        let slot = match e.class {
+            Class::Suggest => 0,
+            Class::Careful => 1,
+            Class::Never => 2,
+        };
+        groups[slot].push(e);
+    }
+    groups
+}
+
+fn class_text(class: Class) -> &'static str {
+    match class {
+        Class::Suggest => "Safe",
+        Class::Careful => "Careful",
+        Class::Never => "Protected",
+    }
+}
+
+fn class_color(class: Class) -> Color32 {
+    match class {
+        Class::Suggest => GREEN.gamma_multiply(0.8),
+        Class::Careful => AMBER,
+        Class::Never => Color32::GRAY,
+    }
+}
+
+fn class_sentence(class: Class) -> &'static str {
+    match class {
+        Class::Suggest => "Fine to switch off. The app still works when you open it yourself.",
+        Class::Careful => {
+            "May affect your hardware or apps. Switch it off only if you know you do not need it."
+        }
+        Class::Never => "Security or system item. It cannot be changed here.",
+    }
+}
+
+/// The row switch cannot be used: protected, or the source needs admin and we are not elevated.
+fn needs_admin_now(entry: &Entry, elevated: bool) -> bool {
+    entry.class != Class::Never && entry.source.needs_admin() && !elevated
+}
+
+fn publisher_text(entry: &Entry) -> &str {
+    entry.publisher.as_deref().unwrap_or("Unknown publisher")
+}
+
+fn confirm_off_text(entry: &Entry) -> String {
+    format!(
+        "Switch off {}? It may stop {} features from working. You can switch it back on.",
+        entry.name,
+        publisher_text(entry)
+    )
+}
+
+/// Undoes steps newest first through `undo_one`: the last one only, or all. Steps that fail stay
+/// in the list (original order). Returns (undone, failed).
+fn run_undo(
+    steps: &mut Vec<UndoStep>,
+    all: bool,
+    mut undo_one: impl FnMut(&UndoStep) -> Result<(), String>,
+) -> (usize, usize) {
+    let take = if all { steps.len() } else { steps.len().min(1) };
+    let batch: Vec<UndoStep> = steps.split_off(steps.len() - take);
+    let (mut done, mut kept) = (0, Vec::new());
+    for step in batch.into_iter().rev() {
+        if undo_one(&step).is_ok() {
+            done += 1;
+        } else {
+            kept.push(step);
+        }
+    }
+    kept.reverse();
+    let failed = kept.len();
+    steps.extend(kept);
+    (done, failed)
+}
+
+fn startup_undo_summary(done: usize, failed: usize) -> String {
+    if failed == 0 {
+        format!("Undid {}.", plural(done, "change", "changes"))
+    } else {
+        format!("Undid {done}, {failed} failed. They stay in the undo list.",)
+    }
+}
+
+impl Debloater {
+    fn startup_refresh(&mut self, ctx: &egui::Context) {
+        self.startup.started = true;
+        if self.startup.loading.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(startup::entries(
+                &startup::WinStartup,
+                &startup::publisher_of_command,
+            ));
+            ctx.request_repaint();
+        });
+        self.startup.loading = Some(rx);
+    }
+
+    fn startup_poll(&mut self) {
+        let Some(rx) = &self.startup.loading else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(result) => {
+                self.startup.loading = None;
+                match result {
+                    Ok(entries) => {
+                        self.startup.entries = entries;
+                        self.startup.error = None;
+                    }
+                    Err(e) => self.startup.error = Some(e),
+                }
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.startup.loading = None;
+                self.startup.error = Some("Reading the startup items stopped unexpectedly.".into());
+            }
+        }
+    }
+
+    fn startup_find(&self, key: &(Source, String)) -> Option<&Entry> {
+        self.startup
+            .entries
+            .iter()
+            .find(|e| e.source == key.0 && e.name == key.1)
+    }
+
+    /// One registry write on the UI thread, then reload the list.
+    fn startup_set(&mut self, entry: &Entry, enable: bool) {
+        self.startup.pending = None;
+        let result = startup::set_enabled(&mut startup::WinStartup, entry, enable, filetime_now());
+        self.startup.message = Some(match result {
+            Ok(step) => {
+                self.startup.steps.push(step);
+                format!(
+                    "{} is now {}.",
+                    entry.name,
+                    if enable { "on" } else { "off" }
+                )
+            }
+            Err(e) => format!("Could not change {}: {e}", entry.name),
+        });
+        self.startup.started = false;
+    }
+
+    fn startup_undo(&mut self, all: bool) {
+        let (done, failed) = run_undo(&mut self.startup.steps, all, |step| {
+            startup::undo(&mut startup::WinStartup, step)
+        });
+        self.startup.message = Some(startup_undo_summary(done, failed));
+        self.startup.pending = None;
+        self.startup.started = false;
+    }
+
+    fn startup_page(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let admin = if self.env.elevated {
+                "Running as administrator"
+            } else {
+                "Not running as administrator"
+            };
+            ui.label(
+                RichText::new(format!(
+                    "{} \u{b7} {admin}",
+                    edition_label(self.env.edition)
+                ))
+                .small()
+                .weak(),
+            );
+            let busy = self.startup.loading.is_some();
+            if ui
+                .add_enabled(!busy, egui::Link::new(RichText::new("Refresh").small()))
+                .clicked()
+            {
+                self.startup_refresh(ui.ctx());
+            }
+        });
+        if let Some(message) = &self.startup.message {
+            ui.label(RichText::new(message).small().weak());
+        }
+        ui.add_space(GAP - 2.0);
+
+        let mut action: Option<(Entry, bool)> = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if let Some(error) = &self.startup.error {
+                    ui.label(error.as_str());
+                } else if self.startup.loading.is_some() && self.startup.entries.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("Loading...");
+                    });
+                } else if self.startup.entries.is_empty() {
+                    ui.weak("No startup items found.");
+                }
+                let entries = self.startup.entries.clone();
+                let [safe, advanced, protected] = group_startup(&entries);
+                if !safe.is_empty() {
+                    ui.label(RichText::new("Safe to switch off").strong());
+                    for e in &safe {
+                        action = action.take().or(self.startup_row(ui, e));
+                    }
+                    ui.add_space(GAP);
+                }
+                if !advanced.is_empty() {
+                    egui::CollapsingHeader::new(
+                        RichText::new("Advanced: may affect your hardware or apps").strong(),
+                    )
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        for e in &advanced {
+                            action = action.take().or(self.startup_row(ui, e));
+                        }
+                    });
+                    ui.add_space(GAP);
+                }
+                if !protected.is_empty() {
+                    ui.label(RichText::new("Protected").strong());
+                    for e in &protected {
+                        action = action.take().or(self.startup_row(ui, e));
+                    }
+                    ui.add_space(GAP);
+                }
+            });
+
+        if let Some((entry, enable)) = action {
+            self.startup.focus = Some((entry.source, entry.name.clone()));
+            if !enable && entry.class == Class::Careful {
+                self.startup.pending = Some((entry.source, entry.name.clone()));
+            } else {
+                self.startup_set(&entry, enable);
+            }
+        }
+    }
+
+    /// Draws one row; returns the requested new state if the switch was clicked.
+    fn startup_row(&mut self, ui: &mut egui::Ui, entry: &Entry) -> Option<(Entry, bool)> {
+        let key = (entry.source, entry.name.clone());
+        let focused = self.startup.focus.as_ref() == Some(&key);
+        let blocked = needs_admin_now(entry, self.env.elevated);
+        let locked = entry.class == Class::Never;
+
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
+        if focused || response.hovered() {
+            let fill = if focused {
+                ui.visuals().widgets.active.weak_bg_fill
+            } else {
+                ui.visuals().widgets.hovered.weak_bg_fill
+            };
+            ui.painter().rect_filled(rect, 3.0, fill);
+        }
+        if response.clicked() {
+            self.startup.focus = Some(key);
+        }
+
+        let weak = ui.visuals().weak_text_color();
+        let text_color = if locked || blocked {
+            weak
+        } else {
+            ui.visuals().text_color()
+        };
+        let mut on = entry.enabled;
+        let mut changed = false;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(!locked && !blocked, |ui| {
+                    let r = ui::toggle_switch(ui, &mut on);
+                    changed = r.changed();
+                    if locked {
+                        r.on_disabled_hover_text(NEVER_TIP);
+                    }
+                });
+                ui.add(
+                    egui::Label::new(RichText::new(&entry.name).color(text_color))
+                        .selectable(false),
+                );
+                ui.add(
+                    egui::Label::new(RichText::new(publisher_text(entry)).small().color(weak))
+                        .selectable(false),
+                );
+                let source = if blocked {
+                    "Needs admin"
+                } else {
+                    entry.source.label()
+                };
+                ui.add(
+                    egui::Label::new(RichText::new(source).small().color(weak)).selectable(false),
+                );
+            });
+        });
+        ui.painter().text(
+            rect.right_center() - Vec2::new(4.0, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            class_text(entry.class),
+            egui::TextStyle::Small.resolve(ui.style()),
+            class_color(entry.class),
+        );
+        changed.then(|| (entry.clone(), on))
+    }
+
+    fn startup_inspector(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        ui.spacing_mut().item_spacing.y = 4.0;
+
+        // Inline confirm for a Careful entry.
+        if let Some(key) = self.startup.pending.clone() {
+            match self.startup_find(&key).cloned() {
+                Some(entry) => {
+                    ui.label(RichText::new("Switch off?").strong());
+                    ui.label(confirm_off_text(&entry));
+                    ui.horizontal(|ui| {
+                        if ui.button("Switch off").clicked() {
+                            self.startup_set(&entry, false);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.startup.pending = None;
+                        }
+                    });
+                    ui.add_space(GAP);
+                }
+                None => self.startup.pending = None,
+            }
+        }
+
+        ui.label(RichText::new("About this item").strong());
+        let focus = self
+            .startup
+            .focus
+            .clone()
+            .and_then(|k| self.startup_find(&k).cloned());
+        match focus {
+            None => {
+                ui.weak("Click an item to see what it is.");
+            }
+            Some(e) => {
+                ui.label(RichText::new(&e.name).strong());
+                ui.label(RichText::new(&e.command).small());
+                ui.label(RichText::new("Publisher").small().weak());
+                ui.label(publisher_text(&e));
+                ui.label(RichText::new("Source").small().weak());
+                ui.label(e.source.label());
+                ui.label(class_sentence(e.class));
+            }
+        }
+
+        if self
+            .startup
+            .entries
+            .iter()
+            .any(|e| needs_admin_now(e, self.env.elevated))
+        {
+            ui.add_space(GAP);
+            ui.label("Some items need administrator rights.");
+            if ui.button("Restart as admin").clicked() {
+                if elevation::relaunch_elevated_with_args(&["--open", "Debloater/Startup"]) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    self.startup.message = Some("Elevation was cancelled.".to_string());
+                }
+            }
+            ui.label(
+                RichText::new("Undo history is lost when restarting")
+                    .small()
+                    .weak(),
+            );
+        }
+
+        ui.add_space(GAP);
+        ui.label(RichText::new("Undo").strong());
+        let count = self.startup.steps.len();
+        ui.label(plural(count, "change this session", "changes this session"));
+        let has = count > 0;
+        if ui
+            .add_enabled(has, egui::Button::new("Undo last change"))
+            .clicked()
+        {
+            self.startup_undo(false);
+        }
+        if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
+            self.startup_undo(true);
+        }
+        if has && ui.link(RichText::new("Copy undo steps").small()).clicked() {
+            ctx.copy_text(startup::undo_text(&self.startup.steps));
+        }
+        ui.label(RichText::new(STARTUP_NOTE).small().weak());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tools::debloat::model::Edition;
+
+    fn entry(name: &str, class: Class, source: Source) -> Entry {
+        Entry {
+            source,
+            name: name.into(),
+            command: String::new(),
+            enabled: true,
+            publisher: Some("Acme".into()),
+            class,
+        }
+    }
+
+    #[test]
+    fn startup_groups_by_class_keeping_order() {
+        let list = [
+            entry("a", Class::Careful, Source::UserRun),
+            entry("b", Class::Suggest, Source::UserRun),
+            entry("c", Class::Never, Source::UserRun),
+            entry("d", Class::Suggest, Source::UserRun),
+        ];
+        let [safe, adv, prot] = group_startup(&list);
+        assert_eq!(
+            safe.iter().map(|e| &e.name[..]).collect::<Vec<_>>(),
+            ["b", "d"]
+        );
+        assert_eq!(adv.len(), 1);
+        assert_eq!(prot[0].name, "c");
+        let [s, a, p] = group_startup(&[]);
+        assert!(s.is_empty() && a.is_empty() && p.is_empty());
+    }
+
+    #[test]
+    fn startup_labels() {
+        assert_eq!(class_text(Class::Never), "Protected");
+        let mut e = entry("Foo", Class::Careful, Source::MachineRun);
+        assert_eq!(
+            confirm_off_text(&e),
+            "Switch off Foo? It may stop Acme features from working. You can switch it back on."
+        );
+        e.publisher = None;
+        assert_eq!(publisher_text(&e), "Unknown publisher");
+        assert!(needs_admin_now(&e, false));
+        assert!(!needs_admin_now(&e, true));
+        assert!(!needs_admin_now(
+            &entry("x", Class::Suggest, Source::UserRun),
+            false
+        ));
+        assert_eq!(startup_undo_summary(2, 0), "Undid 2 changes.");
+        assert!(startup_undo_summary(2, 1).starts_with("Undid 2, 1 failed"));
+    }
+
+    #[test]
+    fn filetime_known_points() {
+        assert_eq!(filetime_at(std::time::UNIX_EPOCH), 116_444_736_000_000_000);
+        let one_sec = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        assert_eq!(filetime_at(one_sec), 116_444_736_000_000_000 + 10_000_000);
+        assert!(filetime_now() > 116_444_736_000_000_000);
+    }
+
+    #[test]
+    fn run_undo_newest_first_and_keeps_failures() {
+        let step = |n: &str| UndoStep {
+            source: Source::UserRun,
+            name: n.into(),
+            previous: None,
+        };
+        let mut steps = vec![step("a"), step("b"), step("c")];
+        let mut order = Vec::new();
+        let (done, failed) = run_undo(&mut steps, true, |s| {
+            order.push(s.name.clone());
+            if s.name == "b" {
+                Err("no".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(order, ["c", "b", "a"]);
+        assert_eq!((done, failed), (2, 1));
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, "b");
+
+        let mut steps = vec![step("a"), step("b")];
+        let (done, failed) = run_undo(&mut steps, false, |_| Ok(()));
+        assert_eq!((done, failed), (1, 0));
+        assert_eq!(steps[0].name, "a");
+        assert_eq!(run_undo(&mut Vec::new(), true, |_| Ok(())), (0, 0));
+    }
 
     fn item(id: &'static str, group: Group, risk: Risk) -> Item {
         Item {
