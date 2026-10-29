@@ -1,7 +1,7 @@
 //! The Debloater tool: turn off Windows ads, suggestions and tracking toggles. State lives in
 //! memory only; the page always reads the real state from Windows.
 
-// Phase 1: the engine's apply side is not wired to the page yet.
+// The Apps group is not built yet (model::Group::Apps is unused).
 #![allow(dead_code)]
 
 use std::collections::HashSet;
@@ -25,6 +25,10 @@ pub struct Debloater {
     focus: Option<&'static str>,
     last_run: Option<plan::Run>,
     message: Option<String>,
+    /// Plain-words lines for items of the last run that did not fully work.
+    run_notes: Vec<String>,
+    /// The inline "Apply N changes?" confirm block is open.
+    confirming: bool,
     /// The state has been read from Windows at least once.
     loaded: bool,
 }
@@ -38,6 +42,8 @@ impl Debloater {
             focus: None,
             last_run: None,
             message: None,
+            run_notes: Vec::new(),
+            confirming: false,
             loaded: false,
         }
     }

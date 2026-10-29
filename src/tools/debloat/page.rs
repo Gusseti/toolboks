@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, Vec2};
 
-use super::model::{Applicable, Edition, Group, Item, Risk, State, Status};
+use super::model::{Applicable, Edition, Group, Hive, Item, RegValue, Risk, State, Status};
 use super::{backend, catalog, plan, Debloater};
 use crate::elevation;
 use crate::ui::{AMBER, CARD_PAD, GAP, GREEN};
@@ -280,7 +280,8 @@ impl Debloater {
             ui.add_space(2.0);
             ui.label(format!("{} need administrator rights", review.needs_admin));
             if ui.button("Restart as admin").clicked() {
-                if elevation::relaunch_elevated() {
+                if elevation::relaunch_elevated_with_args(&["--open", "Debloater/Privacy and ads"])
+                {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 } else {
                     self.message = Some("Elevation was cancelled.".to_string());
@@ -294,19 +295,44 @@ impl Debloater {
         }
 
         ui.add_space(GAP);
-        // Phase 1: applying is not enabled yet.
-        ui.add_enabled(
-            false,
-            egui::Button::new(format!(
-                "Apply {}",
-                plural(review.changes, "change", "changes")
-            )),
-        );
-        ui.label(
-            RichText::new("Applying changes comes in the next step")
+        let applicable = review.changes - review.needs_admin;
+        if applicable == 0 {
+            self.confirming = false;
+        }
+        let apply_label = format!("Apply {}", plural(applicable, "change", "changes"));
+        if self.confirming {
+            ui.label(format!(
+                "Apply {}? You can undo them until you close toolboks.",
+                plural(applicable, "change", "changes")
+            ));
+            ui.horizontal(|ui| {
+                if ui.button("Apply").clicked() {
+                    self.apply_selected(&ids);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.confirming = false;
+                }
+            });
+        } else if ui
+            .add_enabled(applicable > 0, egui::Button::new(apply_label))
+            .clicked()
+        {
+            self.confirming = true;
+        }
+        if review.needs_admin > 0 && !self.confirming {
+            ui.label(
+                RichText::new(format!(
+                    "{} need admin and will be skipped",
+                    review.needs_admin
+                ))
                 .small()
                 .weak(),
-        );
+            );
+        }
+
+        for note in &self.run_notes {
+            ui.label(RichText::new(note).small().color(AMBER));
+        }
 
         ui.add_space(GAP);
         let can_undo = self.last_run.is_some();
@@ -315,6 +341,11 @@ impl Debloater {
             .clicked()
         {
             self.undo_last_run();
+        }
+        if can_undo && ui.link(RichText::new("Copy undo steps").small()).clicked() {
+            if let Some(run) = &self.last_run {
+                ctx.copy_text(undo_text(run));
+            }
         }
         ui.label(
             RichText::new(
@@ -326,19 +357,109 @@ impl Debloater {
         );
     }
 
+    fn apply_selected(&mut self, ids: &[&str]) {
+        self.confirming = false;
+        let run = plan::apply(catalog::items(), ids, &mut backend::WinRegistry, self.env);
+        self.message = Some(summarize(&run));
+        self.run_notes = run_notes(&run);
+        // Keep an earlier run's undo steps if this one changed nothing.
+        if !run.undo.is_empty() {
+            self.last_run = Some(run);
+        }
+        // Refreshing also clears the ticks of items that are now off.
+        self.refresh();
+    }
+
     fn undo_last_run(&mut self) {
         let Some(run) = self.last_run.take() else {
             return;
         };
         let results = plan::undo(&run, &mut backend::WinRegistry);
         let failed = results.iter().filter(|(_, r)| r.is_err()).count();
-        self.message = Some(if failed == 0 {
-            format!("Undone: {}.", plural(results.len(), "value", "values"))
-        } else {
-            format!("Undo: {failed} of {} failed.", results.len())
-        });
+        self.message = Some(undo_summary(results.len(), failed));
+        self.run_notes.clear();
+        if failed > 0 {
+            // Keep the steps so the user can try again or copy them.
+            self.last_run = Some(run);
+        }
         self.refresh();
     }
+}
+
+/// One line for the result of an apply run.
+fn summarize(run: &plan::Run) -> String {
+    let count =
+        |f: fn(&plan::Outcome) -> bool| run.applied.iter().filter(|a| f(&a.outcome)).count();
+    let done = count(|o| matches!(o, plan::Outcome::Done));
+    let ineffective = count(|o| matches!(o, plan::Outcome::NotEffective));
+    let failed = count(|o| matches!(o, plan::Outcome::Failed(_)));
+    format!(
+        "Done: {done}, not effective: {ineffective} (Windows ignores it on this edition), \
+         failed: {failed}"
+    )
+}
+
+fn undo_summary(total: usize, failed: usize) -> String {
+    if failed == 0 {
+        format!("Restored {}.", plural(total, "setting", "settings"))
+    } else {
+        format!(
+            "Restored {} of {}, {failed} failed. Undo is still available.",
+            total - failed,
+            plural(total, "setting", "settings")
+        )
+    }
+}
+
+fn title_of(id: &str) -> String {
+    catalog::items()
+        .iter()
+        .find(|i| i.id == id)
+        .map_or_else(|| id.to_string(), |i| i.title.to_string())
+}
+
+/// Plain-words lines for every item that did not end up fully done.
+fn run_notes(run: &plan::Run) -> Vec<String> {
+    run.applied
+        .iter()
+        .filter_map(|a| match &a.outcome {
+            plan::Outcome::Done => None,
+            plan::Outcome::NotEffective => Some(format!(
+                "{}: saved, but Windows ignores it on this edition.",
+                title_of(a.id)
+            )),
+            plan::Outcome::Failed(e) => {
+                Some(format!("{}: could not be changed ({e}).", title_of(a.id)))
+            }
+        })
+        .collect()
+}
+
+fn hive_text(hive: Hive) -> &'static str {
+    match hive {
+        Hive::CurrentUser => "HKEY_CURRENT_USER",
+        Hive::LocalMachine => "HKEY_LOCAL_MACHINE",
+    }
+}
+
+/// A plain text list of what to put back by hand: item, setting path, previous value.
+fn undo_text(run: &plan::Run) -> String {
+    let mut out = String::from("toolboks undo steps\n");
+    for op in &run.undo {
+        let previous = match &op.previous {
+            Some(RegValue::Dword(v)) => format!("number {v}"),
+            Some(RegValue::Sz(s)) => format!("text \"{s}\""),
+            None => "not set (delete the value)".to_string(),
+        };
+        out.push_str(&format!(
+            "\n{}\n  {}\\{}\n  value: {}\n  previous: {previous}\n",
+            title_of(op.id),
+            hive_text(op.hive),
+            op.path,
+            op.name
+        ));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -413,6 +534,68 @@ mod tests {
         assert_eq!(careful.iter().map(|i| i.id).collect::<Vec<_>>(), ["a"]);
         let (s, c) = group_by_risk(&[]);
         assert!(s.is_empty() && c.is_empty());
+    }
+
+    fn run_with(outcomes: &[plan::Outcome]) -> plan::Run {
+        plan::Run {
+            applied: outcomes
+                .iter()
+                .map(|o| plan::Applied {
+                    id: "x",
+                    outcome: o.clone(),
+                })
+                .collect(),
+            undo: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn summarize_counts_outcomes() {
+        use plan::Outcome::*;
+        let run = run_with(&[Done, Done, NotEffective, Failed("no".into())]);
+        assert_eq!(
+            summarize(&run),
+            "Done: 2, not effective: 1 (Windows ignores it on this edition), failed: 1"
+        );
+        assert_eq!(run_notes(&run).len(), 2);
+        assert!(summarize(&plan::Run::default()).starts_with("Done: 0"));
+    }
+
+    #[test]
+    fn undo_summary_wording() {
+        assert_eq!(undo_summary(3, 0), "Restored 3 settings.");
+        assert_eq!(undo_summary(1, 0), "Restored 1 setting.");
+        assert!(undo_summary(3, 1).starts_with("Restored 2 of 3 settings, 1 failed"));
+    }
+
+    #[test]
+    fn undo_text_lists_previous_values() {
+        let run = plan::Run {
+            applied: Vec::new(),
+            undo: vec![
+                plan::UndoOp {
+                    id: "unknown-id",
+                    hive: Hive::CurrentUser,
+                    path: r"Software\T",
+                    name: "A",
+                    previous: Some(RegValue::Dword(1)),
+                },
+                plan::UndoOp {
+                    id: "unknown-id",
+                    hive: Hive::LocalMachine,
+                    path: r"Software\T",
+                    name: "B",
+                    previous: None,
+                },
+            ],
+        };
+        let text = undo_text(&run);
+        assert!(text.contains("unknown-id"));
+        assert!(text.contains(r"HKEY_CURRENT_USER\Software\T"));
+        assert!(text.contains("value: A"));
+        assert!(text.contains("previous: number 1"));
+        assert!(text.contains("HKEY_LOCAL_MACHINE"));
+        assert!(text.contains("previous: not set"));
     }
 
     #[test]

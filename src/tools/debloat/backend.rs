@@ -3,10 +3,13 @@
 #![allow(dead_code)]
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS};
+use windows::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR,
+};
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
-    KEY_READ, REG_DWORD, REG_SZ, REG_VALUE_TYPE,
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_READ, KEY_SET_VALUE,
+    REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE,
 };
 
 use super::model::{Edition, Env, Hive, RegValue};
@@ -66,16 +69,92 @@ impl Registry for WinRegistry {
 
     fn write(
         &mut self,
-        _hive: Hive,
-        _path: &str,
-        _name: &str,
-        _value: &RegValue,
+        hive: Hive,
+        path: &str,
+        name: &str,
+        value: &RegValue,
     ) -> Result<(), String> {
-        Err("writing is not enabled yet".to_string())
+        let path_w = wide(path);
+        let name_w = wide(name);
+        let mut key = HKEY::default();
+        // SAFETY: the path is NUL-terminated and outlives the call; `key` is a valid out-parameter.
+        let err = unsafe {
+            RegCreateKeyExW(
+                root(hive),
+                PCWSTR(path_w.as_ptr()),
+                None,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE | KEY_QUERY_VALUE,
+                None,
+                &mut key,
+                None,
+            )
+        };
+        if err != ERROR_SUCCESS {
+            return Err(describe(err, &format!("cannot open {path}")));
+        }
+
+        let (kind, bytes): (_, Vec<u8>) = match value {
+            RegValue::Dword(v) => (REG_DWORD, v.to_le_bytes().to_vec()),
+            RegValue::Sz(s) => (
+                REG_SZ,
+                wide(s).iter().flat_map(|c| c.to_le_bytes()).collect(),
+            ),
+        };
+        // SAFETY: `key` is open with set rights; the name is NUL-terminated; `bytes` holds the data.
+        let err = unsafe { RegSetValueExW(key, PCWSTR(name_w.as_ptr()), None, kind, Some(&bytes)) };
+        // SAFETY: `key` was opened above and is closed exactly once.
+        unsafe {
+            let _ = RegCloseKey(key);
+        }
+        if err != ERROR_SUCCESS {
+            return Err(describe(err, &format!("cannot write {name}")));
+        }
+        Ok(())
     }
 
-    fn delete(&mut self, _hive: Hive, _path: &str, _name: &str) -> Result<(), String> {
-        Err("writing is not enabled yet".to_string())
+    fn delete(&mut self, hive: Hive, path: &str, name: &str) -> Result<(), String> {
+        let path_w = wide(path);
+        let name_w = wide(name);
+        let mut key = HKEY::default();
+        // SAFETY: the path is NUL-terminated and outlives the call; `key` is a valid out-parameter.
+        let err = unsafe {
+            RegOpenKeyExW(
+                root(hive),
+                PCWSTR(path_w.as_ptr()),
+                None,
+                KEY_SET_VALUE,
+                &mut key,
+            )
+        };
+        if err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND {
+            return Ok(());
+        }
+        if err != ERROR_SUCCESS {
+            return Err(describe(err, &format!("cannot open {path}")));
+        }
+        // SAFETY: `key` is open with set rights and the name is NUL-terminated.
+        let err = unsafe { RegDeleteValueW(key, PCWSTR(name_w.as_ptr())) };
+        // SAFETY: `key` was opened above and is closed exactly once.
+        unsafe {
+            let _ = RegCloseKey(key);
+        }
+        if err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND {
+            return Ok(());
+        }
+        if err != ERROR_SUCCESS {
+            return Err(describe(err, &format!("cannot delete {name}")));
+        }
+        Ok(())
+    }
+}
+
+fn describe(err: WIN32_ERROR, what: &str) -> String {
+    if err == ERROR_ACCESS_DENIED {
+        "Needs administrator rights".to_string()
+    } else {
+        format!("{what}: error {}", err.0)
     }
 }
 
@@ -191,12 +270,94 @@ mod tests {
         assert_eq!(r, Ok(None));
     }
 
+    use crate::tools::debloat::model::{Group, Item, RegSetting, Risk};
+    use crate::tools::debloat::plan;
+    use windows::Win32::System::Registry::RegDeleteTreeW;
+
+    /// Deletes the whole scratch key on drop, even if an assert failed.
+    struct Scratch(String);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let p = wide(&self.0);
+            // SAFETY: NUL-terminated path under HKCU; only ever a toolboks-test key.
+            unsafe {
+                let _ = RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(p.as_ptr()));
+            }
+        }
+    }
+
+    fn scratch(tag: &str) -> Scratch {
+        let path = format!(r"Software\toolboks-test-{tag}-{}", std::process::id());
+        // Clean any leftovers first.
+        drop(Scratch(path.clone()));
+        Scratch(path)
+    }
+
     #[test]
-    fn real_writes_are_refused() {
+    fn real_write_read_delete_roundtrip() {
+        let s = scratch("rw");
         let mut r = WinRegistry;
-        assert!(r
-            .write(Hive::CurrentUser, "x", "y", &RegValue::Dword(1))
-            .is_err());
-        assert!(r.delete(Hive::CurrentUser, "x", "y").is_err());
+        let h = Hive::CurrentUser;
+        r.write(h, &s.0, "D", &RegValue::Dword(7)).unwrap();
+        r.write(h, &s.0, "S", &RegValue::Sz("hello ø".into()))
+            .unwrap();
+        assert_eq!(r.read(h, &s.0, "D"), Ok(Some(RegValue::Dword(7))));
+        assert_eq!(
+            r.read(h, &s.0, "S"),
+            Ok(Some(RegValue::Sz("hello ø".into())))
+        );
+        r.write(h, &s.0, "D", &RegValue::Dword(0)).unwrap();
+        r.write(h, &s.0, "S", &RegValue::Sz(String::new())).unwrap();
+        assert_eq!(r.read(h, &s.0, "D"), Ok(Some(RegValue::Dword(0))));
+        assert_eq!(r.read(h, &s.0, "S"), Ok(Some(RegValue::Sz(String::new()))));
+        r.delete(h, &s.0, "D").unwrap();
+        assert_eq!(r.read(h, &s.0, "D"), Ok(None));
+        assert_eq!(r.delete(h, &s.0, "D"), Ok(()));
+        assert_eq!(
+            r.delete(h, r"Software\toolboks-test-no-such-key", "X"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn real_apply_then_undo_through_engine() {
+        let s = scratch("engine");
+        let path: &'static str = Box::leak(s.0.clone().into_boxed_str());
+        let settings: &'static [RegSetting] = Box::leak(Box::new([RegSetting {
+            hive: Hive::CurrentUser,
+            path,
+            name: "Flag",
+            off_value: 0,
+        }]));
+        let items = [Item {
+            id: "scratch",
+            group: Group::PrivacyAds,
+            title: "t",
+            what_changes: "w",
+            could_break: "c",
+            risk: Risk::Safe,
+            min_edition: Edition::Unknown,
+            settings,
+        }];
+        let env = Env {
+            edition: Edition::Pro,
+            elevated: false,
+        };
+        let mut r = WinRegistry;
+        r.write(Hive::CurrentUser, path, "Flag", &RegValue::Dword(1))
+            .unwrap();
+        let run = plan::apply(&items, &["scratch"], &mut r, env);
+        assert_eq!(run.applied.len(), 1);
+        assert_eq!(
+            r.read(Hive::CurrentUser, path, "Flag"),
+            Ok(Some(RegValue::Dword(0)))
+        );
+        let results = plan::undo(&run, &mut r);
+        assert!(results.iter().all(|(_, res)| res.is_ok()));
+        assert_eq!(
+            r.read(Hive::CurrentUser, path, "Flag"),
+            Ok(Some(RegValue::Dword(1)))
+        );
     }
 }
