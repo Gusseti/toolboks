@@ -1,9 +1,8 @@
 name: CI
 
+# Manual only: checks run locally (cargo fmt, clippy, test), not on every push.
+# Start one from the Actions tab, or: gh workflow run CI --ref staging
 on:
-  push:
-    branches: [main, staging]
-  pull_request:
   workflow_dispatch:
 
 jobs:
