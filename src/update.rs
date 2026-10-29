@@ -482,6 +482,31 @@ mod tests {
         );
     }
 
+    /// Needs internet and a published release; run with `cargo test -- --ignored`.
+    /// The whole download path against the real latest release, minus the swap.
+    #[test]
+    #[ignore]
+    fn the_published_release_downloads_and_verifies() {
+        let json = fetch(
+            LATEST_RELEASE_URL,
+            "application/vnd.github+json",
+            MAX_JSON_BYTES,
+            JSON_DEADLINE,
+        )
+        .expect("latest release JSON");
+        let release = parse_release(&json).expect("release has an exe and a checksum");
+        let exe = fetch(
+            &release.exe_url,
+            "application/octet-stream",
+            MAX_EXE_BYTES,
+            EXE_DEADLINE,
+        )
+        .expect("exe download");
+        let sha = fetch(&release.sha_url, "text/plain", 4096, JSON_DEADLINE).expect("checksum");
+        let expected = parse_sha256(&String::from_utf8_lossy(&sha)).expect("checksum file parses");
+        assert_eq!(verify(&exe, &expected), Ok(()));
+    }
+
     #[test]
     fn swaps_the_exe_and_keeps_the_old_one_aside() {
         let dir = std::env::temp_dir().join(format!("toolboks-swap-test-{}", std::process::id()));
