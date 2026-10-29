@@ -1,0 +1,44 @@
+name: Release
+
+# Runs when a version tag is pushed: v1.2.3 (stable) or v1.2.3-rc.1 (pre-release).
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match Cargo.toml version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match Cargo.toml version v$version"
+          }
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "toolboks-${{ github.ref_name }}-x86_64-pc-windows-msvc"
+          Compress-Archive -Path target/release/toolboks.exe -DestinationPath "$name.zip"
+          (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" | Out-File "$name.zip.sha256" -Encoding ascii
+          "ASSET=$name.zip" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $pre = if ("${{ github.ref_name }}" -match '-') { "--prerelease" } else { "" }
+          gh release create "${{ github.ref_name }}" $env:ASSET "$env:ASSET.sha256" --title "${{ github.ref_name }}" --generate-notes $pre
