@@ -16,7 +16,7 @@ A lightweight Windows 11 toolbox of small utilities (Rust, egui/eframe with the 
 ## Memory tool phases
 
 1. **Dashboard (done).** Read-only. Used, available and total RAM, plus a filterable, sortable per-process table (working set, private bytes) via `sysinfo`. Not yet: commit totals, page faults, standby/modified/free breakdown (needs the windows crate or the NT memory-list query; verify whether it works without admin).
-2. **Trim and exclusions.** Per-process `EmptyWorkingSet` with confirm and before/after delta, and an exclusion list. No admin. Skip system and protected processes (System, Idle, Registry, Memory Compression, PPL, our own pid, the shell); access-denied means skip, not error.
+2. **Trim and exclusions (done).** Per-process `EmptyWorkingSet` with confirm and before/after delta, and an exclusion list. No admin. Skip system and protected processes (System, Idle, Registry, Memory Compression, PPL, our own pid, the shell); access-denied means skip, not error.
 3. **Elevation and purge.** "Relaunch as admin" via `ShellExecute` with the `runas` verb. Opt-in purge of the standby list and low-priority standby list via `NtSetSystemInformation(SystemMemoryListInformation)`. Needs `SeProfileSingleProcessPrivilege`. The API is undocumented: resolve it dynamically, fail soft, verify the command values against sources and test on this Win11 build.
 4. **Auto-clean rules.** Trigger on low free memory and a large standby list, with a cooldown and a notification. Trim runs unelevated; purge only when elevated.
 5. **Release hardening.** Public repo and license, SignPath signing, `self_update` with checksums, no packers (UPX) on the exe.
