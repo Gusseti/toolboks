@@ -9,7 +9,7 @@ mod overview;
 mod sampler;
 
 use history::History;
-use sampler::{Info, Msg, Sample, Sampler};
+use sampler::{GpuSample, Info, Msg, Sample, Sampler};
 
 /// Points kept per graph (one per second, so a minute).
 const HISTORY_POINTS: usize = 60;
@@ -24,6 +24,11 @@ pub struct Resources {
     disk_write: History,
     net_down: History,
     net_up: History,
+    gpu_load: History,
+    /// Latest sample that carried GPU data.
+    gpu: Option<GpuSample>,
+    /// Samples in a row that arrived without GPU data.
+    gpu_missing: u32,
 }
 
 impl Resources {
@@ -38,6 +43,9 @@ impl Resources {
             disk_write: History::new(HISTORY_POINTS),
             net_down: History::new(HISTORY_POINTS),
             net_up: History::new(HISTORY_POINTS),
+            gpu_load: History::new(HISTORY_POINTS),
+            gpu: None,
+            gpu_missing: 0,
         }
     }
 }
@@ -66,6 +74,14 @@ impl crate::tools::Tool for Resources {
                     self.disk_write.push(sample.disk_write_bps as f32);
                     self.net_down.push(sample.net_down_bps as f32);
                     self.net_up.push(sample.net_up_bps as f32);
+                    match &sample.gpu {
+                        Some(g) => {
+                            self.gpu_load.push(g.load.unwrap_or(0.0));
+                            self.gpu = Some(g.clone());
+                            self.gpu_missing = 0;
+                        }
+                        None => self.gpu_missing = self.gpu_missing.saturating_add(1),
+                    }
                     self.last = Some(sample);
                 }
             }

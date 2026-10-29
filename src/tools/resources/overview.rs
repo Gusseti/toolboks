@@ -4,11 +4,14 @@ use eframe::egui::{self, Align, Color32, Layout, RichText, Vec2};
 
 use super::Resources;
 use crate::format::{clock, rate, size_plain, uptime};
-use crate::ui::{card, graph, stat, Line, ACCENT, AMBER, GAP};
+use crate::ui::{card, graph, stat, Line, ACCENT, AMBER, GAP, GREEN};
 
 const MAX_WIDTH: f32 = 880.0;
-const CARD_HEIGHT: f32 = 260.0;
 const GRAPH_HEIGHT: f32 = 120.0;
+const SMALL_CARD_HEIGHT: f32 = 150.0;
+const SMALL_GRAPH_HEIGHT: f32 = 40.0;
+/// Samples without GPU data in a row before the card says no GPU was found.
+const GPU_MISSING_AFTER: u32 = 3;
 const IO_CARD_HEIGHT: f32 = 210.0;
 const IO_GRAPH_HEIGHT: f32 = 60.0;
 const DISK_FLOOR: f32 = 1024.0 * 1024.0;
@@ -86,12 +89,18 @@ impl Resources {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = GAP;
             ui.allocate_ui_with_layout(Vec2::new(left, 0.0), Layout::top_down(Align::LEFT), |ui| {
-                card(ui, left, CARD_HEIGHT, |ui| self.cpu_card(ui))
+                card(ui, left, 2.0 * SMALL_CARD_HEIGHT + GAP, |ui| {
+                    self.cpu_card(ui)
+                })
             });
             ui.allocate_ui_with_layout(
                 Vec2::new(right, 0.0),
                 Layout::top_down(Align::LEFT),
-                |ui| card(ui, right, CARD_HEIGHT, |ui| self.mem_card(ui)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.y = GAP;
+                    card(ui, right, SMALL_CARD_HEIGHT, |ui| self.gpu_card(ui));
+                    card(ui, right, SMALL_CARD_HEIGHT, |ui| self.mem_card(ui));
+                },
             );
         });
 
@@ -196,6 +205,47 @@ impl Resources {
         });
     }
 
+    fn gpu_card(&self, ui: &mut egui::Ui) {
+        let name = self.gpu.as_ref().map_or("", |g| g.name.as_str());
+        header(ui, "GPU", name);
+        if self.gpu.is_none() && self.gpu_missing >= GPU_MISSING_AFTER {
+            ui.label(RichText::new("No GPU found").weak());
+            return;
+        }
+        let line = Line {
+            values: self.gpu_load.values(),
+            color: GREEN,
+            fill: true,
+        };
+        graph(
+            ui,
+            SMALL_GRAPH_HEIGHT,
+            &[line],
+            self.gpu_load.capacity(),
+            100.0,
+        );
+
+        let load = self
+            .gpu
+            .as_ref()
+            .and_then(|g| g.load)
+            .map(|l| format!("{l:.0}%"));
+        let mem = self.gpu.as_ref().and_then(|g| g.mem_used).map(size_plain);
+        let temp = self
+            .gpu
+            .as_ref()
+            .and_then(|g| g.temp_c)
+            .map(|t| format!("{t:.0} °C"));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 24.0;
+            stat(ui, load.as_deref().unwrap_or(NONE), "Load");
+            stat(ui, mem.as_deref().unwrap_or(NONE), "Memory");
+            if let Some(t) = &temp {
+                stat(ui, t, "Temp");
+            }
+        });
+    }
+
     fn mem_card(&self, ui: &mut egui::Ui) {
         let total = self.info.as_ref().map_or(0, |i| i.mem_total);
         let size = if total > 0 {
@@ -209,7 +259,7 @@ impl Resources {
             color: VIOLET,
             fill: true,
         };
-        graph(ui, GRAPH_HEIGHT, &[line], self.mem.capacity(), 100.0);
+        graph(ui, SMALL_GRAPH_HEIGHT, &[line], self.mem.capacity(), 100.0);
 
         let percent = self.mem.last().map(|p| format!("{p:.0}%"));
         let used = self.last.as_ref().map(|s| size_plain(s.mem_used));
@@ -218,6 +268,16 @@ impl Resources {
             stat(ui, percent.as_deref().unwrap_or(NONE), "In use");
             stat(ui, used.as_deref().unwrap_or(NONE), "Used");
         });
+    }
+}
+
+/// "3.1 GB of 10.0 GB", or "-" when the used amount is unknown.
+#[allow(dead_code)]
+pub(super) fn gpu_memory_label(used: Option<u64>, total: Option<u64>) -> String {
+    match (used, total) {
+        (Some(u), Some(t)) => format!("{} of {}", size_plain(u), size_plain(t)),
+        (Some(u), None) => size_plain(u),
+        _ => NONE.to_string(),
     }
 }
 
@@ -269,6 +329,15 @@ mod tests {
         assert_eq!(nice_ceiling(0.0, 128.0), 128.0);
         assert_eq!(nice_ceiling(0.0, 1.0), 1.0);
         assert_eq!(nice_ceiling(f32::NAN, 5.0), 5.0);
+    }
+
+    #[test]
+    fn gpu_memory_label_variants() {
+        assert_eq!(gpu_memory_label(None, Some(1)), "-");
+        assert_eq!(gpu_memory_label(None, None), "-");
+        let gb = 1024u64 * 1024 * 1024;
+        let s = gpu_memory_label(Some(gb), Some(4 * gb));
+        assert!(s.contains(" of "), "{s}");
     }
 
     #[test]

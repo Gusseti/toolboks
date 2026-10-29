@@ -8,6 +8,9 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use sysinfo::{DiskRefreshKind, Disks, Networks, System};
+
+use super::gpu::{GpuBasic, GpuReader};
+use super::nvml::{Nvml, NvmlReading};
 use windows::core::w;
 use windows::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterValue,
@@ -121,6 +124,28 @@ fn clamp_percent(v: f64) -> f32 {
         0.0
     } else {
         v.clamp(0.0, 100.0) as f32
+    }
+}
+
+/// True when the GPU name or vendor says NVIDIA, so the driver library readings apply.
+fn is_nvidia(basic: &GpuBasic) -> bool {
+    let has = |s: &str| s.to_lowercase().contains("nvidia");
+    has(&basic.name) || basic.vendor.as_deref().is_some_and(has)
+}
+
+/// Combines the generic GPU readings with the optional NVIDIA driver readings.
+fn merge_gpu(basic: GpuBasic, nv: Option<NvmlReading>) -> GpuSample {
+    let nv = nv.unwrap_or_default();
+    GpuSample {
+        name: basic.name,
+        load: basic.load,
+        mem_used: basic.mem_used,
+        mem_total: basic.mem_total,
+        engines: basic.engines,
+        temp_c: nv.temp_c,
+        power_w: nv.power_w,
+        clock_mhz: nv.clock_mhz,
+        mem_clock_mhz: nv.mem_clock_mhz,
     }
 }
 
@@ -246,6 +271,8 @@ impl Sampler {
                 let mut disks = Disks::new_with_refreshed_list_specifics(disk_kind).ok();
                 let mut nets = Networks::new_with_refreshed_list().ok();
                 let busy = DiskBusy::new();
+                let mut gpu_reader = GpuReader::new();
+                let nvml = Nvml::open();
                 let mut last_tick = Instant::now();
 
                 // The thread was just primed above, so the first tick can already report.
@@ -270,6 +297,8 @@ impl Sampler {
                         if let Some(b) = busy.as_ref() {
                             b.collect();
                         }
+                        // Resets the GPU counter baseline; the reading itself is dropped.
+                        let _ = gpu_reader.read();
                         last_tick = Instant::now();
                         continue;
                     }
@@ -304,8 +333,14 @@ impl Sampler {
                         disk_active: busy.as_ref().and_then(|b| b.read()),
                         net_down_bps: bytes_per_second(down, secs),
                         net_up_bps: bytes_per_second(up, secs),
-                        // Filled in by the phase 3 GPU work.
-                        gpu: None,
+                        gpu: gpu_reader.read().map(|basic| {
+                            let nv = if is_nvidia(&basic) {
+                                nvml.as_ref().and_then(|n| n.read())
+                            } else {
+                                None
+                            };
+                            merge_gpu(basic, nv)
+                        }),
                     };
                     if tx.send(Msg::Sample(sample)).is_err() {
                         return;
@@ -398,6 +433,41 @@ mod tests {
         assert_eq!(clamp_percent(250.0), 100.0);
     }
 
+    #[test]
+    fn merge_gpu_cases() {
+        let basic = GpuBasic {
+            name: "NVIDIA GeForce".into(),
+            vendor: Some("NVIDIA".into()),
+            load: Some(40.0),
+            mem_used: Some(1),
+            mem_total: Some(2),
+            engines: vec![("3D".into(), 40.0)],
+        };
+        assert!(is_nvidia(&basic));
+        let plain = merge_gpu(basic.clone(), None);
+        assert_eq!(plain.name, "NVIDIA GeForce");
+        assert_eq!(plain.load, Some(40.0));
+        assert_eq!(plain.engines, basic.engines);
+        assert_eq!(plain.temp_c, None);
+        let nv = NvmlReading {
+            temp_c: Some(55.0),
+            power_w: Some(80.0),
+            clock_mhz: Some(1800),
+            mem_clock_mhz: Some(7000),
+        };
+        let full = merge_gpu(basic, Some(nv));
+        assert_eq!(full.temp_c, Some(55.0));
+        assert_eq!(full.power_w, Some(80.0));
+        assert_eq!(full.clock_mhz, Some(1800));
+        assert_eq!(full.mem_clock_mhz, Some(7000));
+        let amd = GpuBasic {
+            name: "Radeon".into(),
+            vendor: Some("AMD".into()),
+            ..Default::default()
+        };
+        assert!(!is_nvidia(&amd));
+    }
+
     /// Prints a few live readings; run with `cargo test prints_live_samples -- --ignored --nocapture`.
     #[test]
     #[ignore]
@@ -423,6 +493,7 @@ mod tests {
                             s.net_down_bps,
                             s.net_up_bps
                         );
+                        println!("  gpu {:?}", s.gpu);
                     }
                 }
             }
