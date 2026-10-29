@@ -1,3 +1,4 @@
+mod admin;
 mod auto;
 mod memlist;
 mod stats;
@@ -9,12 +10,13 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
-use self::auto::{decide, AutoClean, Reason, Snapshot, STANDBY_RULE_AVAILABLE_LIMIT_PERCENT};
-use self::memlist::{Command, Lists, MemListError};
-use self::stats::{format_bytes, sort_and_filter, Sampler, SortKey};
+use self::admin::Job;
+use self::auto::AutoClean;
+use self::memlist::Lists;
+use self::stats::{format_bytes, group_by_name, sort_and_filter, ProcInfo, Sampler, SortKey};
 use self::trim::{skip_reason, trim_process, SkipReason, TrimError};
 use super::Tool;
-use crate::{elevation, win};
+use crate::elevation;
 
 const REFRESH: Duration = Duration::from_secs(2);
 /// How often the auto-clean rules are checked, in the background too.
@@ -22,7 +24,7 @@ const AUTO_CHECK: Duration = Duration::from_secs(5);
 const ROW_HEIGHT: f32 = 22.0;
 
 /// Live RAM usage, a per-process table, manual per-process trimming and, with admin rights,
-/// system-wide memory list commands.
+/// system-wide memory list commands and auto-clean (see `admin`).
 /// Nothing is stored anywhere: exclusions and filters reset when the app closes.
 pub struct Memory {
     /// `None` if the platform refused to provide system info.
@@ -34,12 +36,16 @@ pub struct Memory {
     sort_key: SortKey,
     descending: bool,
     filter: String,
+    /// One table row per process name instead of per process.
+    grouped: bool,
     /// Lowercase process names that are never trimmed.
     exclusions: HashSet<String>,
     /// A trim waiting for the user's confirmation: (pid, name).
     pending: Option<(u32, String)>,
     /// A system-wide command waiting for the user's confirmation.
-    pending_system: Option<Command>,
+    pending_system: Option<memlist::Command>,
+    /// The system-wide command running on a worker thread, if any.
+    job: Option<Job>,
     /// Result of the last action, shown above the table.
     status: Option<String>,
     auto: AutoClean,
@@ -56,9 +62,11 @@ impl Memory {
             sort_key: SortKey::WorkingSet,
             descending: true,
             filter: String::new(),
+            grouped: false,
             exclusions: HashSet::new(),
             pending: None,
             pending_system: None,
+            job: None,
             status: None,
             auto: AutoClean::new(),
             last_auto_check: Instant::now(),
@@ -91,6 +99,24 @@ impl Memory {
     }
 
     fn run_trim(&mut self, pid: u32, name: &str) {
+        // The list may have changed since the click: check again that this pid is still the
+        // same, still trimmable process.
+        let still_there = self.sampler.as_ref().is_some_and(|s| {
+            s.processes
+                .iter()
+                .any(|p| p.pid == pid && p.name.eq_ignore_ascii_case(name))
+        });
+        if !still_there {
+            self.status = Some(format!(
+                "Not trimmed: {name} (pid {pid}) is no longer running under that name."
+            ));
+            return;
+        }
+        if let Some(reason) = skip_reason(pid, name, std::process::id(), &self.exclusions) {
+            self.status = Some(format!("Not trimmed: {}.", reason.describe()));
+            return;
+        }
+
         self.status = Some(match trim_process(pid) {
             Ok(t) => format!(
                 "Trimmed {name} (pid {pid}): {} \u{2192} {} right after the trim. \
@@ -133,214 +159,6 @@ impl Memory {
         ui.add_space(4.0);
     }
 
-    fn run_system(&mut self, command: Command) {
-        let available = |m: &Self| m.sampler.as_ref().map_or(0, |s| s.totals.available);
-        let (avail_before, lists_before) = (available(self), self.lists);
-
-        self.status = Some(match memlist::run(command) {
-            Ok(()) => {
-                self.refresh_now();
-                let mut text = format!(
-                    "{}: available {} \u{2192} {}",
-                    command.title(),
-                    format_bytes(avail_before),
-                    format_bytes(available(self))
-                );
-                if let (Some(before), Some(after)) = (lists_before, self.lists) {
-                    text += &format!(
-                        ", standby {} \u{2192} {}",
-                        format_bytes(before.standby),
-                        format_bytes(after.standby)
-                    );
-                }
-                text
-            }
-            Err(MemListError::NotElevated) => format!(
-                "{} needs admin rights. Relaunch as admin first.",
-                command.title()
-            ),
-            Err(MemListError::Unavailable) => format!(
-                "{} is not available on this version of Windows.",
-                command.title()
-            ),
-            Err(MemListError::Status(code)) => {
-                format!(
-                    "{} failed: Windows returned status {code:#010x}.",
-                    command.title()
-                )
-            }
-        });
-    }
-
-    /// Runs the unattended purge for `reason` and records the outcome in the log.
-    fn run_auto(&mut self, reason: Reason, ctx: &egui::Context) {
-        let command = Command::PurgeLowPriorityStandbyList;
-        let available = |m: &Self| m.sampler.as_ref().map_or(0, |s| s.totals.available);
-        let (avail_before, lists_before) = (available(self), self.lists);
-
-        let entry = match memlist::run(command) {
-            Ok(()) => {
-                self.refresh_now();
-                let mut text = format!(
-                    "Ran {} ({}): available {} \u{2192} {}",
-                    command.title(),
-                    reason.describe(),
-                    format_bytes(avail_before),
-                    format_bytes(available(self))
-                );
-                if let (Some(before), Some(after)) = (lists_before, self.lists) {
-                    text += &format!(
-                        ", standby {} \u{2192} {}",
-                        format_bytes(before.standby),
-                        format_bytes(after.standby)
-                    );
-                }
-                // Flash the taskbar button so a minimized window still tells you.
-                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
-                    egui::UserAttentionType::Informational,
-                ));
-                text
-            }
-            Err(MemListError::NotElevated) => {
-                self.auto.rules.enabled = false;
-                "Auto-clean switched off: admin rights are missing.".to_string()
-            }
-            Err(MemListError::Unavailable) => {
-                self.auto.rules.enabled = false;
-                "Auto-clean switched off: not available on this version of Windows.".to_string()
-            }
-            Err(MemListError::Status(code)) => {
-                format!(
-                    "Auto-clean failed ({}): Windows returned status {code:#010x}.",
-                    reason.describe()
-                )
-            }
-        };
-        // Also after a failure, so a persistent error is retried at the cooldown pace, not every check.
-        self.auto.mark_run();
-        self.auto
-            .push_log(format!("{}  {entry}", win::local_time_hms()));
-    }
-
-    fn auto_panel(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("Auto-clean (admin)").show(ui, |ui| {
-            if !self.elevated {
-                ui.label(
-                    "Auto-clean runs the low-priority standby purge, which needs administrator \
-                     rights. Relaunch as admin from the panel above to use it.",
-                );
-                return;
-            }
-
-            let rules = &mut self.auto.rules;
-            let mut switched_on = false;
-            if ui
-                .checkbox(&mut rules.enabled, "Enable auto-clean")
-                .changed()
-            {
-                switched_on = rules.enabled;
-            }
-            ui.weak(
-                "Only works while this window is open or minimized. Settings are not saved and \
-                 reset when the app closes.",
-            );
-
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut rules.low_available, "Available memory below");
-                ui.add(
-                    egui::DragValue::new(&mut rules.low_available_percent)
-                        .range(1..=50)
-                        .suffix(" %"),
-                );
-            });
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut rules.big_standby, "Standby list above");
-                ui.add(
-                    egui::DragValue::new(&mut rules.big_standby_gib)
-                        .range(0.5..=64.0)
-                        .speed(0.1)
-                        .suffix(" GiB"),
-                );
-                ui.weak(format!(
-                    "while available is under {STANDBY_RULE_AVAILABLE_LIMIT_PERCENT:.0} %"
-                ));
-            });
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut rules.interval, "Every");
-                ui.add(
-                    egui::DragValue::new(&mut rules.interval_minutes)
-                        .range(1..=1440)
-                        .suffix(" min"),
-                );
-            });
-            ui.horizontal(|ui| {
-                ui.label("At most once every");
-                ui.add(
-                    egui::DragValue::new(&mut rules.cooldown_minutes)
-                        .range(1..=120)
-                        .suffix(" min"),
-                );
-            });
-
-            if switched_on {
-                // Count the cooldown and interval from the moment it was switched on.
-                self.auto.mark_run();
-            }
-
-            ui.add_space(4.0);
-            ui.label("Activity");
-            if self.auto.log.is_empty() {
-                ui.weak("Nothing yet.");
-            }
-            egui::ScrollArea::vertical()
-                .max_height(120.0)
-                .show(ui, |ui| {
-                    for entry in &self.auto.log {
-                        ui.label(entry);
-                    }
-                });
-        });
-    }
-
-    fn system_panel(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("System-wide cleaning (admin)").show(ui, |ui| {
-            if let Some(command) = self.pending_system {
-                ui.group(|ui| {
-                    ui.label(format!("{}? {}", command.title(), command.warning()));
-                    ui.horizontal(|ui| {
-                        if ui.button("Run").clicked() {
-                            self.run_system(command);
-                            self.pending_system = None;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            self.pending_system = None;
-                        }
-                    });
-                });
-            }
-
-            if self.elevated {
-                for command in Command::ALL {
-                    ui.horizontal(|ui| {
-                        if ui.button(command.title()).clicked() {
-                            self.pending_system = Some(command);
-                        }
-                        ui.weak(command.warning());
-                    });
-                }
-            } else {
-                ui.label("These actions need administrator rights.");
-                if ui.button("Relaunch as admin").clicked() {
-                    if elevation::relaunch_elevated() {
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    } else {
-                        self.status = Some("Elevation was cancelled.".to_string());
-                    }
-                }
-            }
-        });
-    }
-
     fn exclusions_list(&mut self, ui: &mut egui::Ui) {
         let mut names: Vec<String> = self.exclusions.iter().cloned().collect();
         names.sort();
@@ -374,28 +192,7 @@ impl Tool for Memory {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
-        if !self.elevated || !self.auto.rules.enabled {
-            return;
-        }
-        ctx.request_repaint_after(AUTO_CHECK);
-        if self.last_auto_check.elapsed() < AUTO_CHECK {
-            return;
-        }
-        self.last_auto_check = Instant::now();
-
-        let Some(sampler) = self.sampler.as_mut() else {
-            return;
-        };
-        sampler.refresh_totals();
-        self.lists = memlist::query();
-        let snapshot = Snapshot {
-            total: sampler.totals.total,
-            available: sampler.totals.available,
-            standby: self.lists.map(|l| l.standby),
-        };
-        if let Some(reason) = decide(&self.auto.rules, &snapshot, self.auto.since_last_run()) {
-            self.run_auto(reason, ctx);
-        }
+        self.background(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
@@ -425,7 +222,10 @@ impl Tool for Memory {
                 format_bytes(lists.modified)
             );
         }
-        ui.label(summary);
+        ui.label(summary).on_hover_text(
+            "Available = Free + Standby. Windows keeps recently used data in the standby list \
+             and hands it out whenever a program needs memory.",
+        );
         ui.add_space(8.0);
 
         self.confirm_bar(ui);
@@ -441,6 +241,7 @@ impl Tool for Memory {
         ui.horizontal(|ui| {
             ui.label("Filter:");
             ui.text_edit_singleline(&mut self.filter);
+            ui.checkbox(&mut self.grouped, "Group by name");
             ui.label(format!("{process_count} processes"));
         });
         ui.add_space(4.0);
@@ -448,12 +249,14 @@ impl Tool for Memory {
         let Some(sampler) = self.sampler.as_ref() else {
             return;
         };
-        let rows = sort_and_filter(
-            &sampler.processes,
-            self.sort_key,
-            self.descending,
-            &self.filter,
-        );
+        let grouped_rows: Vec<ProcInfo>;
+        let source: &[ProcInfo] = if self.grouped {
+            grouped_rows = group_by_name(&sampler.processes);
+            &grouped_rows
+        } else {
+            &sampler.processes
+        };
+        let rows = sort_and_filter(source, self.sort_key, self.descending, &self.filter);
 
         // The table borrows the sampler and exclusions, so record what was clicked
         // and apply it to `self` once the table is done.
@@ -494,11 +297,17 @@ impl Tool for Memory {
                 body.rows(ROW_HEIGHT, rows.len(), |mut row| {
                     let p = rows[row.index()];
                     let reason = skip_reason(p.pid, &p.name, own_pid, exclusions);
+                    let several = p.count > 1;
                     row.col(|ui| {
                         ui.label(&p.name);
                     });
                     row.col(|ui| {
-                        ui.label(p.pid.to_string());
+                        // A group has no single pid to show.
+                        ui.label(if several {
+                            format!("\u{d7}{}", p.count)
+                        } else {
+                            p.pid.to_string()
+                        });
                     });
                     row.col(|ui| {
                         ui.label(format_bytes(p.working_set));
@@ -508,9 +317,14 @@ impl Tool for Memory {
                     });
                     row.col(|ui| {
                         ui.horizontal(|ui| {
+                            let can_trim = reason.is_none() && !several;
                             let mut trim_btn =
-                                ui.add_enabled(reason.is_none(), egui::Button::new("Trim").small());
-                            if let Some(reason) = reason {
+                                ui.add_enabled(can_trim, egui::Button::new("Trim").small());
+                            if several {
+                                trim_btn = trim_btn.on_disabled_hover_text(
+                                    "Turn off grouping to trim one process",
+                                );
+                            } else if let Some(reason) = reason {
                                 trim_btn = trim_btn.on_disabled_hover_text(reason.describe());
                             }
                             if trim_btn.clicked() {

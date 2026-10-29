@@ -31,6 +31,9 @@ const PROTECTED: &[&str] = &[
     "lsass.exe",
     "dwm.exe",
     "explorer.exe",
+    // Trimming the audio engine or the font host causes audible glitches and redraw stalls.
+    "audiodg.exe",
+    "fontdrvhost.exe",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

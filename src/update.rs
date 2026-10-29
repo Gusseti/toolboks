@@ -9,6 +9,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, thread};
@@ -22,6 +23,9 @@ const EXE_SUFFIX: &str = "-x86_64-pc-windows-msvc.exe";
 const MAX_JSON_BYTES: usize = 1024 * 1024;
 const MAX_EXE_BYTES: usize = 64 * 1024 * 1024;
 const MIN_EXE_BYTES: usize = 100_000;
+/// Whole-transfer limits; a server that drips bytes forever cannot stall the app.
+const JSON_DEADLINE: Duration = Duration::from_secs(30);
+const EXE_DEADLINE: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
@@ -32,9 +36,10 @@ pub struct Version {
 }
 
 impl Version {
-    /// Parses `1.2.3`, `v1.2.3` and `1.2.3-rc.1`.
+    /// Parses `1.2.3`, `v1.2.3` and `1.2.3-rc.1`. Build metadata (`+abc`) is ignored.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim().trim_start_matches('v');
+        let text = text.split('+').next().unwrap_or(text);
         let (core, pre) = match text.split_once('-') {
             Some((core, pre)) => (core, Some(pre.to_string())),
             None => (text, None),
@@ -63,8 +68,30 @@ impl Ord for Version {
                 // A release is newer than its own pre-releases.
                 (None, Some(_)) => Ordering::Greater,
                 (Some(_), None) => Ordering::Less,
-                (Some(a), Some(b)) => a.cmp(b),
+                (Some(a), Some(b)) => cmp_pre(a, b),
             })
+    }
+}
+
+/// SemVer pre-release order: dot-separated identifiers, numbers compared as numbers (so
+/// `rc.10 > rc.9`), numbers before words, and a shorter list before a longer one.
+fn cmp_pre(a: &str, b: &str) -> Ordering {
+    let (mut a, mut b) = (a.split('.'), b.split('.'));
+    loop {
+        let ord = match (a.next(), b.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) => match (x.parse::<u64>(), y.parse::<u64>()) {
+                (Ok(m), Ok(n)) => m.cmp(&n),
+                (Ok(_), Err(_)) => Ordering::Less,
+                (Err(_), Ok(_)) => Ordering::Greater,
+                (Err(_), Err(_)) => x.cmp(y),
+            },
+        };
+        if ord != Ordering::Equal {
+            return ord;
+        }
     }
 }
 
@@ -209,12 +236,29 @@ pub enum CheckOutcome {
     Available(Release),
 }
 
+/// GET that also checks where redirects ended up: the body is discarded unless the final URL is
+/// still one of GitHub's hosts over HTTPS.
+fn fetch(
+    url: &str,
+    accept: &str,
+    max_bytes: usize,
+    deadline: Duration,
+) -> Result<Vec<u8>, UpdateError> {
+    let response = winhttp::get(url, accept, max_bytes, deadline)?;
+    if is_trusted_url(&response.final_url) {
+        Ok(response.body)
+    } else {
+        Err(UpdateError::BadResponse("redirected away from GitHub"))
+    }
+}
+
 /// Asks GitHub for the latest stable release. Blocking: run it off the UI thread.
 pub fn check() -> Result<CheckOutcome, UpdateError> {
-    let json = winhttp::get(
+    let json = fetch(
         LATEST_RELEASE_URL,
         "application/vnd.github+json",
         MAX_JSON_BYTES,
+        JSON_DEADLINE,
     )?;
     let release = parse_release(&json)?;
     Ok(if release.version > Version::current() {
@@ -227,8 +271,13 @@ pub fn check() -> Result<CheckOutcome, UpdateError> {
 /// Downloads, verifies and swaps in the release. Blocking: run it off the UI thread.
 /// On success the new exe is in place; the caller restarts the app.
 pub fn install(release: &Release) -> Result<(), UpdateError> {
-    let exe = winhttp::get(&release.exe_url, "application/octet-stream", MAX_EXE_BYTES)?;
-    let sha_text = winhttp::get(&release.sha_url, "text/plain", 4096)?;
+    let exe = fetch(
+        &release.exe_url,
+        "application/octet-stream",
+        MAX_EXE_BYTES,
+        EXE_DEADLINE,
+    )?;
+    let sha_text = fetch(&release.sha_url, "text/plain", 4096, JSON_DEADLINE)?;
     let expected = parse_sha256(&String::from_utf8_lossy(&sha_text))
         .ok_or(UpdateError::BadResponse("unreadable checksum file"))?;
     verify(&exe, &expected)?;
@@ -237,42 +286,75 @@ pub fn install(release: &Release) -> Result<(), UpdateError> {
     replace_exe(&current, &exe).map_err(|e| UpdateError::Io(e.to_string()))
 }
 
-fn old_path(current: &Path) -> PathBuf {
+fn sibling(current: &Path, suffix: &str) -> PathBuf {
     let mut name = current.as_os_str().to_owned();
-    name.push(".old");
+    name.push(suffix);
     name.into()
 }
 
-/// Renames `current` (even while it runs) to `<current>.old` and writes `new_exe` in its place.
-/// Rolls back if the write fails.
+fn old_path(current: &Path) -> PathBuf {
+    sibling(current, ".old")
+}
+
+fn new_path(current: &Path) -> PathBuf {
+    sibling(current, ".new")
+}
+
+fn write_and_sync(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    file.write_all(bytes)?;
+    // Make sure the bytes are on disk before the exe is swapped, so a crash or power loss
+    // cannot leave a truncated toolboks.exe.
+    file.sync_all()
+}
+
+/// Puts `new_exe` in place of `current`, which may be running:
+/// 1. write and flush `<current>.new`, so `current` is never half-written,
+/// 2. rename `current` to `<current>.old` (allowed for a running exe),
+/// 3. rename `<current>.new` to `current`.
+///
+/// Any failure restores the original exe.
 fn replace_exe(current: &Path, new_exe: &[u8]) -> std::io::Result<()> {
-    let old = old_path(current);
+    let (old, new) = (old_path(current), new_path(current));
     let _ = fs::remove_file(&old);
-    fs::rename(current, &old)?;
-    if let Err(e) = fs::write(current, new_exe) {
-        let _ = fs::remove_file(current);
+    if let Err(e) = write_and_sync(&new, new_exe) {
+        let _ = fs::remove_file(&new);
+        return Err(e);
+    }
+    if let Err(e) = fs::rename(current, &old) {
+        let _ = fs::remove_file(&new);
+        return Err(e);
+    }
+    if let Err(e) = fs::rename(&new, current) {
         let _ = fs::rename(&old, current);
+        let _ = fs::remove_file(&new);
         return Err(e);
     }
     Ok(())
 }
 
-/// After an update the previous exe is still on disk as `<exe>.old`. Deletes it once the old
-/// process has exited. Does nothing, and touches nothing, in the normal case.
+/// After an update the previous exe is still on disk as `<exe>.old` (and a crash mid-update
+/// could leave `<exe>.new`). Deletes them once the old process has exited. Does nothing, and
+/// touches nothing, in the normal case.
 pub fn cleanup_old_exe() {
     let Ok(current) = std::env::current_exe() else {
         return;
     };
-    let old = old_path(&current);
-    if !old.exists() {
+    let leftovers: Vec<PathBuf> = [old_path(&current), new_path(&current)]
+        .into_iter()
+        .filter(|p| p.exists())
+        .collect();
+    if leftovers.is_empty() {
         return;
     }
     thread::spawn(move || {
-        for _ in 0..30 {
-            if fs::remove_file(&old).is_ok() {
-                return;
+        for path in leftovers {
+            for _ in 0..30 {
+                if fs::remove_file(&path).is_ok() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(500));
             }
-            thread::sleep(Duration::from_millis(500));
         }
     });
 }
@@ -302,6 +384,23 @@ mod tests {
         assert!(v("0.2.0-rc.2") > v("0.2.0-rc.1"));
         assert!(v("0.2.0-rc.1") > v("0.1.0"));
         assert_eq!(v("0.1.0"), v("v0.1.0"));
+    }
+
+    #[test]
+    fn orders_prerelease_numbers_numerically() {
+        assert!(v("0.2.0-rc.10") > v("0.2.0-rc.9"));
+        assert!(
+            v("0.2.0-rc.1") > v("0.2.0-beta.7"),
+            "words compare alphabetically"
+        );
+        assert!(v("0.2.0-rc.1.1") > v("0.2.0-rc.1"), "longer list is newer");
+        assert!(v("0.2.0-1") < v("0.2.0-alpha"), "numbers sort before words");
+    }
+
+    #[test]
+    fn ignores_build_metadata() {
+        assert_eq!(v("1.2.3+abc"), v("1.2.3"));
+        assert_eq!(v("1.2.3-rc.1+build.5").to_string(), "1.2.3-rc.1");
     }
 
     #[test]
@@ -398,6 +497,25 @@ mod tests {
         replace_exe(&exe, b"newer").unwrap();
         assert_eq!(fs::read(&exe).unwrap(), b"newer");
         assert_eq!(fs::read(old_path(&exe)).unwrap(), b"new");
+
+        // The staging file never survives a swap.
+        assert!(!new_path(&exe).exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_swap_leaves_the_original_exe_untouched() {
+        let dir = std::env::temp_dir().join(format!("toolboks-swap-fail-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("app.exe");
+        fs::write(&exe, b"original").unwrap();
+        // A directory squatting on the .new name makes writing the new exe fail.
+        fs::create_dir_all(new_path(&exe)).unwrap();
+
+        assert!(replace_exe(&exe, b"new").is_err());
+        assert_eq!(fs::read(&exe).unwrap(), b"original");
+        assert!(!old_path(&exe).exists());
 
         let _ = fs::remove_dir_all(&dir);
     }

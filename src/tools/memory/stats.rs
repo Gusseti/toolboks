@@ -10,6 +10,31 @@ pub struct ProcInfo {
     pub working_set: u64,
     /// Private bytes: memory committed to this process alone.
     pub private: u64,
+    /// 1 for a single process; the number of processes in a grouped row.
+    pub count: usize,
+}
+
+/// Merges processes with the same name (case-insensitive) into one row each: memory is
+/// summed and `pid` is the lowest pid of the group.
+pub fn group_by_name(procs: &[ProcInfo]) -> Vec<ProcInfo> {
+    let mut groups: Vec<ProcInfo> = Vec::new();
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for p in procs {
+        match index.get(&p.name.to_lowercase()) {
+            Some(&i) => {
+                let g = &mut groups[i];
+                g.pid = g.pid.min(p.pid);
+                g.working_set += p.working_set;
+                g.private += p.private;
+                g.count += p.count;
+            }
+            None => {
+                index.insert(p.name.to_lowercase(), groups.len());
+                groups.push(p.clone());
+            }
+        }
+    }
+    groups
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -75,6 +100,7 @@ impl Sampler {
                 name: p.name().to_string_lossy().into_owned(),
                 working_set: p.memory(),
                 private: p.virtual_memory(),
+                count: 1,
             })
             .collect();
     }
@@ -139,7 +165,29 @@ mod tests {
             name: name.to_string(),
             working_set,
             private,
+            count: 1,
         }
+    }
+
+    #[test]
+    fn groups_by_name_and_sums_memory() {
+        let grouped = group_by_name(&sample());
+        assert_eq!(grouped.len(), 2);
+        let chrome = grouped.iter().find(|p| p.name == "chrome.exe").unwrap();
+        assert_eq!(chrome.count, 2);
+        assert_eq!(chrome.pid, 10, "lowest pid represents the group");
+        assert_eq!(chrome.working_set, 400);
+        assert_eq!(chrome.private, 500);
+        let code = grouped.iter().find(|p| p.name == "Code.exe").unwrap();
+        assert_eq!(code.count, 1);
+    }
+
+    #[test]
+    fn grouping_ignores_name_case() {
+        let procs = vec![proc(1, "Chrome.exe", 10, 1), proc(2, "chrome.EXE", 20, 2)];
+        let grouped = group_by_name(&procs);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].count, 2);
     }
 
     fn sample() -> Vec<ProcInfo> {

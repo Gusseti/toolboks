@@ -2,13 +2,14 @@
 //! system proxy settings. Responses are returned in memory; nothing touches the disk.
 
 use std::ffi::c_void;
+use std::time::{Duration, Instant};
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Networking::WinHttp::{
     WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders,
-    WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetTimeouts,
-    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_FLAG_NUMBER,
-    WINHTTP_QUERY_STATUS_CODE,
+    WinHttpQueryOption, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
+    WinHttpSetTimeouts, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE,
+    WINHTTP_OPTION_URL, WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
 };
 
 const HTTPS_PORT: u16 = 443;
@@ -65,9 +66,23 @@ fn other(what: &str, e: windows::core::Error) -> HttpError {
     HttpError::Other(format!("{what} failed: {e}"))
 }
 
-/// GET `url` and return the body. Redirects are followed by WinHTTP.
-/// Fails with `Other` if the body would exceed `max_bytes`.
-pub fn get(url: &str, accept: &str, max_bytes: usize) -> Result<Vec<u8>, HttpError> {
+/// A finished download and the URL it really came from after any redirects.
+#[derive(Debug)]
+pub struct Response {
+    pub body: Vec<u8>,
+    pub final_url: String,
+}
+
+/// GET `url` and return the body. Redirects are followed by WinHTTP, so check `final_url`.
+/// Fails with `Other` if the body would exceed `max_bytes` or the whole transfer takes longer
+/// than `deadline` (plus at most one read timeout).
+pub fn get(
+    url: &str,
+    accept: &str,
+    max_bytes: usize,
+    deadline: Duration,
+) -> Result<Response, HttpError> {
+    let started = Instant::now();
     let (host, path) = split_https_url(url)
         .ok_or_else(|| HttpError::Other("only plain https:// URLs are supported".into()))?;
     let (host_w, path_w) = (wide(host), wide(path));
@@ -126,9 +141,26 @@ pub fn get(url: &str, accept: &str, max_bytes: usize) -> Result<Vec<u8>, HttpErr
             return Err(HttpError::Status(status));
         }
 
+        // Where the request ended up after redirects; fail closed if it cannot be read.
+        let mut url_buf = [0u16; 2048];
+        let mut url_bytes = size_of_val(&url_buf) as u32;
+        WinHttpQueryOption(
+            request.0,
+            WINHTTP_OPTION_URL,
+            Some(url_buf.as_mut_ptr() as *mut c_void),
+            &mut url_bytes,
+        )
+        .map_err(|e| other("WinHttpQueryOption", e))?;
+        let final_url = String::from_utf16_lossy(&url_buf[..url_bytes as usize / 2])
+            .trim_end_matches('\0')
+            .to_string();
+
         let mut body = Vec::new();
         let mut chunk = vec![0u8; 64 * 1024];
         loop {
+            if started.elapsed() > deadline {
+                return Err(HttpError::Other("the download took too long".into()));
+            }
             let mut read = 0u32;
             WinHttpReadData(
                 request.0,
@@ -138,7 +170,7 @@ pub fn get(url: &str, accept: &str, max_bytes: usize) -> Result<Vec<u8>, HttpErr
             )
             .map_err(|e| other("WinHttpReadData", e))?;
             if read == 0 {
-                return Ok(body);
+                return Ok(Response { body, final_url });
             }
             if body.len() + read as usize > max_bytes {
                 return Err(HttpError::Other(format!(
@@ -178,13 +210,46 @@ mod tests {
     #[test]
     #[ignore]
     fn fetches_a_public_url() {
-        let body = get(
+        let response = get(
             "https://api.github.com/repos/rust-lang/rust/releases/latest",
             "application/vnd.github+json",
             1024 * 1024,
+            Duration::from_secs(30),
         )
         .expect("GET failed");
-        assert!(String::from_utf8_lossy(&body).contains("tag_name"));
+        assert!(String::from_utf8_lossy(&response.body).contains("tag_name"));
+        assert!(response.final_url.starts_with("https://api.github.com/"));
+    }
+
+    /// Needs internet; run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn reports_the_url_after_a_redirect() {
+        let response = get(
+            "https://github.com/rust-lang/rust/releases/latest",
+            "text/html",
+            16 * 1024 * 1024,
+            Duration::from_secs(30),
+        )
+        .expect("GET failed");
+        assert!(
+            response.final_url.contains("/releases/tag/"),
+            "{}",
+            response.final_url
+        );
+    }
+
+    #[test]
+    fn a_zero_deadline_aborts_the_transfer() {
+        // The deadline is checked before every read, so this must fail without hanging.
+        let result = get(
+            "https://api.github.com/repos/rust-lang/rust/releases/latest",
+            "application/vnd.github+json",
+            1024 * 1024,
+            Duration::ZERO,
+        );
+        // Offline machines fail earlier with a network error; both are errors.
+        assert!(result.is_err());
     }
 
     /// Needs internet; run with `cargo test -- --ignored`.
@@ -195,6 +260,7 @@ mod tests {
             "https://api.github.com/repos/rust-lang/rust/releases/does-not-exist",
             "application/vnd.github+json",
             1024 * 1024,
+            Duration::from_secs(30),
         )
         .unwrap_err();
         assert_eq!(err, HttpError::Status(404));

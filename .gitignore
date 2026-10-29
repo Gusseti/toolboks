@@ -1,1 +1,3 @@
 /target
+# Local agent notes (e.g. reviewer memory); never part of the repo.
+/.claude/
