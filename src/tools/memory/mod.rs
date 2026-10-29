@@ -1,3 +1,4 @@
+mod memlist;
 mod stats;
 mod trim;
 
@@ -7,18 +8,24 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
+use self::memlist::{Command, Lists, MemListError};
 use self::stats::{format_bytes, sort_and_filter, Sampler, SortKey};
 use self::trim::{skip_reason, trim_process, SkipReason, TrimError};
 use super::Tool;
+use crate::elevation;
 
 const REFRESH: Duration = Duration::from_secs(2);
 const ROW_HEIGHT: f32 = 22.0;
 
-/// Live RAM usage, a per-process table and manual per-process trimming.
+/// Live RAM usage, a per-process table, manual per-process trimming and, with admin rights,
+/// system-wide memory list commands.
 /// Nothing is stored anywhere: exclusions and filters reset when the app closes.
 pub struct Memory {
     /// `None` if the platform refused to provide system info.
     sampler: Option<Sampler>,
+    /// Free/modified/standby sizes; `None` if the query is unavailable.
+    lists: Option<Lists>,
+    elevated: bool,
     last_refresh: Instant,
     sort_key: SortKey,
     descending: bool,
@@ -27,6 +34,8 @@ pub struct Memory {
     exclusions: HashSet<String>,
     /// A trim waiting for the user's confirmation: (pid, name).
     pending: Option<(u32, String)>,
+    /// A system-wide command waiting for the user's confirmation.
+    pending_system: Option<Command>,
     /// Result of the last action, shown above the table.
     status: Option<String>,
 }
@@ -35,14 +44,25 @@ impl Memory {
     pub fn new() -> Self {
         Self {
             sampler: Sampler::new(),
+            lists: memlist::query(),
+            elevated: elevation::is_elevated(),
             last_refresh: Instant::now(),
             sort_key: SortKey::WorkingSet,
             descending: true,
             filter: String::new(),
             exclusions: HashSet::new(),
             pending: None,
+            pending_system: None,
             status: None,
         }
+    }
+
+    fn refresh_now(&mut self) {
+        if let Some(sampler) = self.sampler.as_mut() {
+            sampler.refresh();
+        }
+        self.lists = memlist::query();
+        self.last_refresh = Instant::now();
     }
 
     /// Clicking the active column flips the order; a new column starts in its natural order.
@@ -105,6 +125,84 @@ impl Memory {
         ui.add_space(4.0);
     }
 
+    fn run_system(&mut self, command: Command) {
+        let available = |m: &Self| m.sampler.as_ref().map_or(0, |s| s.totals.available);
+        let (avail_before, lists_before) = (available(self), self.lists);
+
+        self.status = Some(match memlist::run(command) {
+            Ok(()) => {
+                self.refresh_now();
+                let mut text = format!(
+                    "{}: available {} \u{2192} {}",
+                    command.title(),
+                    format_bytes(avail_before),
+                    format_bytes(available(self))
+                );
+                if let (Some(before), Some(after)) = (lists_before, self.lists) {
+                    text += &format!(
+                        ", standby {} \u{2192} {}",
+                        format_bytes(before.standby),
+                        format_bytes(after.standby)
+                    );
+                }
+                text
+            }
+            Err(MemListError::NotElevated) => format!(
+                "{} needs admin rights. Relaunch as admin first.",
+                command.title()
+            ),
+            Err(MemListError::Unavailable) => format!(
+                "{} is not available on this version of Windows.",
+                command.title()
+            ),
+            Err(MemListError::Status(code)) => {
+                format!(
+                    "{} failed: Windows returned status {code:#010x}.",
+                    command.title()
+                )
+            }
+        });
+    }
+
+    fn system_panel(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("System-wide cleaning (admin)").show(ui, |ui| {
+            if let Some(command) = self.pending_system {
+                ui.group(|ui| {
+                    ui.label(format!("{}? {}", command.title(), command.warning()));
+                    ui.horizontal(|ui| {
+                        if ui.button("Run").clicked() {
+                            self.run_system(command);
+                            self.pending_system = None;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.pending_system = None;
+                        }
+                    });
+                });
+            }
+
+            if self.elevated {
+                for command in Command::ALL {
+                    ui.horizontal(|ui| {
+                        if ui.button(command.title()).clicked() {
+                            self.pending_system = Some(command);
+                        }
+                        ui.weak(command.warning());
+                    });
+                }
+            } else {
+                ui.label("These actions need administrator rights.");
+                if ui.button("Relaunch as admin").clicked() {
+                    if elevation::relaunch_elevated() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    } else {
+                        self.status = Some("Elevation was cancelled.".to_string());
+                    }
+                }
+            }
+        });
+    }
+
     fn exclusions_list(&mut self, ui: &mut egui::Ui) {
         let mut names: Vec<String> = self.exclusions.iter().cloned().collect();
         names.sort();
@@ -144,10 +242,7 @@ impl Tool for Memory {
         }
 
         if self.last_refresh.elapsed() >= REFRESH {
-            if let Some(sampler) = self.sampler.as_mut() {
-                sampler.refresh();
-            }
-            self.last_refresh = Instant::now();
+            self.refresh_now();
         }
         ui.request_repaint_after(REFRESH);
 
@@ -158,7 +253,16 @@ impl Tool for Memory {
             format_bytes(totals.total),
             totals.used_fraction() * 100.0
         )));
-        ui.label(format!("Available: {}", format_bytes(totals.available)));
+        let mut summary = format!("Available: {}", format_bytes(totals.available));
+        if let Some(lists) = self.lists {
+            summary += &format!(
+                "  \u{b7}  Standby (cached): {}  \u{b7}  Free: {}  \u{b7}  Modified: {}",
+                format_bytes(lists.standby),
+                format_bytes(lists.free),
+                format_bytes(lists.modified)
+            );
+        }
+        ui.label(summary);
         ui.add_space(8.0);
 
         self.confirm_bar(ui);
@@ -166,6 +270,7 @@ impl Tool for Memory {
             ui.label(status);
             ui.add_space(4.0);
         }
+        self.system_panel(ui);
         self.exclusions_list(ui);
 
         let process_count = self.sampler.as_ref().map_or(0, |s| s.processes.len());

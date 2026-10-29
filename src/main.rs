@@ -3,7 +3,9 @@
 use eframe::egui;
 
 mod app;
+mod elevation;
 mod tools;
+mod win;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

@@ -6,13 +6,15 @@
 use std::collections::HashSet;
 
 use windows::core::HRESULT;
-use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, HANDLE};
+use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
 use windows::Win32::System::ProcessStatus::{
     EmptyWorkingSet, GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
 };
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
 };
+
+use crate::win::Handle;
 
 /// System and shell processes that are never trimmed. Compared case-insensitively.
 const PROTECTED: &[&str] = &[
@@ -84,18 +86,6 @@ pub enum TrimError {
     AccessDenied,
     /// Anything else, typically the process exited in the meantime.
     Failed,
-}
-
-/// Closes the process handle on every exit path.
-struct Handle(HANDLE);
-
-impl Drop for Handle {
-    fn drop(&mut self) {
-        // SAFETY: the handle came from a successful `OpenProcess` and is closed exactly once.
-        unsafe {
-            let _ = CloseHandle(self.0);
-        }
-    }
 }
 
 fn working_set(handle: &Handle) -> Option<u64> {
