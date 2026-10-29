@@ -19,7 +19,8 @@ use sha2::{Digest, Sha256};
 use crate::winhttp::{self, HttpError};
 
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/Gusseti/toolboks/releases/latest";
-const EXE_SUFFIX: &str = "-x86_64-pc-windows-msvc.exe";
+/// The release asset is the plain exe; its checksum file is `toolboks.exe.sha256`.
+const EXE_ASSET: &str = "toolboks.exe";
 const MAX_JSON_BYTES: usize = 1024 * 1024;
 const MAX_EXE_BYTES: usize = 64 * 1024 * 1024;
 const MIN_EXE_BYTES: usize = 100_000;
@@ -194,13 +195,8 @@ pub fn parse_release(json: &[u8]) -> Result<Release, UpdateError> {
             .map(str::to_string)
     };
 
-    let exe_name = assets
-        .iter()
-        .filter_map(|a| a["name"].as_str())
-        .find(|n| n.ends_with(EXE_SUFFIX))
-        .ok_or(UpdateError::NoAsset)?;
-    let exe_url = url_of(exe_name).ok_or(UpdateError::NoAsset)?;
-    let sha_url = url_of(&format!("{exe_name}.sha256")).ok_or(UpdateError::NoAsset)?;
+    let exe_url = url_of(EXE_ASSET).ok_or(UpdateError::NoAsset)?;
+    let sha_url = url_of(&format!("{EXE_ASSET}.sha256")).ok_or(UpdateError::NoAsset)?;
     Ok(Release {
         version,
         exe_url,
@@ -412,10 +408,10 @@ mod tests {
         "tag_name": "v0.3.0",
         "assets": [
             {"name": "other.txt", "browser_download_url": "https://github.com/x/y/releases/download/v0.3.0/other.txt"},
-            {"name": "toolboks-v0.3.0-x86_64-pc-windows-msvc.exe",
-             "browser_download_url": "https://github.com/Gusseti/toolboks/releases/download/v0.3.0/toolboks-v0.3.0-x86_64-pc-windows-msvc.exe"},
-            {"name": "toolboks-v0.3.0-x86_64-pc-windows-msvc.exe.sha256",
-             "browser_download_url": "https://github.com/Gusseti/toolboks/releases/download/v0.3.0/toolboks-v0.3.0-x86_64-pc-windows-msvc.exe.sha256"}
+            {"name": "toolboks.exe",
+             "browser_download_url": "https://github.com/Gusseti/toolboks/releases/download/v0.3.0/toolboks.exe"},
+            {"name": "toolboks.exe.sha256",
+             "browser_download_url": "https://github.com/Gusseti/toolboks/releases/download/v0.3.0/toolboks.exe.sha256"}
         ]
     }"#;
 
@@ -423,8 +419,17 @@ mod tests {
     fn picks_the_exe_and_checksum_assets() {
         let r = parse_release(RELEASE_JSON.as_bytes()).unwrap();
         assert_eq!(r.version, v("0.3.0"));
-        assert!(r.exe_url.ends_with("msvc.exe"));
-        assert!(r.sha_url.ends_with("msvc.exe.sha256"));
+        assert!(r.exe_url.ends_with("/v0.3.0/toolboks.exe"));
+        assert!(r.sha_url.ends_with("/v0.3.0/toolboks.exe.sha256"));
+    }
+
+    #[test]
+    fn a_release_without_the_plain_exe_has_no_usable_asset() {
+        // The old long-named files are not used any more.
+        let json = r#"{"tag_name":"v0.3.0","assets":[
+            {"name":"toolboks-v0.3.0-x86_64-pc-windows-msvc.exe",
+             "browser_download_url":"https://github.com/Gusseti/toolboks/releases/download/v0.3.0/toolboks-v0.3.0-x86_64-pc-windows-msvc.exe"}]}"#;
+        assert_eq!(parse_release(json.as_bytes()), Err(UpdateError::NoAsset));
     }
 
     #[test]

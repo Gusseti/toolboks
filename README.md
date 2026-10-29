@@ -20,7 +20,7 @@ Versions follow [SemVer](https://semver.org) and live in `Cargo.toml`.
 .\scripts\release.ps1 0.2.0        # from main: stable release
 ```
 
-The workflow fails if a tag and the `Cargo.toml` version disagree. Each release has two assets: `toolboks-vX.Y.Z-x86_64-pc-windows-msvc.exe` and the same name plus `.sha256`.
+The workflow fails if a tag and the `Cargo.toml` version disagree. Each release has exactly two files: `toolboks.exe` (what you download and run) and `toolboks.exe.sha256` (its checksum). Versions 0.1.0 and 0.2.0 used long file names and cannot update themselves to a later release; download `toolboks.exe` once from the latest release.
 
 ## Updates
 

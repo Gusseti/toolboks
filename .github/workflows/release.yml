@@ -44,15 +44,14 @@ jobs:
       - if: steps.ver.outputs.publish == 'true'
         run: cargo build --release --locked
 
-      # The bare exe is the asset: the in-app updater downloads it directly and checks the .sha256.
+      # The release has exactly two files, named plainly: toolboks.exe and toolboks.exe.sha256.
+      # The in-app updater downloads the exe directly and checks the checksum.
       - name: Package
         if: steps.ver.outputs.publish == 'true'
         shell: pwsh
         run: |
-          $name = "toolboks-${{ steps.ver.outputs.tag }}-x86_64-pc-windows-msvc.exe"
-          Copy-Item target/release/toolboks.exe $name
-          (Get-FileHash $name -Algorithm SHA256).Hash.ToLower() + "  $name" | Out-File "$name.sha256" -Encoding ascii
-          "ASSET=$name" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          Copy-Item target/release/toolboks.exe toolboks.exe
+          (Get-FileHash toolboks.exe -Algorithm SHA256).Hash.ToLower() + "  toolboks.exe" | Out-File toolboks.exe.sha256 -Encoding ascii
 
       - name: Publish GitHub release
         if: steps.ver.outputs.publish == 'true'
@@ -60,6 +59,6 @@ jobs:
         run: |
           $tag = "${{ steps.ver.outputs.tag }}"
           # Only add --prerelease when needed: an empty argument would be read as a file name.
-          $ghArgs = @($tag, $env:ASSET, "$env:ASSET.sha256", "--target", "${{ github.sha }}", "--title", $tag, "--generate-notes")
+          $ghArgs = @($tag, "toolboks.exe", "toolboks.exe.sha256", "--target", "${{ github.sha }}", "--title", $tag, "--generate-notes")
           if ($tag -match '-') { $ghArgs += "--prerelease" }
           gh release create @ghArgs
