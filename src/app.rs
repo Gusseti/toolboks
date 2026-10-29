@@ -37,11 +37,41 @@ pub struct App {
     prompt_open: bool,
 }
 
+/// `--open "Tool"` or `--open "Tool/Page"` (case-insensitive, also `--open=...`) picks the page
+/// shown at start-up, e.g. `toolboks.exe --open "Resource Monitor/Details"`. Unknown names are
+/// ignored, so a typo just opens the first page.
+fn parse_open(args: &[String], tools: &[Box<dyn Tool>]) -> Option<(usize, usize)> {
+    let spec = args.iter().enumerate().find_map(|(i, a)| {
+        a.strip_prefix("--open=")
+            .map(str::to_string)
+            .or_else(|| (a == "--open").then(|| args.get(i + 1).cloned()).flatten())
+    })?;
+    let (tool_name, page_name) = match spec.split_once('/') {
+        Some((t, p)) => (t.trim(), Some(p.trim())),
+        None => (spec.trim(), None),
+    };
+    let tool = tools
+        .iter()
+        .position(|t| t.name().eq_ignore_ascii_case(tool_name))?;
+    let page = page_name
+        .and_then(|name| {
+            tools[tool]
+                .pages()
+                .iter()
+                .position(|p| p.eq_ignore_ascii_case(name))
+        })
+        .unwrap_or(0);
+    Some((tool, page))
+}
+
 impl App {
     pub fn new() -> Self {
+        let tools = tools::all();
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let selected = parse_open(&args, &tools).unwrap_or((0, 0));
         Self {
-            tools: tools::all(),
-            selected: (0, 0),
+            tools,
+            selected,
             update: UpdateState::Idle,
             update_rx: None,
             launch_check_started: false,
@@ -339,7 +369,42 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::status_items;
+    use super::{parse_open, status_items};
+    use crate::tools;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn open_picks_a_tool_and_page_case_insensitively() {
+        let tools = tools::all();
+        assert_eq!(
+            parse_open(&args(&["--open", "resource monitor/DETAILS"]), &tools),
+            Some((1, 1))
+        );
+        assert_eq!(
+            parse_open(&args(&["--open=Memory Cleaner/Advanced"]), &tools),
+            Some((0, 1))
+        );
+        assert_eq!(
+            parse_open(&args(&["--open", "Resource Monitor"]), &tools),
+            Some((1, 0))
+        );
+    }
+
+    #[test]
+    fn open_ignores_unknown_names_and_missing_values() {
+        let tools = tools::all();
+        assert_eq!(parse_open(&args(&[]), &tools), None);
+        assert_eq!(parse_open(&args(&["--open"]), &tools), None);
+        assert_eq!(parse_open(&args(&["--open", "Nope"]), &tools), None);
+        // A known tool with an unknown page opens that tool's first page.
+        assert_eq!(
+            parse_open(&args(&["--open", "Resource Monitor/Nope"]), &tools),
+            Some((1, 0))
+        );
+    }
 
     #[test]
     fn status_items_keep_tool_order_and_skip_blanks() {

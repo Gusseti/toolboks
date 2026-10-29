@@ -1,6 +1,6 @@
 # Compact redesign ("C: tabs with an options inspector")
 
-Owner brief: more compact and professional. Chosen from three mockups: **C, tabs with an inspector**, for the **whole app** (shell, Memory Cleaner, Resource Monitor), keeping the **colored per-app bar**. Dark theme only for now. Status: **in progress**.
+Owner brief: more compact and professional. Chosen from three mockups: **C, tabs with an inspector**, for the **whole app** (shell, Memory Cleaner, Resource Monitor), keeping the **colored per-app bar**. Dark theme only for now. Status: **built; Memory Cleaner Home and Advanced were looked at in the real window, the Resource Monitor pages in the new style have not been looked at yet**. Release not made.
 
 ## Style tokens (all tools use these, defined in `src/ui.rs`)
 

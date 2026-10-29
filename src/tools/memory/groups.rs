@@ -63,19 +63,21 @@ const WINDOWS_NAMES: &[&str] = &[
 ];
 
 /// Distinct colors that avoid the brand colors and the greys.
-const PALETTE: [[u8; 3]; 12] = [
+const PALETTE: [[u8; 3]; 14] = [
     [239, 71, 111],
-    [255, 209, 102],
-    [17, 138, 178],
+    [255, 159, 28],
+    [254, 228, 64],
     [155, 93, 229],
     [241, 91, 181],
-    [0, 187, 249],
-    [254, 228, 64],
     [181, 101, 29],
-    [199, 125, 255],
-    [255, 159, 28],
-    [0, 150, 136],
     [200, 60, 60],
+    [199, 125, 255],
+    [214, 51, 132],
+    [154, 155, 40],
+    [201, 163, 56],
+    [142, 68, 173],
+    [219, 112, 147],
+    [0, 150, 136],
 ];
 
 fn normalize(name: &str) -> String {
@@ -121,16 +123,48 @@ fn alias(n: &str) -> Option<(&'static str, [u8; 3])> {
     Some(r)
 }
 
-/// Stable palette color for a group name (FNV-1a over the lowercase name).
-pub fn color_for(name: &str) -> [u8; 3] {
+/// Start position in the palette for a group name (FNV-1a over the lowercase name).
+fn palette_index(name: &str) -> usize {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in name.to_lowercase().bytes() {
         h ^= u64::from(b);
         h = h.wrapping_mul(0x0100_0000_01b3);
     }
-    PALETTE[(h % PALETTE.len() as u64) as usize]
+    (h % PALETTE.len() as u64) as usize
 }
 
+/// Stable palette color for a group name.
+pub fn color_for(name: &str) -> [u8; 3] {
+    PALETTE[palette_index(name)]
+}
+
+/// Gives every non-brand group its own palette color: the hashed color is the starting point and
+/// the next free palette entry is taken on a clash (also with brand and grey colors). Groups are
+/// handled in name order, so the result does not depend on their sizes and colors do not flicker
+/// when the size order changes between refreshes.
+fn assign_unique_colors(
+    groups: &mut [(String, u64, usize, [u8; 3])],
+    brand: &[String],
+    visible: &[usize],
+) {
+    let mut used: Vec<[u8; 3]> = vec![OTHER_COLOR, WINDOWS_COLOR];
+    used.extend(groups.iter().filter(|g| brand.contains(&g.0)).map(|g| g.3));
+    let mut generated: Vec<usize> = visible
+        .iter()
+        .copied()
+        .filter(|&i| !brand.contains(&groups[i].0))
+        .collect();
+    generated.sort_by(|&a, &b| groups[a].0.cmp(&groups[b].0));
+    for i in generated {
+        let start = palette_index(&groups[i].0);
+        let pick = (0..PALETTE.len())
+            .map(|step| PALETTE[(start + step) % PALETTE.len()])
+            .find(|c| !used.contains(c))
+            .unwrap_or(PALETTE[start]);
+        groups[i].3 = pick;
+        used.push(pick);
+    }
+}
 fn group_name(n: &str) -> String {
     let key: String = n.chars().take_while(|c| c.is_alphabetic()).collect();
     if key.chars().count() >= 4 {
@@ -149,6 +183,8 @@ pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
     let mut groups: Vec<(String, u64, usize, [u8; 3])> = Vec::new();
     let mut win_bytes: u64 = 0;
     let mut win_count = 0usize;
+    // Groups with a fixed brand color; everything else gets a palette color (see below).
+    let mut brand: Vec<String> = Vec::new();
     for p in procs {
         let n = normalize(&p.name);
         if WINDOWS_NAMES.contains(&n.as_str()) {
@@ -156,14 +192,17 @@ pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
             win_count += 1;
             continue;
         }
-        let (name, color) = match alias(&n) {
-            Some((name, color)) => (name.to_string(), color),
+        let (name, color, is_brand) = match alias(&n) {
+            Some((name, color)) => (name.to_string(), color, true),
             None => {
                 let name = group_name(&n);
                 let color = color_for(&name);
-                (name, color)
+                (name, color, false)
             }
         };
+        if is_brand && !brand.contains(&name) {
+            brand.push(name.clone());
+        }
         match groups.iter_mut().find(|g| g.0 == name) {
             Some(g) => {
                 g.1 = g.1.saturating_add(p.working_set);
@@ -186,6 +225,15 @@ pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
 
     groups.retain(|g| g.1 > 0);
     groups.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    // Only the groups that appear in the bar need distinct colors (hundreds of tiny groups would
+    // otherwise use up the palette before the big ones are colored).
+    let visible: Vec<usize> = groups
+        .iter()
+        .enumerate()
+        .filter(|(i, g)| *i < MAX_GROUPS && u128::from(g.1) * 100 >= u128::from(in_use))
+        .map(|(i, _)| i)
+        .collect();
+    assign_unique_colors(&mut groups, &brand, &visible);
 
     let pct = |bytes: u64| (bytes as f64 / in_use as f64 * 100.0) as f32;
     let mut segments = Vec::new();
@@ -243,6 +291,97 @@ mod tests {
 
     fn seg<'a>(b: &'a Breakdown, name: &str) -> &'a Segment {
         b.segments.iter().find(|s| s.name == name).unwrap()
+    }
+
+    #[test]
+    fn generated_colors_are_unique_and_independent_of_size_order() {
+        let names = [
+            "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+        ];
+        let procs: Vec<ProcInfo> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| p(&format!("{n}.exe"), 100 + i as u64 * 10))
+            .collect();
+        let a = breakdown(&procs, 10_000);
+        let colors: Vec<[u8; 3]> = a.segments.iter().map(|s| s.color).collect();
+        let mut unique = colors.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), colors.len(), "no two groups share a color");
+
+        // Reversing the sizes must not change which group has which color.
+        let swapped: Vec<ProcInfo> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| p(&format!("{n}.exe"), 100 + (names.len() - i) as u64 * 10))
+            .collect();
+        let b = breakdown(&swapped, 10_000);
+        for name in names {
+            let cap = capitalize(name);
+            assert_eq!(seg(&a, &cap).color, seg(&b, &cap).color, "{name}");
+        }
+    }
+
+    #[test]
+    fn real_world_names_get_distinct_colors() {
+        let names = [
+            "claude.exe",
+            "msedge.exe",
+            "Overwatch.exe",
+            "Discord.exe",
+            "steamwebhelper.exe",
+            "Everything.exe",
+            "Battle.net.exe",
+            "RazerAppEngine.exe",
+            "toolboks.exe",
+            "ChatGPT.exe",
+            "node.exe",
+        ];
+        let procs: Vec<ProcInfo> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| p(n, 400 + i as u64 * 40))
+            .collect();
+        let b = breakdown(&procs, 20_000);
+        let mut seen: Vec<([u8; 3], String)> = Vec::new();
+        for s in &b.segments {
+            if let Some((_, other)) = seen.iter().find(|(c, _)| *c == s.color) {
+                panic!("{} and {other} share {:?}", s.name, s.color);
+            }
+            seen.push((s.color, s.name.clone()));
+        }
+    }
+
+    #[test]
+    fn many_tiny_groups_do_not_use_up_the_palette() {
+        // Hundreds of tiny alphabetical-first groups must not cause clashes among the big ones.
+        let mut procs: Vec<ProcInfo> = (0..60)
+            .map(|i| p(&format!("aaa{i:02}tiny.exe"), 1))
+            .collect();
+        for (i, n) in [
+            "Everything.exe",
+            "Overwatch.exe",
+            "RazerAppEngine.exe",
+            "toolboks.exe",
+            "Zeta.exe",
+            "Yankee.exe",
+        ]
+        .iter()
+        .enumerate()
+        {
+            procs.push(p(n, 2_000 + i as u64 * 100));
+        }
+        let b = breakdown(&procs, 20_000);
+        let mut colors: Vec<[u8; 3]> = b.segments.iter().map(|s| s.color).collect();
+        let n = colors.len();
+        colors.sort();
+        colors.dedup();
+        assert_eq!(
+            colors.len(),
+            n,
+            "visible segments must have distinct colors"
+        );
     }
 
     #[test]
