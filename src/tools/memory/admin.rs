@@ -50,7 +50,7 @@ fn failure_text(error: MemListError) -> String {
 impl Memory {
     /// A system-wide command or an optimize run is in progress.
     pub(super) fn busy(&self) -> bool {
-        self.job.is_some() || self.optimizing.is_some()
+        self.job.is_some() || self.optimizing.is_some() || self.trim_job.is_some()
     }
 
     /// Runs `command` on a worker thread; ignored while another job is running.
@@ -135,6 +135,7 @@ impl Memory {
     pub(super) fn background(&mut self, ctx: &egui::Context) {
         self.poll_job(ctx);
         self.poll_optimize(ctx);
+        self.poll_trim(ctx);
         self.auto_optimize_tick(ctx);
 
         if !self.elevated || !self.auto.rules.enabled {
@@ -163,7 +164,7 @@ impl Memory {
 
     pub(super) fn system_panel(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        egui::CollapsingHeader::new("System-wide cleaning (admin)").show(ui, |ui| {
+        ui.scope(|ui| {
             if self.busy() {
                 ui.horizontal(|ui| {
                     ui.spinner();
@@ -195,19 +196,19 @@ impl Memory {
                      Free, not Available.",
                 );
                 for command in Command::ALL {
-                    ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
                         if ui
                             .add_enabled(!self.busy(), egui::Button::new(command.title()))
                             .clicked()
                         {
                             self.pending_system = Some(command);
                         }
-                        ui.weak(command.warning());
+                        ui.label(egui::RichText::new(command.warning()).weak().small());
                     });
                 }
             } else {
                 ui.label("These actions need administrator rights.");
-                if ui.button("Relaunch as admin").clicked() {
+                if ui.button("Restart as admin").clicked() {
                     if elevation::relaunch_elevated() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     } else {
@@ -219,23 +220,24 @@ impl Memory {
     }
 
     pub(super) fn auto_panel(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("Auto-clean (admin)").show(ui, |ui| {
+        ui.scope(|ui| {
+            ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(50.0);
             if !self.elevated {
                 ui.label(
                     "Auto-clean runs the low-priority standby purge, which needs administrator \
-                     rights. Relaunch as admin from the panel above to use it.",
+                     rights. Restart as admin from the System tab to use it.",
                 );
                 return;
             }
 
             let rules = &mut self.auto.rules;
             let mut switched_on = false;
-            if ui
-                .checkbox(&mut rules.enabled, "Enable auto-clean")
-                .changed()
-            {
-                switched_on = rules.enabled;
-            }
+            ui.horizontal(|ui| {
+                if crate::ui::toggle_switch(ui, &mut rules.enabled).changed() {
+                    switched_on = rules.enabled;
+                }
+                ui.label("Auto-clean");
+            });
             ui.weak(
                 "Only works while this window is open or minimized. Settings are not saved and \
                  reset when the app closes. It never runs when under 256 MiB of standby memory \

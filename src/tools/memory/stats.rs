@@ -109,6 +109,8 @@ impl Sampler {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SortKey {
     Name,
+    /// Kept for filtering and tests; the workbench table has no pid column.
+    #[allow(dead_code)]
     Pid,
     WorkingSet,
     Private,

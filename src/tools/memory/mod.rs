@@ -1,30 +1,30 @@
 mod admin;
+mod advanced;
 mod auto;
 mod groups;
 mod home;
 mod memlist;
 mod stats;
 mod trim;
+mod workbench;
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use egui_extras::{Column, TableBuilder};
 
 use self::admin::Job;
 use self::auto::AutoClean;
 use self::home::{Optimizing, Outcome, DEFAULT_AUTO_PERCENT, DEFAULT_MIN_APP_MB};
 use self::memlist::Lists;
-use self::stats::{format_bytes, group_by_name, sort_and_filter, ProcInfo, Sampler, SortKey};
-use self::trim::{skip_reason, trim_process, SkipReason, TrimError};
+use self::stats::{Sampler, SortKey};
+use self::workbench::Selection;
 use super::Tool;
 use crate::elevation;
 
 const REFRESH: Duration = Duration::from_secs(2);
 /// How often the auto-clean rules are checked, in the background too.
 const AUTO_CHECK: Duration = Duration::from_secs(5);
-const ROW_HEIGHT: f32 = 20.0;
 
 /// Live RAM usage, a per-process table, manual per-process trimming and, with admin rights,
 /// system-wide memory list commands and auto-clean (see `admin`).
@@ -43,8 +43,14 @@ pub struct Memory {
     grouped: bool,
     /// Lowercase process names that are never trimmed.
     exclusions: HashSet<String>,
-    /// A trim waiting for the user's confirmation: (pid, name).
-    pending: Option<(u32, String)>,
+    /// Selected table rows (by stable key), and the inspector tab shown.
+    selection: Selection,
+    tab: advanced::Tab,
+    /// Whether the table was grouped last frame, to clear the selection when it changes.
+    was_grouped: bool,
+    /// "Trim selected" running on a worker thread, and the result of the last one.
+    trim_job: Option<advanced::TrimJob>,
+    last_trim: Option<String>,
     /// A system-wide command waiting for the user's confirmation.
     pending_system: Option<memlist::Command>,
     /// The system-wide command running on a worker thread, if any.
@@ -86,7 +92,11 @@ impl Memory {
             filter: String::new(),
             grouped: false,
             exclusions: HashSet::new(),
-            pending: None,
+            selection: Selection::default(),
+            tab: advanced::Tab::Selected,
+            was_grouped: false,
+            trim_job: None,
+            last_trim: None,
             pending_system: None,
             job: None,
             status: None,
@@ -129,96 +139,6 @@ impl Memory {
             self.exclusions.insert(name);
         }
     }
-
-    fn run_trim(&mut self, pid: u32, name: &str) {
-        // The list may have changed since the click: check again that this pid is still the
-        // same, still trimmable process.
-        let still_there = self.sampler.as_ref().is_some_and(|s| {
-            s.processes
-                .iter()
-                .any(|p| p.pid == pid && p.name.eq_ignore_ascii_case(name))
-        });
-        if !still_there {
-            self.status = Some(format!(
-                "Not trimmed: {name} (pid {pid}) is no longer running under that name."
-            ));
-            return;
-        }
-        if let Some(reason) = skip_reason(pid, name, std::process::id(), &self.exclusions) {
-            self.status = Some(format!("Not trimmed: {}.", reason.describe()));
-            return;
-        }
-
-        self.status = Some(match trim_process(pid) {
-            Ok(t) => format!(
-                "Trimmed {name} (pid {pid}): {} \u{2192} {} right after the trim. \
-                 Pages stay cached and fault back when the process uses them.",
-                format_bytes(t.before),
-                format_bytes(t.after)
-            ),
-            Err(TrimError::AccessDenied) => {
-                format!(
-                    "Could not trim {name} (pid {pid}): access denied. It may need admin rights."
-                )
-            }
-            Err(TrimError::Failed) => {
-                format!("Could not trim {name} (pid {pid}): the process may have exited.")
-            }
-        });
-        // Show the new numbers on the next frame instead of waiting for the timer.
-        self.last_refresh = Instant::now() - REFRESH;
-    }
-
-    fn confirm_bar(&mut self, ui: &mut egui::Ui) {
-        let Some((pid, name)) = self.pending.clone() else {
-            return;
-        };
-        ui.group(|ui| {
-            ui.label(format!(
-                "Trim {name} (pid {pid})? Its memory moves to the standby list and is read back \
-                 when needed, so it can be briefly slower."
-            ));
-            ui.horizontal(|ui| {
-                if ui.button("Trim").clicked() {
-                    self.run_trim(pid, &name);
-                    self.pending = None;
-                }
-                if ui.button("Cancel").clicked() {
-                    self.pending = None;
-                }
-            });
-        });
-        ui.add_space(4.0);
-    }
-
-    fn exclusions_list(&mut self, ui: &mut egui::Ui) {
-        let mut names: Vec<String> = self.exclusions.iter().cloned().collect();
-        names.sort();
-        egui::CollapsingHeader::new(format!("Exclusions ({})", names.len())).show(ui, |ui| {
-            if names.is_empty() {
-                ui.weak(
-                    "None. Tick Protect on an app in the list below to keep it from being trimmed.",
-                );
-            }
-            for name in &names {
-                ui.horizontal(|ui| {
-                    ui.label(name);
-                    if ui.small_button("Remove").clicked() {
-                        self.exclusions.remove(name);
-                    }
-                });
-            }
-        });
-    }
-}
-
-fn sort_arrow(active: bool, descending: bool) -> &'static str {
-    match (active, descending) {
-        // Plain letters: the bundled font has none of the arrow or triangle glyphs.
-        (true, true) => " v",
-        (true, false) => " ^",
-        _ => "",
-    }
 }
 
 impl Tool for Memory {
@@ -250,9 +170,7 @@ impl Tool for Memory {
             self.home_ui(ui);
             return;
         }
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| self.advanced_ui(ui));
+        self.advanced_ui(ui);
     }
 
     fn status(&self) -> Vec<String> {
@@ -261,178 +179,6 @@ impl Tool for Memory {
                 vec![format!("RAM {:.0}%", s.totals.used_fraction() * 100.0)]
             }
             _ => Vec::new(),
-        }
-    }
-}
-
-impl Memory {
-    /// Everything for people who want control: process list, trimming, protection, system-wide
-    /// cleaning and auto-clean.
-    fn advanced_ui(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        ui.spacing_mut().button_padding = egui::vec2(6.0, 1.0);
-
-        let totals = self.sampler.as_ref().map(|s| s.totals).unwrap_or_default();
-        ui.add(
-            egui::ProgressBar::new(totals.used_fraction())
-                .desired_height(16.0)
-                .text(format!(
-                    "{} used of {} ({:.0}%)",
-                    format_bytes(totals.used),
-                    format_bytes(totals.total),
-                    totals.used_fraction() * 100.0
-                )),
-        );
-        let mut summary = format!("Available: {}", format_bytes(totals.available));
-        if let Some(lists) = self.lists {
-            summary += &format!(
-                "  \u{b7}  Standby (cached): {}  \u{b7}  Free: {}  \u{b7}  Modified: {}",
-                format_bytes(lists.standby),
-                format_bytes(lists.free),
-                format_bytes(lists.modified)
-            );
-        }
-        ui.label(summary).on_hover_text(
-            "Available = Free + Standby. Windows keeps recently used data in the standby list \
-             and hands it out whenever a program needs memory.",
-        );
-        ui.add_space(4.0);
-
-        self.confirm_bar(ui);
-        if let Some(status) = &self.status {
-            ui.label(status);
-        }
-        self.system_panel(ui);
-        self.auto_panel(ui);
-        self.exclusions_list(ui);
-
-        let process_count = self.sampler.as_ref().map_or(0, |s| s.processes.len());
-        ui.horizontal(|ui| {
-            ui.label("Filter:");
-            ui.text_edit_singleline(&mut self.filter);
-            ui.checkbox(&mut self.grouped, "Group by name");
-            ui.label(format!("{process_count} processes"));
-        });
-        ui.add_space(2.0);
-
-        let Some(sampler) = self.sampler.as_ref() else {
-            return;
-        };
-        let grouped_rows: Vec<ProcInfo>;
-        let source: &[ProcInfo] = if self.grouped {
-            grouped_rows = group_by_name(&sampler.processes);
-            &grouped_rows
-        } else {
-            &sampler.processes
-        };
-        let rows = sort_and_filter(source, self.sort_key, self.descending, &self.filter);
-
-        // The table borrows the sampler and exclusions, so record what was clicked
-        // and apply it to `self` once the table is done.
-        let mut sort_click: Option<SortKey> = None;
-        let mut trim_click: Option<(u32, String)> = None;
-        let mut exclude_click: Option<String> = None;
-        let (sort_key, descending) = (self.sort_key, self.descending);
-        let exclusions = &self.exclusions;
-        let own_pid = std::process::id();
-
-        TableBuilder::new(ui)
-            .striped(true)
-            .column(Column::remainder().at_least(120.0))
-            .column(Column::exact(64.0))
-            .column(Column::exact(100.0))
-            .column(Column::exact(100.0))
-            .column(Column::exact(64.0))
-            .column(Column::exact(64.0))
-            .header(ROW_HEIGHT, |mut header| {
-                for (label, key) in [
-                    ("Name", SortKey::Name),
-                    ("PID", SortKey::Pid),
-                    ("Working set", SortKey::WorkingSet),
-                    ("Private", SortKey::Private),
-                ] {
-                    header.col(|ui| {
-                        let arrow = sort_arrow(sort_key == key, descending);
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new(format!("{label}{arrow}"))
-                                        .small()
-                                        .strong(),
-                                )
-                                .small(),
-                            )
-                            .clicked()
-                        {
-                            sort_click = Some(key);
-                        }
-                    });
-                }
-                header.col(|ui| {
-                    ui.label(egui::RichText::new("Protect").small().strong())
-                        .on_hover_text("Tick to keep this app from ever being trimmed");
-                });
-                header.col(|_| {});
-            })
-            .body(|body| {
-                body.rows(ROW_HEIGHT, rows.len(), |mut row| {
-                    let p = rows[row.index()];
-                    let reason = skip_reason(p.pid, &p.name, own_pid, exclusions);
-                    let several = p.count > 1;
-                    row.col(|ui| {
-                        ui.label(&p.name);
-                    });
-                    row.col(|ui| {
-                        // A group has no single pid to show.
-                        ui.label(if several {
-                            format!("\u{d7}{}", p.count)
-                        } else {
-                            p.pid.to_string()
-                        });
-                    });
-                    row.col(|ui| {
-                        ui.label(format_bytes(p.working_set));
-                    });
-                    row.col(|ui| {
-                        ui.label(format_bytes(p.private));
-                    });
-                    row.col(|ui| {
-                        // System and shell processes are always protected, so they show as
-                        // ticked and locked.
-                        let locked = matches!(reason, Some(SkipReason::System | SkipReason::Own));
-                        let mut protected = reason.is_some();
-                        let tick = ui
-                            .add_enabled(!locked, egui::Checkbox::without_text(&mut protected))
-                            .on_hover_text("Tick to keep this app from ever being trimmed");
-                        if tick.changed() {
-                            exclude_click = Some(p.name.to_lowercase());
-                        }
-                    });
-                    row.col(|ui| {
-                        let can_trim = reason.is_none() && !several;
-                        let mut trim_btn =
-                            ui.add_enabled(can_trim, egui::Button::new("Trim").small());
-                        if several {
-                            trim_btn = trim_btn
-                                .on_disabled_hover_text("Turn off grouping to trim one process");
-                        } else if let Some(reason) = reason {
-                            trim_btn = trim_btn.on_disabled_hover_text(reason.describe());
-                        }
-                        if trim_btn.clicked() {
-                            trim_click = Some((p.pid, p.name.clone()));
-                        }
-                    });
-                });
-            });
-
-        if let Some(key) = sort_click {
-            self.apply_sort(key);
-        }
-        if let Some(request) = trim_click {
-            self.pending = Some(request);
-        }
-        if let Some(name) = exclude_click {
-            self.toggle_exclusion(name);
         }
     }
 }
