@@ -59,5 +59,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ steps.ver.outputs.tag }}"
-          $pre = if ($tag -match '-') { "--prerelease" } else { "" }
-          gh release create $tag $env:ASSET "$env:ASSET.sha256" --target ${{ github.sha }} --title $tag --generate-notes $pre
+          # Only add --prerelease when needed: an empty argument would be read as a file name.
+          $ghArgs = @($tag, $env:ASSET, "$env:ASSET.sha256", "--target", "${{ github.sha }}", "--title", $tag, "--generate-notes")
+          if ($tag -match '-') { $ghArgs += "--prerelease" }
+          gh release create @ghArgs
