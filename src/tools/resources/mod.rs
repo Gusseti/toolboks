@@ -18,6 +18,10 @@ pub struct Resources {
     last: Option<Sample>,
     cpu: History,
     mem: History,
+    disk_read: History,
+    disk_write: History,
+    net_down: History,
+    net_up: History,
 }
 
 impl Resources {
@@ -28,6 +32,10 @@ impl Resources {
             last: None,
             cpu: History::new(HISTORY_POINTS),
             mem: History::new(HISTORY_POINTS),
+            disk_read: History::new(HISTORY_POINTS),
+            disk_write: History::new(HISTORY_POINTS),
+            net_down: History::new(HISTORY_POINTS),
+            net_up: History::new(HISTORY_POINTS),
         }
     }
 }
@@ -52,6 +60,10 @@ impl crate::tools::Tool for Resources {
                     self.cpu.push(sample.cpu);
                     let total = self.info.as_ref().map_or(0, |i| i.mem_total);
                     self.mem.push(overview::mem_percent(sample.mem_used, total));
+                    self.disk_read.push(sample.disk_read_bps as f32);
+                    self.disk_write.push(sample.disk_write_bps as f32);
+                    self.net_down.push(sample.net_down_bps as f32);
+                    self.net_up.push(sample.net_up_bps as f32);
                     self.last = Some(sample);
                 }
             }

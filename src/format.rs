@@ -12,6 +12,30 @@ pub fn size_plain(bytes: u64) -> String {
     }
 }
 
+/// A throughput for people: "0 B/s", "512 B/s", "340 KB/s", "8.4 MB/s", "12 MB/s", "1.2 GB/s".
+pub fn rate(bytes_per_sec: f64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let b = bytes_per_sec;
+    if b.is_nan() || b < 1.0 {
+        "0 B/s".to_string()
+    } else if b < KB {
+        format!("{b:.0} B/s")
+    } else if b < MB {
+        format!("{:.0} KB/s", b / KB)
+    } else if b < GB {
+        let m = b / MB;
+        if m >= 10.0 {
+            format!("{m:.0} MB/s")
+        } else {
+            format!("{m:.1} MB/s")
+        }
+    } else {
+        format!("{:.1} GB/s", b / GB)
+    }
+}
+
 /// A clock speed in MHz as "3.6 GHz" (or "800 MHz" below 1 GHz).
 pub fn clock(mhz: u64) -> String {
     if mhz >= 1000 {
@@ -44,6 +68,22 @@ mod tests {
         assert_eq!(size_plain(0), "0 MB");
         assert_eq!(size_plain(850 * 1024 * 1024), "850 MB");
         assert_eq!(size_plain(1536 * 1024 * 1024), "1.5 GB");
+    }
+
+    #[test]
+    fn formats_rates() {
+        assert_eq!(rate(f64::NAN), "0 B/s");
+        assert_eq!(rate(-5.0), "0 B/s");
+        assert_eq!(rate(0.0), "0 B/s");
+        assert_eq!(rate(0.5), "0 B/s");
+        assert_eq!(rate(1.0), "1 B/s");
+        assert_eq!(rate(512.0), "512 B/s");
+        assert_eq!(rate(1024.0), "1 KB/s");
+        assert_eq!(rate(340.0 * 1024.0), "340 KB/s");
+        assert_eq!(rate(1024.0 * 1024.0), "1.0 MB/s");
+        assert_eq!(rate(8.4 * 1024.0 * 1024.0), "8.4 MB/s");
+        assert_eq!(rate(12.0 * 1024.0 * 1024.0), "12 MB/s");
+        assert_eq!(rate(1.5 * 1024.0 * 1024.0 * 1024.0), "1.5 GB/s");
     }
 
     #[test]

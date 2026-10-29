@@ -49,7 +49,7 @@ Counter names on this PC are localized (Norwegian). All PDH access goes through 
 ## Phases
 
 1. Foundation (built, UI not looked at yet): sampler thread, history buffers, graph widget, shared UI module (`src/ui.rs`, `src/format.rs`), sidebar tool, Overview with CPU and Memory cards. Checked by fmt, clippy, unit tests (including a real sampler smoke test) and a release build only; nobody has seen the page on screen.
-2. Disk and Network cards.
+2. Disk and Network cards (built, UI not looked at yet). Disk read/write speed from `sysinfo`, busy % from the PDH counter `\PhysicalDisk(_Total)\% Disk Time` (English-name API); network down/up summed over adapters except loopback and pseudo tunnel adapters; throughput graphs auto-scale to a 1/2/5 step. A console readout (`cargo test prints_live_samples -- --ignored --nocapture`) showed plausible live numbers. Known gap: the CPU "Speed" is the rated clock (constant 3600 MHz here), not the live boost clock; a live value needs the `% Processor Performance` counter (candidate for the polish phase).
 3. GPU card: `sysinfo` basics, then the engine split, then NVIDIA extras.
 4. Top processes card with CPU, Memory, GPU and Disk pills.
 5. Details page.
