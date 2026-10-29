@@ -14,7 +14,18 @@ use sampler::{GpuSample, Info, Msg, Sample, Sampler};
 /// Points kept per graph (one per second, so a minute).
 const HISTORY_POINTS: usize = 60;
 
+/// Which list the "Top processes" card shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum TopTab {
+    #[default]
+    Cpu,
+    Memory,
+    Gpu,
+    Disk,
+}
+
 pub struct Resources {
+    top_tab: TopTab,
     sampler: Option<Sampler>,
     info: Option<Info>,
     last: Option<Sample>,
@@ -34,6 +45,7 @@ pub struct Resources {
 impl Resources {
     pub fn new() -> Self {
         Self {
+            top_tab: TopTab::default(),
             sampler: None,
             info: None,
             last: None,

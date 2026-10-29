@@ -23,7 +23,7 @@ pub struct GpuBasic {
     /// Load per engine type, e.g. ("3D", 21.0), ("Copy", 0.0), ("Video Decode", 3.0), 0 to 100.
     pub engines: Vec<(String, f32)>,
     /// GPU load per process id on the main adapter, 0 to 100 (busiest engine of that process),
-    /// zeros dropped. Filled by the phase 4 work.
+    /// zeros dropped.
     pub per_process: Vec<(u32, f32)>,
 }
 
@@ -115,6 +115,50 @@ pub fn aggregate_engines(items: &[(String, f64)]) -> EngineSummary {
         load: Some(load),
         engines,
     }
+}
+
+/// The process id from an instance name starting with `pid_<n>_`.
+pub fn parse_engine_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("pid_")?;
+    rest.split_once('_')?.0.parse().ok()
+}
+
+/// GPU load per process on the adapter `luid`: per pid and engine type the max over that pid's
+/// engines of the type, then the busiest type, clamped to 0..=100, zeros dropped. Sorted by pid.
+pub fn per_process_load(items: &[(String, f64)], luid: &str) -> Vec<(u32, f32)> {
+    let mut by_type: HashMap<(u32, String), f64> = HashMap::new();
+    for (name, value) in items {
+        let (Some(pid), Some((l, _, ty))) = (parse_engine_pid(name), parse_engine_name(name))
+        else {
+            continue;
+        };
+        if l != luid {
+            continue;
+        }
+        let v = if value.is_finite() {
+            value.max(0.0)
+        } else {
+            0.0
+        };
+        let e = by_type.entry((pid, prettify_engine(&ty))).or_insert(0.0);
+        if v > *e {
+            *e = v;
+        }
+    }
+    let mut by_pid: HashMap<u32, f64> = HashMap::new();
+    for ((pid, _), v) in by_type {
+        let e = by_pid.entry(pid).or_insert(0.0);
+        if v > *e {
+            *e = v;
+        }
+    }
+    let mut out: Vec<(u32, f32)> = by_pid
+        .into_iter()
+        .map(|(pid, v)| (pid, v.min(100.0) as f32))
+        .filter(|(_, v)| *v > 0.0)
+        .collect();
+    out.sort_by_key(|(pid, _)| *pid);
+    out
 }
 
 /// A PDH query with one wildcard counter (GPU engine, adapter memory). Closed on drop.
@@ -286,6 +330,9 @@ impl GpuReader {
                     let summary = aggregate_engines(&items);
                     basic.load = summary.load;
                     basic.engines = summary.engines;
+                    if let Some(l) = summary.luid.as_deref() {
+                        basic.per_process = per_process_load(&items, l);
+                    }
                     main_luid = summary.luid;
                 }
             } else {
@@ -412,6 +459,37 @@ mod tests {
         assert_eq!(pick_mem_used(None, Some(9)), Some(9));
         assert_eq!(pick_mem_used(None, Some(0)), None);
         assert_eq!(pick_mem_used(None, None), None);
+    }
+
+    #[test]
+    fn parse_pid_cases() {
+        assert_eq!(parse_engine_pid(N3D), Some(10136));
+        assert_eq!(parse_engine_pid("pid_x_luid"), None);
+        assert_eq!(parse_engine_pid("pid_5"), None);
+        assert_eq!(parse_engine_pid("_Total"), None);
+        assert_eq!(parse_engine_pid(""), None);
+    }
+
+    #[test]
+    fn per_process_cases() {
+        let main = "0x0_0xA";
+        let items = vec![
+            // pid 1: 3D engines 0 and 1 -> max 20 (not summed); Copy 5
+            (n(main, 1, 0, "3D"), 20.0),
+            (n(main, 1, 1, "3D"), 10.0),
+            (n(main, 1, 2, "Copy"), 5.0),
+            // pid 2: only zero -> dropped
+            (n(main, 2, 0, "3D"), 0.0),
+            // pid 3: over 100 -> clamped
+            (n(main, 3, 0, "Compute_0"), 250.0),
+            // other adapter ignored
+            (n("0x0_0xB", 4, 0, "3D"), 50.0),
+            // NaN counts as zero
+            (n(main, 5, 0, "3D"), f64::NAN),
+            ("junk".to_string(), 9.0),
+        ];
+        assert_eq!(per_process_load(&items, main), vec![(1, 20.0), (3, 100.0)]);
+        assert!(per_process_load(&items, "nope").is_empty());
     }
 
     #[test]

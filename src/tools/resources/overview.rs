@@ -2,9 +2,32 @@
 
 use eframe::egui::{self, Align, Color32, Layout, RichText, Vec2};
 
-use super::Resources;
-use crate::format::{clock, rate, size_plain, uptime};
-use crate::ui::{card, graph, stat, Line, ACCENT, AMBER, GAP, GREEN};
+use super::{Resources, TopTab};
+use crate::format::{clock, friendly_name, rate, size_plain, uptime};
+use crate::ui::{card, graph, pill, stat, Line, ACCENT, AMBER, CARD_PAD, GAP, GREEN};
+
+const TOP_ROWS: usize = 5;
+const TOP_TABS: [(TopTab, &str); 4] = [
+    (TopTab::Cpu, "CPU"),
+    (TopTab::Memory, "Memory"),
+    (TopTab::Gpu, "GPU"),
+    (TopTab::Disk, "Disk"),
+];
+
+/// The value column of the Top processes card for the given tab.
+fn value_label(tab: TopTab, value: f64) -> String {
+    match tab {
+        TopTab::Cpu | TopTab::Gpu => {
+            if value > 0.0 && value < 1.0 {
+                "<1%".to_string()
+            } else {
+                format!("{value:.0}%")
+            }
+        }
+        TopTab::Memory => size_plain(value.max(0.0) as u64),
+        TopTab::Disk => rate(value),
+    }
+}
 
 const MAX_WIDTH: f32 = 880.0;
 const GRAPH_HEIGHT: f32 = 120.0;
@@ -83,7 +106,7 @@ impl Resources {
         });
     }
 
-    fn cards(&self, ui: &mut egui::Ui, total: f32) {
+    fn cards(&mut self, ui: &mut egui::Ui, total: f32) {
         let left = ((total - GAP) * 7.0 / 12.0).floor();
         let right = total - GAP - left;
         ui.horizontal_top(|ui| {
@@ -117,6 +140,67 @@ impl Resources {
                 |ui| card(ui, other, IO_CARD_HEIGHT, |ui| self.net_card(ui)),
             );
         });
+
+        card(ui, total, 0.0, |ui| self.top_card(ui, total));
+    }
+
+    fn top_card(&mut self, ui: &mut egui::Ui, total: f32) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Top processes").strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                // Right-to-left, so add the last pill first.
+                for (tab, text) in TOP_TABS.iter().rev() {
+                    if pill(ui, text, self.top_tab == *tab).clicked() {
+                        self.top_tab = *tab;
+                    }
+                }
+            });
+        });
+
+        let tab = self.top_tab;
+        let Some(sample) = &self.last else {
+            ui.label(RichText::new("Collecting...").weak());
+            return;
+        };
+        let list = match tab {
+            TopTab::Cpu => &sample.top.cpu,
+            TopTab::Memory => &sample.top.memory,
+            TopTab::Gpu => &sample.top.gpu,
+            TopTab::Disk => &sample.top.disk,
+        };
+        if list.is_empty() {
+            ui.label(RichText::new("Nothing active").weak());
+            return;
+        }
+        let biggest = list.iter().map(|p| p.value).fold(0.0f64, f64::max);
+
+        let (name_w, value_w, gap) = (160.0, 72.0, 14.0);
+        let bar_w = (total - 2.0 * (CARD_PAD + 1.0) - name_w - value_w - 2.0 * gap).max(80.0);
+        egui::Grid::new("top_processes")
+            .num_columns(3)
+            .spacing([gap, 10.0])
+            .show(ui, |ui| {
+                for p in list.iter().take(TOP_ROWS) {
+                    let mut name = friendly_name(&p.name);
+                    if p.count > 1 {
+                        name = format!("{name}  x{}", p.count);
+                    }
+                    ui.add_sized([name_w, 18.0], egui::Label::new(name).truncate());
+                    let fraction = if biggest > 0.0 {
+                        p.value / biggest
+                    } else {
+                        0.0
+                    };
+                    ui.add(
+                        egui::ProgressBar::new(fraction as f32)
+                            .desired_width(bar_w)
+                            .fill(ACCENT),
+                    );
+                    ui.label(RichText::new(value_label(tab, p.value)).weak());
+                    ui.end_row();
+                }
+            });
     }
 
     fn disk_card(&self, ui: &mut egui::Ui) {
@@ -338,6 +422,18 @@ mod tests {
         let gb = 1024u64 * 1024 * 1024;
         let s = gpu_memory_label(Some(gb), Some(4 * gb));
         assert!(s.contains(" of "), "{s}");
+    }
+
+    #[test]
+    fn value_label_variants() {
+        assert_eq!(value_label(TopTab::Cpu, 0.4), "<1%");
+        assert_eq!(value_label(TopTab::Gpu, 0.0), "0%");
+        assert_eq!(value_label(TopTab::Cpu, 12.4), "12%");
+        assert_eq!(
+            value_label(TopTab::Memory, 1024.0 * 1024.0),
+            size_plain(1024 * 1024)
+        );
+        assert_eq!(value_label(TopTab::Disk, 2048.0), rate(2048.0));
     }
 
     #[test]

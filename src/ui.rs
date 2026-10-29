@@ -58,6 +58,33 @@ pub fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     response
 }
 
+/// A fully rounded chip that acts as one choice of a group; `selected` tints it with the accent.
+pub fn pill(ui: &mut egui::Ui, text: &str, selected: bool) -> egui::Response {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let color = if selected {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let size = Vec2::new(galley.size().x + 24.0, 24.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    if ui.is_rect_visible(rect) {
+        let fill = if selected {
+            Color32::from_rgba_unmultiplied(ACCENT.r(), ACCENT.g(), ACCENT.b(), 70)
+        } else if response.hovered() {
+            ui.visuals().widgets.hovered.weak_bg_fill
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
+        let pos = rect.center() - galley.size() / 2.0;
+        ui.painter().galley(pos, galley, color);
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, text));
+    response
+}
+
 /// A big number with a small label under it.
 pub fn stat(ui: &mut egui::Ui, value: &str, label: &str) {
     ui.vertical(|ui| {

@@ -1,13 +1,15 @@
 //! Background sampler for the Resources page. A worker thread reads CPU, memory and uptime about
 //! once a second, but only while the page is on screen (the UI calls `ping()` every frame).
 
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use sysinfo::{DiskRefreshKind, Disks, Networks, System};
+use sysinfo::{DiskRefreshKind, Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 
 use super::gpu::{GpuBasic, GpuReader};
 use super::nvml::{Nvml, NvmlReading};
@@ -20,6 +22,8 @@ use windows::Win32::System::Performance::{
 /// A ping older than this means the page is no longer shown.
 const VISIBLE_WINDOW_MS: u64 = 2500;
 const TICK: Duration = Duration::from_millis(1000);
+/// Rows kept per top-processes list.
+const TOP_ROWS: usize = 8;
 
 /// Facts that do not change while the app runs. Sent once, before the first sample.
 #[derive(Clone, Debug, PartialEq)]
@@ -141,6 +145,116 @@ fn is_counted_adapter(name: &str) -> bool {
     !["loopback", "isatap", "teredo", "6to4"]
         .iter()
         .any(|bad| lower.contains(bad))
+}
+
+/// Per-process CPU is percent of one core; this converts it to percent of the whole machine.
+fn cpu_percent_of_machine(raw: f32, logical: usize) -> f64 {
+    if logical == 0 || !raw.is_finite() {
+        return 0.0;
+    }
+    (raw as f64 / logical as f64).clamp(0.0, 100.0)
+}
+
+/// Groups by name (case-insensitive, first-seen casing kept), sums values, counts merged items,
+/// drops zero, negative and non-finite values, sorts largest first and keeps `n` rows.
+fn top_n(items: impl IntoIterator<Item = (String, f64)>, n: usize) -> Vec<ProcUse> {
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut rows: Vec<ProcUse> = Vec::new();
+    for (name, value) in items {
+        if !value.is_finite() || value <= 0.0 {
+            continue;
+        }
+        match index.entry(name.to_lowercase()) {
+            Entry::Occupied(e) => {
+                let r = &mut rows[*e.get()];
+                r.count += 1;
+                r.value += value;
+            }
+            Entry::Vacant(e) => {
+                e.insert(rows.len());
+                rows.push(ProcUse {
+                    name,
+                    count: 1,
+                    value,
+                });
+            }
+        }
+    }
+    rows.sort_by(|a, b| b.value.total_cmp(&a.value));
+    rows.truncate(n);
+    rows
+}
+
+fn refresh_procs(sys: &mut System) {
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .with_cpu()
+            .with_memory()
+            .with_disk_usage(),
+    );
+}
+
+/// Builds the four top lists from the freshly refreshed process table. `secs` is the real time
+/// since the previous refresh; `gpu_pids` is pid -> GPU percent.
+fn build_top(sys: &System, logical: usize, secs: f64, gpu_pids: &[(u32, f32)]) -> TopProcesses {
+    let name_of = |p: &sysinfo::Process| p.name().to_string_lossy().into_owned();
+    let procs = || {
+        sys.processes()
+            .iter()
+            .filter(|(pid, _)| pid.as_u32() != 0)
+            .map(|(_, p)| p)
+    };
+    let cpu = top_n(
+        procs().map(|p| (name_of(p), cpu_percent_of_machine(p.cpu_usage(), logical))),
+        TOP_ROWS,
+    );
+    let memory = top_n(procs().map(|p| (name_of(p), p.memory() as f64)), TOP_ROWS);
+    let disk = top_n(
+        procs().map(|p| {
+            let u = p.disk_usage();
+            (
+                name_of(p),
+                bytes_per_second(u.read_bytes.saturating_add(u.written_bytes), secs),
+            )
+        }),
+        TOP_ROWS,
+    );
+    // Sum per name first (clamped to 100), then rank; `count` counts processes using the GPU.
+    let mut gpu_by_name: HashMap<String, (String, usize, f64)> = HashMap::new();
+    for (pid, load) in gpu_pids {
+        if let Some(p) = sys.process(sysinfo::Pid::from_u32(*pid)) {
+            let name = name_of(p);
+            let e = gpu_by_name
+                .entry(name.to_lowercase())
+                .or_insert((name, 0, 0.0));
+            e.1 += 1;
+            e.2 += *load as f64;
+        }
+    }
+    let mut gpu = top_n(
+        gpu_by_name
+            .into_values()
+            .map(|(name, _, v)| (name, v.min(100.0))),
+        TOP_ROWS,
+    );
+    // top_n counted one per name; restore the real process counts.
+    for row in &mut gpu {
+        row.count = gpu_pids
+            .iter()
+            .filter(|(pid, _)| {
+                sys.process(sysinfo::Pid::from_u32(*pid))
+                    .is_some_and(|p| name_of(p).eq_ignore_ascii_case(&row.name))
+            })
+            .count();
+    }
+    TopProcesses {
+        cpu,
+        memory,
+        gpu,
+        disk,
+    }
 }
 
 /// Clamps a counter value to 0..=100; NaN counts as 0.
@@ -276,7 +390,9 @@ impl Sampler {
                 };
                 sys.refresh_cpu_all();
                 sys.refresh_memory();
+                refresh_procs(&mut sys);
 
+                let logical = sys.cpus().len();
                 let info = Info {
                     cpu_name: sys
                         .cpus()
@@ -284,7 +400,7 @@ impl Sampler {
                         .map(|c| c.brand().trim().to_string())
                         .unwrap_or_default(),
                     physical_cores: System::physical_core_count().ok(),
-                    logical_cores: sys.cpus().len(),
+                    logical_cores: logical,
                     mem_total: sys.total_memory(),
                 };
                 if tx.send(Msg::Info(info)).is_err() {
@@ -323,6 +439,7 @@ impl Sampler {
                             b.collect();
                         }
                         // Resets the GPU counter baseline; the reading itself is dropped.
+                        refresh_procs(&mut sys);
                         let _ = gpu_reader.read();
                         last_tick = Instant::now();
                         continue;
@@ -347,6 +464,13 @@ impl Sampler {
                     };
 
                     let freqs: Vec<u64> = sys.cpus().iter().map(|c| c.frequency()).collect();
+                    refresh_procs(&mut sys);
+                    let mut gpu_basic = gpu_reader.read();
+                    let gpu_pids = gpu_basic
+                        .as_mut()
+                        .map(|b| std::mem::take(&mut b.per_process))
+                        .unwrap_or_default();
+                    let top = build_top(&sys, logical, secs, &gpu_pids);
                     let sample = Sample {
                         cpu: sys.global_cpu_usage(),
                         cores: sys.cpus().iter().map(|c| c.usage()).collect(),
@@ -358,7 +482,7 @@ impl Sampler {
                         disk_active: busy.as_ref().and_then(|b| b.read()),
                         net_down_bps: bytes_per_second(down, secs),
                         net_up_bps: bytes_per_second(up, secs),
-                        gpu: gpu_reader.read().map(|basic| {
+                        gpu: gpu_basic.map(|basic| {
                             let nv = if is_nvidia(&basic) {
                                 nvml.as_ref().and_then(|n| n.read())
                             } else {
@@ -366,8 +490,7 @@ impl Sampler {
                             };
                             merge_gpu(basic, nv)
                         }),
-                        // Filled in by the phase 4 work.
-                        top: TopProcesses::default(),
+                        top,
                     };
                     if tx.send(Msg::Sample(Box::new(sample))).is_err() {
                         return;
@@ -460,6 +583,64 @@ mod tests {
         assert_eq!(clamp_percent(250.0), 100.0);
     }
 
+    fn it(name: &str, v: f64) -> (String, f64) {
+        (name.to_string(), v)
+    }
+
+    #[test]
+    fn cpu_percent_cases() {
+        assert_eq!(cpu_percent_of_machine(100.0, 4), 25.0);
+        assert_eq!(cpu_percent_of_machine(800.0, 4), 100.0);
+        assert_eq!(cpu_percent_of_machine(-1.0, 4), 0.0);
+        assert_eq!(cpu_percent_of_machine(50.0, 0), 0.0);
+        assert_eq!(cpu_percent_of_machine(f32::NAN, 4), 0.0);
+    }
+
+    #[test]
+    fn top_n_groups_case_insensitive() {
+        let t = top_n(
+            vec![
+                it("Chrome.exe", 10.0),
+                it("a.exe", 5.0),
+                it("chrome.EXE", 7.0),
+            ],
+            8,
+        );
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].name, "Chrome.exe");
+        assert_eq!(t[0].count, 2);
+        assert_eq!(t[0].value, 17.0);
+        assert_eq!(t[1].name, "a.exe");
+        assert_eq!(t[1].count, 1);
+    }
+
+    #[test]
+    fn top_n_orders_and_drops_bad_values() {
+        let t = top_n(
+            vec![
+                it("low", 1.0),
+                it("zero", 0.0),
+                it("neg", -4.0),
+                it("nan", f64::NAN),
+                it("inf", f64::INFINITY),
+                it("high", 9.0),
+            ],
+            8,
+        );
+        let names: Vec<&str> = t.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["high", "low"]);
+        assert!(top_n(Vec::new(), 8).is_empty());
+    }
+
+    #[test]
+    fn top_n_truncates() {
+        let items: Vec<(String, f64)> = (1..=20).map(|i| (format!("p{i}"), i as f64)).collect();
+        let t = top_n(items, 8);
+        assert_eq!(t.len(), 8);
+        assert_eq!(t[0].name, "p20");
+        assert_eq!(t[7].name, "p13");
+    }
+
     #[test]
     fn merge_gpu_cases() {
         let basic = GpuBasic {
@@ -502,6 +683,25 @@ mod tests {
     fn prints_live_samples() {
         let sampler = Sampler::start(&egui::Context::default());
         let mut shown = 0;
+        {
+            // Cost of the process refresh plus the top lists, measured on its own.
+            let mut sys = System::new().unwrap();
+            refresh_procs(&mut sys);
+            let logical = sys.cpus().len().max(1);
+            let mut total = Duration::ZERO;
+            let runs = 10;
+            for _ in 0..runs {
+                std::thread::sleep(Duration::from_millis(300));
+                let t = Instant::now();
+                refresh_procs(&mut sys);
+                let _ = build_top(&sys, logical, 0.3, &[]);
+                total += t.elapsed();
+            }
+            println!(
+                "process refresh + top lists: {:.2} ms avg over {runs}",
+                total.as_secs_f64() * 1000.0 / runs as f64
+            );
+        }
         for _ in 0..16 {
             sampler.ping();
             std::thread::sleep(Duration::from_millis(500));
@@ -522,6 +722,19 @@ mod tests {
                             s.net_up_bps
                         );
                         println!("  gpu {:?}", s.gpu);
+                        for (label, list) in [
+                            ("cpu %", &s.top.cpu),
+                            ("mem B", &s.top.memory),
+                            ("gpu %", &s.top.gpu),
+                            ("disk B/s", &s.top.disk),
+                        ] {
+                            let rows: Vec<String> = list
+                                .iter()
+                                .take(3)
+                                .map(|r| format!("{} x{} {:.1}", r.name, r.count, r.value))
+                                .collect();
+                            println!("  top {label}: {}", rows.join(" | "));
+                        }
                     }
                 }
             }
