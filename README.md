@@ -9,18 +9,22 @@ A lightweight toolbox of system utilities, written in Rust.
 
 ## Releasing
 
-Versions follow [SemVer](https://semver.org) and live in `Cargo.toml`. A release is a `vX.Y.Z` git tag; pushing it triggers `.github/workflows/release.yml`, which builds `toolboks.exe` and publishes a GitHub release with a zip and SHA-256 checksum.
+Versions follow [SemVer](https://semver.org) and live in `Cargo.toml`.
+
+**Normal way:** bump `version` in `Cargo.toml` (and `Cargo.lock`), merge to `main`. `.github/workflows/release.yml` sees a version with no release yet, builds `toolboks.exe` and publishes release `vX.Y.Z`. A push to `main` that does not change the version releases nothing.
+
+**Pre-releases and tagging by hand:** `scripts/release.ps1` bumps the version, commits, tags and pushes; a pushed `vX.Y.Z-rc.N` tag publishes a pre-release (which the in-app updater ignores).
 
 ```powershell
 .\scripts\release.ps1 0.2.0-rc.1   # from staging: pre-release
 .\scripts\release.ps1 0.2.0        # from main: stable release
 ```
 
-The script bumps `Cargo.toml`/`Cargo.lock`, commits, tags and pushes. The workflow fails if the tag and `Cargo.toml` version disagree. Each release has two assets: `toolboks-vX.Y.Z-x86_64-pc-windows-msvc.exe` and the same name plus `.sha256`.
+The workflow fails if a tag and the `Cargo.toml` version disagree. Each release has two assets: `toolboks-vX.Y.Z-x86_64-pc-windows-msvc.exe` and the same name plus `.sha256`.
 
 ## Updates
 
-The app has a **Check for updates** button. It asks GitHub for the latest stable release (pre-releases are ignored), downloads the exe into memory, verifies the SHA-256, swaps itself in place and restarts. It never contacts the network until you click, and it leaves no files behind. It needs the repository to be public, since it cannot carry a token.
+On launch the app makes one request to GitHub for the latest stable release (pre-releases are ignored). If a newer version exists it asks whether to update; **Update now** downloads the exe into memory, verifies the SHA-256, swaps itself in place and restarts, and **Not now** keeps the **Install and restart** button in the sidebar. Offline or no release: it says nothing. There is also a **Check for updates** button. No files are left behind. It needs the repository to be public, since it cannot carry a token.
 
 ## Design rules
 

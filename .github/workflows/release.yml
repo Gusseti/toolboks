@@ -1,8 +1,12 @@
 name: Release
 
-# Runs when a version tag is pushed: v1.2.3 (stable) or v1.2.3-rc.1 (pre-release).
+# Publishes a release when:
+#  - main gets a commit whose Cargo.toml version has no release yet (the normal way), or
+#  - a version tag vX.Y.Z / vX.Y.Z-rc.N is pushed (pre-releases from staging via scripts/release.ps1).
+# A push to main that does not change the version releases nothing.
 on:
   push:
+    branches: [main]
     tags: ["v*.*.*"]
 
 permissions:
@@ -11,35 +15,49 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Tag must match Cargo.toml version
+      - name: Work out the version and whether it is new
+        id: ver
         shell: pwsh
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
-          if ("v$version" -ne "${{ github.ref_name }}") {
-            throw "Tag ${{ github.ref_name }} does not match Cargo.toml version v$version"
+          $tag = "v$version"
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne $tag) {
+            throw "Tag ${{ github.ref_name }} does not match Cargo.toml version $tag"
           }
+          gh release view $tag *> $null
+          $publish = ($LASTEXITCODE -ne 0)
+          $LASTEXITCODE = 0
+          "tag=$tag" | Out-File $env:GITHUB_OUTPUT -Append -Encoding ascii
+          "publish=$($publish.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append -Encoding ascii
+          if (-not $publish) { Write-Host "Release $tag already exists, nothing to publish." }
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - if: steps.ver.outputs.publish == 'true'
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.ver.outputs.publish == 'true'
+        uses: Swatinem/rust-cache@v2
 
-      - run: cargo build --release --locked
+      - if: steps.ver.outputs.publish == 'true'
+        run: cargo build --release --locked
 
       # The bare exe is the asset: the in-app updater downloads it directly and checks the .sha256.
       - name: Package
+        if: steps.ver.outputs.publish == 'true'
         shell: pwsh
         run: |
-          $name = "toolboks-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe"
+          $name = "toolboks-${{ steps.ver.outputs.tag }}-x86_64-pc-windows-msvc.exe"
           Copy-Item target/release/toolboks.exe $name
           (Get-FileHash $name -Algorithm SHA256).Hash.ToLower() + "  $name" | Out-File "$name.sha256" -Encoding ascii
-          "ASSET=$name" | Out-File $env:GITHUB_ENV -Append
+          "ASSET=$name" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
 
       - name: Publish GitHub release
+        if: steps.ver.outputs.publish == 'true'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $pre = if ("${{ github.ref_name }}" -match '-') { "--prerelease" } else { "" }
-          gh release create "${{ github.ref_name }}" $env:ASSET "$env:ASSET.sha256" --title "${{ github.ref_name }}" --generate-notes $pre
+          $tag = "${{ steps.ver.outputs.tag }}"
+          $pre = if ($tag -match '-') { "--prerelease" } else { "" }
+          gh release create $tag $env:ASSET "$env:ASSET.sha256" --target ${{ github.sha }} --title $tag --generate-notes $pre
