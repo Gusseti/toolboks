@@ -1,5 +1,6 @@
 //! Background sampler for the Resources page. A worker thread reads CPU, memory and uptime about
-//! once a second, but only while the page is on screen (the UI calls `ping()` every frame).
+//! once a second for as long as the app runs. The heavy process table is only read while the page
+//! is on screen (the UI calls `ping()` every frame).
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -731,36 +732,12 @@ impl Sampler {
                 let nvml = Nvml::open();
                 let mut last_tick = Instant::now();
 
-                // The thread was just primed above, so the first tick can already report.
-                let mut primed = true;
+                // The thread was just primed above, so the first tick can already report. It keeps
+                // sampling whether or not the page is on screen, so the long graph ranges have no
+                // holes; only the process table (its own thread) waits for the page to be shown.
                 loop {
                     std::thread::sleep(TICK);
-                    let now_ms = epoch.elapsed().as_millis() as u64;
-                    if !is_visible(ping.load(Ordering::Relaxed), now_ms) {
-                        primed = false;
-                        continue;
-                    }
                     sys.refresh_cpu_all();
-                    if !primed {
-                        // First reading after a pause averages over the whole pause.
-                        primed = true;
-                        if let Some(d) = disks.as_mut() {
-                            d.refresh_specifics(true, disk_kind);
-                        }
-                        if let Some(n) = nets.as_mut() {
-                            n.refresh(true);
-                        }
-                        if let Some(b) = busy.as_ref() {
-                            b.collect();
-                        }
-                        if let Some(c) = clock.as_ref() {
-                            c.collect();
-                        }
-                        // Resets the GPU counter baseline; the reading itself is dropped.
-                        let _ = gpu_reader.read();
-                        last_tick = Instant::now();
-                        continue;
-                    }
                     sys.refresh_memory();
 
                     let secs = last_tick.elapsed().as_secs_f64();

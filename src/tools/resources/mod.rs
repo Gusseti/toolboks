@@ -13,11 +13,8 @@ mod overview;
 mod processes;
 mod sampler;
 
-use history::History;
+use history::{History, Range};
 use sampler::{GpuSample, Info, Msg, Sample, Sampler};
-
-/// Points kept per graph (one per second, so a minute).
-const HISTORY_POINTS: usize = 60;
 
 /// A sample older than this means the sampler is no longer live.
 const LIVE_WITHIN: Duration = Duration::from_secs(5);
@@ -37,7 +34,7 @@ impl<const N: usize> Keyed<N> {
         let at = match self.items.iter().position(|(k, _)| k == key) {
             Some(i) => i,
             None => {
-                let series = std::array::from_fn(|_| History::new(HISTORY_POINTS));
+                let series = std::array::from_fn(|_| History::new());
                 self.items.push((key.to_string(), series));
                 self.items.len() - 1
             }
@@ -83,6 +80,8 @@ pub(crate) enum TopTab {
 
 pub struct Resources {
     top_tab: TopTab,
+    /// How far back the graphs look.
+    range: Range,
     sampler: Option<Sampler>,
     info: Option<Info>,
     last: Option<Sample>,
@@ -111,17 +110,18 @@ impl Resources {
     pub fn new() -> Self {
         Self {
             top_tab: TopTab::default(),
+            range: Range::default(),
             sampler: None,
             info: None,
             last: None,
             last_at: None,
-            cpu: History::new(HISTORY_POINTS),
-            mem: History::new(HISTORY_POINTS),
-            disk_read: History::new(HISTORY_POINTS),
-            disk_write: History::new(HISTORY_POINTS),
-            net_down: History::new(HISTORY_POINTS),
-            net_up: History::new(HISTORY_POINTS),
-            gpu_load: History::new(HISTORY_POINTS),
+            cpu: History::new(),
+            mem: History::new(),
+            disk_read: History::new(),
+            disk_write: History::new(),
+            net_down: History::new(),
+            net_up: History::new(),
+            gpu_load: History::new(),
             cores: Vec::new(),
             engines: Keyed::new(),
             drives: Keyed::new(),
@@ -131,6 +131,22 @@ impl Resources {
             processes: processes::Page::new(),
             connections: connections::Page::new(),
         }
+    }
+}
+
+impl Resources {
+    /// The "how far back" switch above the graph pages.
+    fn range_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(egui::RichText::new("Graphs show the last").weak());
+            for range in Range::ALL {
+                if crate::ui::pill(ui, range.label(), self.range == range).clicked() {
+                    self.range = range;
+                }
+            }
+        });
+        ui.add_space(2.0);
     }
 }
 
@@ -155,12 +171,12 @@ impl crate::tools::Tool for Resources {
         items
     }
 
-    fn tick(&mut self, _ctx: &egui::Context) {
+    fn tick(&mut self, ctx: &egui::Context) {
         self.processes.tick();
         self.connections.tick();
-        let Some(sampler) = &self.sampler else {
-            return;
-        };
+        // Recording starts with the app, so every range is complete even when this tool is
+        // not on screen.
+        let sampler = self.sampler.get_or_insert_with(|| Sampler::start(ctx));
         for msg in sampler.drain() {
             match msg {
                 Msg::Info(info) => self.info = Some(info),
@@ -172,8 +188,7 @@ impl crate::tools::Tool for Resources {
                     self.disk_write.push(sample.disk_write_bps as f32);
                     self.net_down.push(sample.net_down_bps as f32);
                     self.net_up.push(sample.net_up_bps as f32);
-                    self.cores
-                        .resize_with(sample.cores.len(), || History::new(HISTORY_POINTS));
+                    self.cores.resize_with(sample.cores.len(), History::new);
                     for (h, v) in self.cores.iter_mut().zip(&sample.cores) {
                         h.push(*v);
                     }
@@ -225,6 +240,7 @@ impl crate::tools::Tool for Resources {
             }
             _ => {}
         }
+        self.range_bar(ui);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match page {
@@ -245,7 +261,7 @@ mod tests {
         k.find_or_create("b");
         k.find_or_create("a")[0].push(2.0);
         assert_eq!(k.iter().count(), 2);
-        assert_eq!(k.get("a").unwrap()[0].values(), &[1.0, 2.0]);
+        assert_eq!(k.get("a").unwrap()[0].view(Range::Minute), &[1.0, 2.0]);
         assert!(k.get("c").is_none());
     }
 
@@ -254,7 +270,7 @@ mod tests {
         let mut k = Keyed::<1>::new();
         k.update(&[("a", [5.0]), ("b", [6.0])]);
         k.update(&[("a", [7.0])]);
-        assert_eq!(k.get("a").unwrap()[0].values(), &[5.0, 7.0]);
-        assert_eq!(k.get("b").unwrap()[0].values(), &[6.0, 0.0]);
+        assert_eq!(k.get("a").unwrap()[0].view(Range::Minute), &[5.0, 7.0]);
+        assert_eq!(k.get("b").unwrap()[0].view(Range::Minute), &[6.0, 0.0]);
     }
 }

@@ -2,10 +2,10 @@
 
 use eframe::egui::{self, Align, Layout, RichText, Vec2};
 
-use super::history::History;
+use super::history::{History, Range};
 use super::overview::{
     cores_label, fmt_percent, fmt_rate, gpu_memory_label, nice_ceiling, DISK_FLOOR, GREY,
-    NET_FLOOR, NONE, SCROLL_GUTTER, SKY, STEP_SECS,
+    NET_FLOOR, NONE, SCROLL_GUTTER, SKY,
 };
 use super::Resources;
 use crate::format::{clock, rate, size_plain, uptime};
@@ -43,12 +43,12 @@ pub(super) fn engine_visible(name: &str, history_max: f32) -> bool {
     MAIN_ENGINES.iter().any(|m| m.eq_ignore_ascii_case(name)) || history_max > 0.0
 }
 
-fn max_of(h: &History) -> f32 {
-    h.values().iter().copied().fold(0.0, f32::max)
+fn max_of(h: &History, range: Range) -> f32 {
+    h.view(range).iter().copied().fold(0.0, f32::max)
 }
 
-fn peak(a: &History, b: &History, floor: f32) -> f32 {
-    nice_ceiling(max_of(a).max(max_of(b)), floor)
+fn peak(a: &History, b: &History, range: Range, floor: f32) -> f32 {
+    nice_ceiling(max_of(a, range).max(max_of(b, range)), floor)
 }
 
 /// Lays `cells` out in rows of `COLS` equal columns.
@@ -69,9 +69,9 @@ fn grid<T>(ui: &mut egui::Ui, cells: &[T], mut cell: impl FnMut(&mut egui::Ui, &
 }
 
 /// One small per-core or per-engine graph card with its share in the bottom bar.
-fn mini_card(ui: &mut egui::Ui, name: &str, h: &History, color: egui::Color32) {
+fn mini_card(ui: &mut egui::Ui, name: &str, h: &History, range: Range, color: egui::Color32) {
     let line = Line {
-        values: h.values(),
+        values: h.view(range),
         color,
         fill: true,
         label: "Load",
@@ -89,9 +89,9 @@ fn mini_card(ui: &mut egui::Ui, name: &str, h: &History, color: egui::Color32) {
             title: name,
             detail: "",
             lines: &[line],
-            capacity: h.capacity(),
+            capacity: range.points(),
             max: 100.0,
-            step_secs: STEP_SECS,
+            step_secs: range.step_secs(),
             stats: &stats,
             note: None,
         },
@@ -132,6 +132,7 @@ impl Resources {
     }
 
     fn cpu_details(&self, ui: &mut egui::Ui) {
+        let range = self.range;
         let name = self.info.as_ref().map_or("", |i| i.cpu_name.as_str());
         let s = self.last.as_ref();
         let mut stats = vec![
@@ -160,11 +161,12 @@ impl Resources {
 
         let items: Vec<(usize, &History)> = self.cores.iter().enumerate().collect();
         grid(ui, &items, |ui, (i, h)| {
-            mini_card(ui, &format!("Core {i}"), h, ACCENT);
+            mini_card(ui, &format!("Core {i}"), h, range, ACCENT);
         });
     }
 
     fn gpu_details(&self, ui: &mut egui::Ui) {
+        let range = self.range;
         let name = self.gpu.as_ref().map_or("", |g| g.name.as_str());
         let Some(gpu) = &self.gpu else {
             section(ui, "GPU", name, &[]);
@@ -197,7 +199,7 @@ impl Resources {
         let mut engines: Vec<(&str, &History)> = self
             .engines
             .iter()
-            .filter(|(n, s)| engine_visible(n, max_of(&s[0])))
+            .filter(|(n, s)| engine_visible(n, max_of(&s[0], range)))
             .map(|(n, s)| (n, &s[0]))
             .collect();
         let rank = |n: &str| {
@@ -208,11 +210,12 @@ impl Resources {
         };
         engines.sort_by_key(|(n, _)| rank(n));
         grid(ui, &engines, |ui, (n, h)| {
-            mini_card(ui, n, h, GREEN);
+            mini_card(ui, n, h, range, GREEN);
         });
     }
 
     fn disk_details(&self, ui: &mut egui::Ui) {
+        let range = self.range;
         section(ui, "Disk", "", &[]);
         let drives = self.last.as_ref().map_or(&[][..], |s| &s.drives[..]);
         if drives.is_empty() {
@@ -236,14 +239,14 @@ impl Resources {
             if let Some([r, w]) = self.drives.get(&d.mount) {
                 let lines = [
                     Line {
-                        values: r.values(),
+                        values: r.view(range),
                         color: AMBER,
                         fill: true,
                         label: "Read",
                         fmt: fmt_rate,
                     },
                     Line {
-                        values: w.values(),
+                        values: w.view(range),
                         color: GREY,
                         fill: false,
                         label: "Write",
@@ -258,9 +261,9 @@ impl Resources {
                         title: &title,
                         detail: &free,
                         lines: &lines,
-                        capacity: r.capacity(),
-                        max: peak(r, w, DISK_FLOOR),
-                        step_secs: STEP_SECS,
+                        capacity: range.points(),
+                        max: peak(r, w, range, DISK_FLOOR),
+                        step_secs: range.step_secs(),
                         stats: &stats,
                         note: None,
                     },
@@ -272,6 +275,7 @@ impl Resources {
     }
 
     fn net_details(&self, ui: &mut egui::Ui) {
+        let range = self.range;
         section(ui, "Network", "", &[]);
         let adapters = self.last.as_ref().map_or(&[][..], |s| &s.adapters[..]);
         if adapters.is_empty() {
@@ -288,14 +292,14 @@ impl Resources {
             if let Some([d, u]) = self.adapters.get(&a.name) {
                 let lines = [
                     Line {
-                        values: d.values(),
+                        values: d.view(range),
                         color: SKY,
                         fill: true,
                         label: "Down",
                         fmt: fmt_rate,
                     },
                     Line {
-                        values: u.values(),
+                        values: u.view(range),
                         color: GREY,
                         fill: false,
                         label: "Up",
@@ -310,9 +314,9 @@ impl Resources {
                         title: &a.name,
                         detail: &total,
                         lines: &lines,
-                        capacity: d.capacity(),
-                        max: peak(d, u, NET_FLOOR),
-                        step_secs: STEP_SECS,
+                        capacity: range.points(),
+                        max: peak(d, u, range, NET_FLOOR),
+                        step_secs: range.step_secs(),
                         stats: &stats,
                         note: None,
                     },

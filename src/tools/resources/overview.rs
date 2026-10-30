@@ -197,19 +197,22 @@ impl Resources {
 
     fn disk_card(&self, ui: &mut egui::Ui, width: f32, height: f32) {
         let max = peak_ceiling(
-            &[self.disk_read.values(), self.disk_write.values()],
+            &[
+                self.disk_read.view(self.range),
+                self.disk_write.view(self.range),
+            ],
             DISK_FLOOR,
         );
         let lines = [
             Line {
-                values: self.disk_read.values(),
+                values: self.disk_read.view(self.range),
                 color: AMBER,
                 fill: true,
                 label: "Read",
                 fmt: fmt_rate,
             },
             Line {
-                values: self.disk_write.values(),
+                values: self.disk_write.view(self.range),
                 color: GREY,
                 fill: false,
                 label: "Write",
@@ -240,9 +243,9 @@ impl Resources {
                 title: "Disk",
                 detail: "All drives",
                 lines: &lines,
-                capacity: self.disk_read.capacity(),
+                capacity: self.range.points(),
                 max,
-                step_secs: STEP_SECS,
+                step_secs: self.range.step_secs(),
                 stats: &stats,
                 note: None,
             },
@@ -250,17 +253,20 @@ impl Resources {
     }
 
     fn net_card(&self, ui: &mut egui::Ui, width: f32, height: f32) {
-        let max = peak_ceiling(&[self.net_down.values(), self.net_up.values()], NET_FLOOR);
+        let max = peak_ceiling(
+            &[self.net_down.view(self.range), self.net_up.view(self.range)],
+            NET_FLOOR,
+        );
         let lines = [
             Line {
-                values: self.net_down.values(),
+                values: self.net_down.view(self.range),
                 color: SKY,
                 fill: true,
                 label: "Down",
                 fmt: fmt_rate,
             },
             Line {
-                values: self.net_up.values(),
+                values: self.net_up.view(self.range),
                 color: GREY,
                 fill: false,
                 label: "Up",
@@ -280,9 +286,9 @@ impl Resources {
                 title: "Network",
                 detail: "All adapters",
                 lines: &lines,
-                capacity: self.net_down.capacity(),
+                capacity: self.range.points(),
                 max,
-                step_secs: STEP_SECS,
+                step_secs: self.range.step_secs(),
                 stats: &stats,
                 note: None,
             },
@@ -292,7 +298,7 @@ impl Resources {
     fn cpu_card(&self, ui: &mut egui::Ui, width: f32, height: f32) {
         let name = self.info.as_ref().map_or("", |i| i.cpu_name.as_str());
         let line = Line {
-            values: self.cpu.values(),
+            values: self.cpu.view(self.range),
             color: ACCENT,
             fill: true,
             label: "Usage",
@@ -324,9 +330,9 @@ impl Resources {
                 title: "CPU",
                 detail: name,
                 lines: &[line],
-                capacity: self.cpu.capacity(),
+                capacity: self.range.points(),
                 max: 100.0,
-                step_secs: STEP_SECS,
+                step_secs: self.range.step_secs(),
                 stats: &stats,
                 note: None,
             },
@@ -337,7 +343,7 @@ impl Resources {
         let name = self.gpu.as_ref().map_or("", |g| g.name.as_str());
         let missing = self.gpu.is_none() && self.gpu_missing >= GPU_MISSING_AFTER;
         let line = Line {
-            values: self.gpu_load.values(),
+            values: self.gpu_load.view(self.range),
             color: GREEN,
             fill: true,
             label: "Load",
@@ -367,9 +373,9 @@ impl Resources {
                 title: "GPU",
                 detail: name,
                 lines: &[line],
-                capacity: self.gpu_load.capacity(),
+                capacity: self.range.points(),
                 max: 100.0,
-                step_secs: STEP_SECS,
+                step_secs: self.range.step_secs(),
                 stats: &stats,
                 note: missing.then_some("No GPU found"),
             },
@@ -384,7 +390,7 @@ impl Resources {
             String::new()
         };
         let line = Line {
-            values: self.mem.values(),
+            values: self.mem.view(self.range),
             color: VIOLET,
             fill: true,
             label: "In use",
@@ -412,18 +418,15 @@ impl Resources {
                 title: "Memory",
                 detail: &size,
                 lines: &[line],
-                capacity: self.mem.capacity(),
+                capacity: self.range.points(),
                 max: 100.0,
-                step_secs: STEP_SECS,
+                step_secs: self.range.step_secs(),
                 stats: &stats,
                 note: None,
             },
         );
     }
 }
-
-/// Seconds between two graph points (the sampler ticks once a second).
-pub(super) const STEP_SECS: f32 = 1.0;
 
 pub(super) fn fmt_percent(v: f32) -> String {
     format!("{v:.0}%")
