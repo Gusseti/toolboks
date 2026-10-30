@@ -3,6 +3,7 @@
 use eframe::egui;
 
 mod app;
+mod crash;
 mod elevation;
 mod format;
 mod tools;
@@ -12,6 +13,7 @@ mod win;
 mod winhttp;
 
 fn main() -> eframe::Result {
+    crash::install();
     // Removes the previous exe left behind by an update; does nothing otherwise.
     update::cleanup_old_exe();
 

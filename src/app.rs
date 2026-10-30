@@ -340,6 +340,20 @@ impl App {
                      The app will restart.",
                     Version::current()
                 ));
+                if let Some(size) = release.size {
+                    ui.small(format!("Download about {}", update::download_size(size)));
+                }
+                let notes = update::plain_notes(&release.notes);
+                if !notes.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("What's new").strong());
+                    egui::ScrollArea::vertical()
+                        .max_height(140.0)
+                        .id_salt("update_notes")
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new(notes).small().weak());
+                        });
+                }
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if ui

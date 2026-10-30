@@ -117,6 +117,96 @@ pub struct Release {
     pub version: Version,
     pub exe_url: String,
     pub sha_url: String,
+    /// Release notes from the GitHub `body`, raw Markdown; empty when missing.
+    pub notes: String,
+    /// Size of the exe asset in bytes, when GitHub reports it.
+    pub size: Option<u64>,
+}
+
+const NOTES_MAX_CHARS: usize = 700;
+
+/// Release notes without Markdown noise, collapsed and cut to about 700 characters at a line
+/// boundary (with an ellipsis line when cut).
+pub fn plain_notes(markdown: &str) -> String {
+    let mut text = String::new();
+    let mut rest = markdown;
+    while let Some(start) = rest.find("<!--") {
+        text.push_str(&rest[..start]);
+        match rest[start..].find("-->") {
+            Some(end) => rest = &rest[start + end + 3..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    text.push_str(rest);
+
+    let mut lines: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            continue;
+        }
+        let line = if let Some(item) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+            format!("- {}", strip_inline(item.trim()))
+        } else {
+            strip_inline(line.trim_start_matches('#').trim())
+        };
+        let line = line.trim().to_string();
+        if line.is_empty() && lines.last().is_none_or(|l| l.is_empty()) {
+            continue;
+        }
+        lines.push(line);
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        let extra = line.chars().count() + usize::from(i > 0);
+        if out.chars().count() + extra > NOTES_MAX_CHARS {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push('…');
+            return out;
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+/// Drops bold/italic/code markers and turns `[text](url)` into `text`.
+fn strip_inline(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        if let Some(close) = after.find("](") {
+            if let Some(end) = after[close + 2..].find(')') {
+                out.push_str(&rest[..open]);
+                out.push_str(&after[..close]);
+                rest = &after[close + 2 + end + 1..];
+                continue;
+            }
+        }
+        out.push_str(&rest[..=open]);
+        rest = after;
+    }
+    out.push_str(rest);
+    out.replace("**", "")
+        .replace("__", "")
+        .replace(['*', '`'], "")
+}
+
+/// "5.7 MB" (decimal megabytes, as GitHub shows asset sizes).
+pub fn download_size(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -197,10 +287,17 @@ pub fn parse_release(json: &[u8]) -> Result<Release, UpdateError> {
 
     let exe_url = url_of(EXE_ASSET).ok_or(UpdateError::NoAsset)?;
     let sha_url = url_of(&format!("{EXE_ASSET}.sha256")).ok_or(UpdateError::NoAsset)?;
+    let size = assets
+        .iter()
+        .find(|a| a["name"].as_str() == Some(EXE_ASSET))
+        .and_then(|a| a["size"].as_u64());
+    let notes = value["body"].as_str().unwrap_or("").to_string();
     Ok(Release {
         version,
         exe_url,
         sha_url,
+        notes,
+        size,
     })
 }
 
@@ -421,6 +518,57 @@ mod tests {
         assert_eq!(r.version, v("0.3.0"));
         assert!(r.exe_url.ends_with("/v0.3.0/toolboks.exe"));
         assert!(r.sha_url.ends_with("/v0.3.0/toolboks.exe.sha256"));
+    }
+
+    #[test]
+    fn reads_notes_and_size() {
+        let json = RELEASE_JSON
+            .replace(
+                r#""tag_name": "v0.3.0","#,
+                r#""tag_name": "v0.3.0", "body": "- Faster",
+"#,
+            )
+            .replace(
+                r#"{"name": "toolboks.exe","#,
+                r#"{"name": "toolboks.exe", "size": 5700000,"#,
+            );
+        let r = parse_release(json.as_bytes()).unwrap();
+        assert_eq!(r.notes, "- Faster");
+        assert_eq!(r.size, Some(5_700_000));
+        let plain = parse_release(RELEASE_JSON.as_bytes()).unwrap();
+        assert_eq!(plain.notes, "");
+        assert_eq!(plain.size, None);
+    }
+
+    #[test]
+    fn formats_download_size() {
+        assert_eq!(download_size(5_700_000), "5.7 MB");
+        assert_eq!(download_size(0), "0.0 MB");
+    }
+
+    #[test]
+    fn plain_notes_strips_markdown() {
+        let md = "<!-- hidden -->\n## What changed\n\n\n* **Bold** and *italic* and `code`\n- See [the docs](https://x.y/z) now\n```\n```\n\n";
+        assert_eq!(
+            plain_notes(md),
+            "What changed\n\n- Bold and italic and code\n- See the docs now"
+        );
+        assert_eq!(plain_notes("   \n\n"), "");
+        assert_eq!(plain_notes("a <!-- x\ny --> b"), "a  b");
+    }
+
+    #[test]
+    fn plain_notes_truncates_at_a_line() {
+        let md = (0..100)
+            .map(|i| format!("- item number {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = plain_notes(&md);
+        assert!(out.chars().count() <= NOTES_MAX_CHARS + 2);
+        assert!(out.ends_with("\n…"));
+        assert!(out.starts_with("- item number 0\n"));
+        let short = plain_notes("- one\n- two");
+        assert_eq!(short, "- one\n- two");
     }
 
     #[test]
