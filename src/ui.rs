@@ -208,40 +208,69 @@ pub fn pill(ui: &mut egui::Ui, text: &str, selected: bool) -> egui::Response {
     response
 }
 
-/// A big number with a small label under it.
-pub fn stat(ui: &mut egui::Ui, value: &str, label: &str) {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        ui.label(RichText::new(value).size(16.0).strong());
-        ui.label(RichText::new(label).weak().size(10.5));
-    });
-}
-
 /// One line of a graph: values oldest first.
 pub struct Line<'a> {
     pub values: &'a [f32],
     pub color: Color32,
     /// Tint the area under the line.
     pub fill: bool,
+    /// Name and value formatter shown in the hover read-out.
+    pub label: &'a str,
+    pub fmt: fn(f32) -> String,
 }
 
-/// A line graph. The full width shows `capacity` points with the newest at the right, so a
-/// graph that is still filling up grows in from the right. `max` is the value at the top.
-pub fn graph(ui: &mut egui::Ui, height: f32, lines: &[Line], capacity: usize, max: f32) {
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
+/// Space reserved at the top of a [`graph_card`] for its title, and the height of the info bar at
+/// the bottom.
+const TITLE_H: f32 = 22.0;
+const BAR_H: f32 = 26.0;
 
-    let grid = Stroke::new(
-        1.0,
-        ui.visuals()
-            .widgets
-            .noninteractive
-            .bg_stroke
-            .color
-            .gamma_multiply(0.6),
-    );
+/// A card that is one graph: the plot fills the whole card, the title sits over its top edge and
+/// a slim bar along the bottom carries the numbers.
+pub struct GraphCard<'a> {
+    pub title: &'a str,
+    pub detail: &'a str,
+    pub lines: &'a [Line<'a>],
+    /// How many points a full graph shows.
+    pub capacity: usize,
+    /// The value at the top of the plot.
+    pub max: f32,
+    /// Seconds between two points, for the hover read-out.
+    pub step_secs: f32,
+    /// `(value, label)` pairs in the bottom bar; the label may be empty.
+    pub stats: &'a [(String, &'a str)],
+    /// Shown instead of the lines when there is nothing to plot.
+    pub note: Option<&'a str>,
+}
+
+/// "Now", "12 s ago", "2 min 10 s ago", "1 h 5 min ago".
+pub fn ago_text(secs: f32) -> String {
+    let s = secs.max(0.0).round() as u64;
+    match s {
+        0 => "Now".to_string(),
+        1..=59 => format!("{s} s ago"),
+        60..=3599 => match s % 60 {
+            0 => format!("{} min ago", s / 60),
+            r => format!("{} min {r} s ago", s / 60),
+        },
+        _ => match (s % 3600) / 60 {
+            0 => format!("{} h ago", s / 3600),
+            m => format!("{} h {m} min ago", s / 3600),
+        },
+    }
+}
+
+/// How many points back from the newest the pointer is at, or `None` when it is left of the data.
+/// `right` is the x of the newest point and `step` the distance between points.
+pub fn hover_offset(pointer_x: f32, right: f32, step: f32, points: usize) -> Option<usize> {
+    if points < 2 || step <= 0.0 {
+        return None;
+    }
+    let k = ((right - pointer_x) / step).round().max(0.0) as usize;
+    (k < points).then_some(k)
+}
+
+fn paint_grid(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+    let grid = Stroke::new(1.0, color);
     for i in 1..4 {
         let y = rect.top() + rect.height() * i as f32 / 4.0;
         painter.line_segment(
@@ -249,7 +278,20 @@ pub fn graph(ui: &mut egui::Ui, height: f32, lines: &[Line], capacity: usize, ma
             grid,
         );
     }
+}
 
+fn point_y(rect: egui::Rect, v: f32, max: f32) -> f32 {
+    rect.bottom() - (v / max).clamp(0.0, 1.0) * (rect.height() - 2.0) - 1.0
+}
+
+/// The lines of a graph inside `rect`; the newest point is at the right edge.
+fn paint_lines(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    lines: &[Line],
+    capacity: usize,
+    max: f32,
+) {
     let step = rect.width() / capacity.saturating_sub(1).max(1) as f32;
     let max = max.max(f32::EPSILON);
     for line in lines {
@@ -263,8 +305,7 @@ pub fn graph(ui: &mut egui::Ui, height: f32, lines: &[Line], capacity: usize, ma
             .enumerate()
             .map(|(i, v)| {
                 let x = rect.right() - (n - 1 - i) as f32 * step;
-                let y = rect.bottom() - (v / max).clamp(0.0, 1.0) * (rect.height() - 2.0) - 1.0;
-                Pos2::new(x, y)
+                Pos2::new(x, point_y(rect, *v, max))
             })
             .collect();
 
@@ -285,6 +326,155 @@ pub fn graph(ui: &mut egui::Ui, height: f32, lines: &[Line], capacity: usize, ma
         }
         painter.add(Shape::line(points, Stroke::new(1.8, line.color)));
     }
+}
+
+/// Draws a [`GraphCard`] of exactly `width` x `height`, with a hover read-out over the plot.
+pub fn graph_card(ui: &mut egui::Ui, width: f32, height: f32, g: &GraphCard) {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let visuals = ui.visuals();
+    let fill = visuals
+        .panel_fill
+        .lerp_to_gamma(visuals.strong_text_color(), 0.05);
+    let stroke = visuals.widgets.noninteractive.bg_stroke;
+    let grid_color = stroke.color.gamma_multiply(0.6);
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, fill);
+    painter.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
+
+    let inner = rect.shrink(stroke.width);
+    let bar = egui::Rect::from_min_max(
+        Pos2::new(inner.left(), inner.bottom() - BAR_H),
+        inner.right_bottom(),
+    );
+    let plot = egui::Rect::from_min_max(inner.left_top(), Pos2::new(inner.right(), bar.top()));
+    let data = egui::Rect::from_min_max(
+        Pos2::new(plot.left(), plot.top() + TITLE_H),
+        plot.right_bottom(),
+    );
+
+    paint_grid(&painter, data, grid_color);
+    if let Some(note) = g.note {
+        painter.text(
+            data.center(),
+            egui::Align2::CENTER_CENTER,
+            note,
+            egui::TextStyle::Body.resolve(ui.style()),
+            MUTED,
+        );
+    } else {
+        paint_lines(&painter, data, g.lines, g.capacity, g.max);
+    }
+
+    // The bar along the bottom.
+    painter.rect_filled(
+        bar,
+        egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 3,
+            se: 3,
+        },
+        STATUS_BG,
+    );
+    painter.line_segment(
+        [bar.left_top(), bar.right_top()],
+        Stroke::new(1.0, stroke.color),
+    );
+    let body = egui::TextStyle::Body.resolve(ui.style());
+    let small = egui::TextStyle::Small.resolve(ui.style());
+    let mut x = bar.left() + 10.0;
+    for (value, label) in g.stats {
+        let v = painter.layout_no_wrap(value.clone(), body.clone(), TEXT);
+        let l = painter.layout_no_wrap((*label).to_string(), small.clone(), MUTED);
+        let w = v.size().x
+            + if label.is_empty() {
+                0.0
+            } else {
+                4.0 + l.size().x
+            };
+        if x + w > bar.right() - 6.0 {
+            break;
+        }
+        let mid = bar.center().y;
+        let value_w = v.size().x;
+        painter.galley(Pos2::new(x, mid - v.size().y / 2.0), v, TEXT);
+        if !label.is_empty() {
+            painter.galley(
+                Pos2::new(x + value_w + 4.0, mid - l.size().y / 2.0 + 1.0),
+                l,
+                MUTED,
+            );
+        }
+        x += w + 16.0;
+    }
+
+    // Title over the top edge, and the detail at the right.
+    let mut title_right = plot.left() + 10.0;
+    if !g.title.is_empty() {
+        let t = painter.layout_no_wrap(g.title.to_string(), body.clone(), TEXT);
+        title_right += t.size().x;
+        painter.galley(Pos2::new(plot.left() + 10.0, plot.top() + 5.0), t, TEXT);
+    }
+    if !g.detail.is_empty() {
+        let clip = egui::Rect::from_min_max(
+            Pos2::new(title_right + 12.0, plot.top()),
+            Pos2::new(plot.right() - 10.0, plot.top() + TITLE_H),
+        );
+        painter.with_clip_rect(clip).text(
+            Pos2::new(plot.right() - 10.0, plot.top() + 5.0),
+            egui::Align2::RIGHT_TOP,
+            g.detail,
+            body,
+            MUTED,
+        );
+    }
+
+    // Hover: a guide line, a dot on every line and a read-out.
+    if g.note.is_some() {
+        return;
+    }
+    let Some(pos) = response.hover_pos().filter(|p| plot.contains(*p)) else {
+        return;
+    };
+    let points = g.lines.iter().map(|l| l.values.len()).max().unwrap_or(0);
+    let step = data.width() / g.capacity.saturating_sub(1).max(1) as f32;
+    let Some(k) = hover_offset(pos.x, data.right(), step, points) else {
+        return;
+    };
+    let x = data.right() - k as f32 * step;
+    painter.line_segment(
+        [Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())],
+        Stroke::new(1.0, Color32::from_white_alpha(70)),
+    );
+    let max = g.max.max(f32::EPSILON);
+    let mut rows: Vec<(Color32, &str, String)> = Vec::new();
+    for line in g.lines {
+        let n = line.values.len();
+        if k >= n {
+            continue;
+        }
+        let v = line.values[n - 1 - k];
+        painter.circle_filled(Pos2::new(x, point_y(data, v, max)), 3.0, line.color);
+        rows.push((line.color, line.label, (line.fmt)(v)));
+    }
+    let ago = ago_text(k as f32 * g.step_secs);
+    response.on_hover_ui_at_pointer(|ui| {
+        ui.label(RichText::new(ago).weak().small());
+        for (color, label, value) in &rows {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                let (dot, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
+                ui.painter().circle_filled(dot.center(), 3.5, *color);
+                if !label.is_empty() {
+                    ui.label(*label);
+                }
+                ui.label(RichText::new(value).strong());
+            });
+        }
+    });
 }
 
 /// One piece of a [`stacked_bar`]: its share of the whole (0 to 1) and its color.
@@ -351,4 +541,34 @@ pub fn stacked_bar(ui: &mut egui::Ui, height: f32, parts: &[BarPart]) -> Option<
         painter.rect_filled(piece, radius, *color);
     }
     hovered
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ago_text_units() {
+        assert_eq!(ago_text(0.0), "Now");
+        assert_eq!(ago_text(12.0), "12 s ago");
+        assert_eq!(ago_text(60.0), "1 min ago");
+        assert_eq!(ago_text(130.0), "2 min 10 s ago");
+        assert_eq!(ago_text(3600.0), "1 h ago");
+        assert_eq!(ago_text(3900.0), "1 h 5 min ago");
+        assert_eq!(ago_text(-3.0), "Now");
+    }
+
+    #[test]
+    fn hover_offset_counts_back_from_the_right() {
+        // 10 px between points, newest at x = 100.
+        assert_eq!(hover_offset(100.0, 100.0, 10.0, 5), Some(0));
+        assert_eq!(hover_offset(73.0, 100.0, 10.0, 5), Some(3));
+        assert_eq!(hover_offset(60.0, 100.0, 10.0, 5), Some(4));
+        // Left of the oldest point, or right of the newest.
+        assert_eq!(hover_offset(40.0, 100.0, 10.0, 5), None);
+        assert_eq!(hover_offset(120.0, 100.0, 10.0, 5), Some(0));
+        // Not enough data to draw a line.
+        assert_eq!(hover_offset(100.0, 100.0, 10.0, 1), None);
+        assert_eq!(hover_offset(100.0, 100.0, 0.0, 5), None);
+    }
 }

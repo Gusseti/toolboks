@@ -4,16 +4,18 @@ use eframe::egui::{self, Align, Layout, RichText, Vec2};
 
 use super::history::History;
 use super::overview::{
-    cores_label, gpu_memory_label, header, nice_ceiling, DISK_FLOOR, GREY, INNER_GAP, NET_FLOOR,
-    NONE, SCROLL_GUTTER, SKY,
+    cores_label, fmt_percent, fmt_rate, gpu_memory_label, nice_ceiling, DISK_FLOOR, GREY,
+    NET_FLOOR, NONE, SCROLL_GUTTER, SKY, STEP_SECS,
 };
 use super::Resources;
 use crate::format::{clock, rate, size_plain, uptime};
-use crate::ui::{card, graph, stat, Line, ACCENT, AMBER, GAP, GREEN};
+use crate::ui::{graph_card, GraphCard, Line, ACCENT, AMBER, GREEN};
 
 const COLS: usize = 4;
-const MINI_HEIGHT: f32 = 28.0;
-const IO_HEIGHT: f32 = 32.0;
+const MINI_HEIGHT: f32 = 92.0;
+const IO_HEIGHT: f32 = 120.0;
+/// Gap between graph cards on this page.
+const TIGHT: f32 = 4.0;
 /// Engine types that always get a graph when the GPU reports them.
 const MAIN_ENGINES: [&str; 5] = ["3D", "Copy", "Video Decode", "Video Encode", "Compute"];
 
@@ -51,10 +53,10 @@ fn peak(a: &History, b: &History, floor: f32) -> f32 {
 
 /// Lays `cells` out in rows of `COLS` equal columns.
 fn grid<T>(ui: &mut egui::Ui, cells: &[T], mut cell: impl FnMut(&mut egui::Ui, &T)) {
-    let w = grid_cell_width(ui.available_width(), COLS, GAP);
+    let w = grid_cell_width(ui.available_width(), COLS, TIGHT);
     for row in cells.chunks(COLS) {
         ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = GAP;
+            ui.spacing_mut().item_spacing.x = TIGHT;
             for c in row {
                 ui.allocate_ui_with_layout(
                     Vec2::new(w, 0.0),
@@ -66,12 +68,51 @@ fn grid<T>(ui: &mut egui::Ui, cells: &[T], mut cell: impl FnMut(&mut egui::Ui, &
     }
 }
 
-fn mini_label(ui: &mut egui::Ui, name: &str, value: Option<f32>) {
+/// One small per-core or per-engine graph card with its share in the bottom bar.
+fn mini_card(ui: &mut egui::Ui, name: &str, h: &History, color: egui::Color32) {
+    let line = Line {
+        values: h.values(),
+        color,
+        fill: true,
+        label: "Load",
+        fmt: fmt_percent,
+    };
+    let stats = [(
+        h.last().map_or(NONE.to_string(), |v| format!("{v:.0}%")),
+        "",
+    )];
+    graph_card(
+        ui,
+        ui.available_width(),
+        MINI_HEIGHT,
+        &GraphCard {
+            title: name,
+            detail: "",
+            lines: &[line],
+            capacity: h.capacity(),
+            max: 100.0,
+            step_secs: STEP_SECS,
+            stats: &stats,
+            note: None,
+        },
+    );
+}
+
+/// A one-line section header: the title, the key numbers inline and the detail at the right.
+fn section(ui: &mut egui::Ui, title: &str, detail: &str, stats: &[(String, &str)]) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(name).small());
-        if let Some(v) = value {
-            ui.label(RichText::new(format!("{v:.0}%")).weak().small());
+        ui.spacing_mut().item_spacing.x = 14.0;
+        ui.label(RichText::new(title).strong());
+        for (value, label) in stats {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(RichText::new(value).strong());
+                ui.label(RichText::new(*label).weak().small());
+            });
         }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.add(egui::Label::new(RichText::new(detail).weak()).truncate());
+        });
     });
 }
 
@@ -79,57 +120,54 @@ impl Resources {
     pub(super) fn details_ui(&self, ui: &mut egui::Ui) {
         let width = ui.available_width() - SCROLL_GUTTER;
         ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::LEFT), |ui| {
-            ui.spacing_mut().item_spacing = Vec2::splat(GAP);
-            card(ui, width, 0.0, |ui| self.cpu_details(ui));
-            card(ui, width, 0.0, |ui| self.gpu_details(ui));
-            card(ui, width, 0.0, |ui| self.disk_details(ui));
-            card(ui, width, 0.0, |ui| self.net_details(ui));
+            ui.spacing_mut().item_spacing = Vec2::splat(TIGHT);
+            self.cpu_details(ui);
+            ui.add_space(6.0);
+            self.gpu_details(ui);
+            ui.add_space(6.0);
+            self.disk_details(ui);
+            ui.add_space(6.0);
+            self.net_details(ui);
         });
     }
 
     fn cpu_details(&self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing.y = INNER_GAP;
         let name = self.info.as_ref().map_or("", |i| i.cpu_name.as_str());
-        header(ui, "CPU", name);
         let s = self.last.as_ref();
-        let usage = s.map(|s| format!("{:.0}%", s.cpu));
-        let speed = s.map(|s| clock(s.cpu_mhz));
-        let up = s.map(|s| uptime(s.uptime_secs));
-        let cores = self
-            .info
-            .as_ref()
-            .map(|i| cores_label(i.physical_cores, i.logical_cores));
-        let counts = s.and_then(|s| s.counts.as_ref());
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 20.0;
-            stat(ui, usage.as_deref().unwrap_or(NONE), "Usage");
-            stat(ui, speed.as_deref().unwrap_or(NONE), "Speed");
-            stat(ui, cores.as_deref().unwrap_or(NONE), "Cores / threads");
-            if let Some(c) = counts {
-                stat(ui, &c.processes.to_string(), "Processes");
-                stat(ui, &c.threads.to_string(), "Threads");
-                stat(ui, &c.handles.to_string(), "Handles");
-            }
-            stat(ui, up.as_deref().unwrap_or(NONE), "Up time");
-        });
+        let mut stats = vec![
+            (
+                s.map_or(NONE.to_string(), |s| format!("{:.0}%", s.cpu)),
+                "Usage",
+            ),
+            (s.map_or(NONE.to_string(), |s| clock(s.cpu_mhz)), "Speed"),
+            (
+                self.info.as_ref().map_or(NONE.to_string(), |i| {
+                    cores_label(i.physical_cores, i.logical_cores)
+                }),
+                "Cores / threads",
+            ),
+        ];
+        if let Some(c) = s.and_then(|s| s.counts.as_ref()) {
+            stats.push((c.processes.to_string(), "Processes"));
+            stats.push((c.threads.to_string(), "Threads"));
+            stats.push((c.handles.to_string(), "Handles"));
+        }
+        stats.push((
+            s.map_or(NONE.to_string(), |s| uptime(s.uptime_secs)),
+            "Up time",
+        ));
+        section(ui, "CPU", name, &stats);
 
         let items: Vec<(usize, &History)> = self.cores.iter().enumerate().collect();
         grid(ui, &items, |ui, (i, h)| {
-            mini_label(ui, &format!("Core {i}"), h.last());
-            let line = Line {
-                values: h.values(),
-                color: ACCENT,
-                fill: true,
-            };
-            graph(ui, MINI_HEIGHT, &[line], h.capacity(), 100.0);
+            mini_card(ui, &format!("Core {i}"), h, ACCENT);
         });
     }
 
     fn gpu_details(&self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing.y = INNER_GAP;
         let name = self.gpu.as_ref().map_or("", |g| g.name.as_str());
-        header(ui, "GPU", name);
         let Some(gpu) = &self.gpu else {
+            section(ui, "GPU", name, &[]);
             // Same rule as the Overview: only say so after a few samples without GPU data,
             // the first readings can take a few seconds on a cold start.
             let text = if self.gpu_missing >= super::overview::GPU_MISSING_AFTER {
@@ -140,6 +178,21 @@ impl Resources {
             ui.label(RichText::new(text).weak());
             return;
         };
+
+        let mut stats = vec![(gpu_memory_label(gpu.mem_used, gpu.mem_total), "Memory")];
+        if let Some(t) = gpu.temp_c {
+            stats.push((format!("{t:.0} °C"), "Temp"));
+        }
+        if let Some(p) = gpu.power_w {
+            stats.push((format!("{p:.0} W"), "Power"));
+        }
+        if let Some(c) = gpu.clock_mhz {
+            stats.push((format!("{c} MHz"), "Clock"));
+        }
+        if let Some(c) = gpu.mem_clock_mhz {
+            stats.push((format!("{c} MHz"), "Memory clock"));
+        }
+        section(ui, "GPU", name, &stats);
 
         let mut engines: Vec<(&str, &History)> = self
             .engines
@@ -155,122 +208,118 @@ impl Resources {
         };
         engines.sort_by_key(|(n, _)| rank(n));
         grid(ui, &engines, |ui, (n, h)| {
-            mini_label(ui, n, h.last());
-            let line = Line {
-                values: h.values(),
-                color: GREEN,
-                fill: true,
-            };
-            graph(ui, MINI_HEIGHT, &[line], h.capacity(), 100.0);
-        });
-
-        let mem = gpu_memory_label(gpu.mem_used, gpu.mem_total);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 20.0;
-            stat(ui, &mem, "Memory");
-            if let Some(t) = gpu.temp_c {
-                stat(ui, &format!("{t:.0} °C"), "Temp");
-            }
-            if let Some(p) = gpu.power_w {
-                stat(ui, &format!("{p:.0} W"), "Power");
-            }
-            if let Some(c) = gpu.clock_mhz {
-                stat(ui, &format!("{c} MHz"), "Clock");
-            }
-            if let Some(c) = gpu.mem_clock_mhz {
-                stat(ui, &format!("{c} MHz"), "Memory clock");
-            }
+            mini_card(ui, n, h, GREEN);
         });
     }
 
     fn disk_details(&self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing.y = INNER_GAP;
-        header(ui, "Disk", "");
+        section(ui, "Disk", "", &[]);
         let drives = self.last.as_ref().map_or(&[][..], |s| &s.drives[..]);
         if drives.is_empty() {
             ui.label(RichText::new("No drives found").weak());
             return;
         }
         for d in drives {
-            ui.add_space(2.0);
             let title = [d.mount.as_str(), d.label.as_str(), d.kind.as_str()]
                 .iter()
                 .filter(|p| !p.is_empty())
                 .copied()
                 .collect::<Vec<_>>()
                 .join("  ");
-            ui.label(RichText::new(title).strong());
-            let text = format!(
-                "{} free of {}",
+            let free = format!(
+                "{} free of {} ({:.0}% used)",
                 size_plain(d.free.min(d.total)),
-                size_plain(d.total)
+                size_plain(d.total),
+                drive_used_fraction(d.total, d.free) * 100.0
             );
-            ui.add(
-                egui::ProgressBar::new(drive_used_fraction(d.total, d.free))
-                    .desired_width(ui.available_width())
-                    .fill(ACCENT)
-                    .text(text),
-            );
+            let stats = [(rate(d.read_bps), "Read"), (rate(d.write_bps), "Write")];
             if let Some([r, w]) = self.drives.get(&d.mount) {
                 let lines = [
                     Line {
                         values: r.values(),
                         color: AMBER,
                         fill: true,
+                        label: "Read",
+                        fmt: fmt_rate,
                     },
                     Line {
                         values: w.values(),
                         color: GREY,
                         fill: false,
+                        label: "Write",
+                        fmt: fmt_rate,
                     },
                 ];
-                graph(ui, IO_HEIGHT, &lines, r.capacity(), peak(r, w, DISK_FLOOR));
+                graph_card(
+                    ui,
+                    ui.available_width(),
+                    IO_HEIGHT,
+                    &GraphCard {
+                        title: &title,
+                        detail: &free,
+                        lines: &lines,
+                        capacity: r.capacity(),
+                        max: peak(r, w, DISK_FLOOR),
+                        step_secs: STEP_SECS,
+                        stats: &stats,
+                        note: None,
+                    },
+                );
+            } else {
+                section(ui, &title, &free, &stats);
             }
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 20.0;
-                stat(ui, &rate(d.read_bps), "Read");
-                stat(ui, &rate(d.write_bps), "Write");
-            });
         }
     }
 
     fn net_details(&self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing.y = INNER_GAP;
-        header(ui, "Network", "");
+        section(ui, "Network", "", &[]);
         let adapters = self.last.as_ref().map_or(&[][..], |s| &s.adapters[..]);
         if adapters.is_empty() {
             ui.label(RichText::new("No adapters found").weak());
             return;
         }
         for a in adapters {
-            ui.add_space(2.0);
-            ui.label(RichText::new(&a.name).strong());
+            let total = format!(
+                "{} down, {} up in total",
+                size_plain(a.total_down),
+                size_plain(a.total_up)
+            );
+            let stats = [(rate(a.down_bps), "Down"), (rate(a.up_bps), "Up")];
             if let Some([d, u]) = self.adapters.get(&a.name) {
                 let lines = [
                     Line {
                         values: d.values(),
                         color: SKY,
                         fill: true,
+                        label: "Down",
+                        fmt: fmt_rate,
                     },
                     Line {
                         values: u.values(),
                         color: GREY,
                         fill: false,
+                        label: "Up",
+                        fmt: fmt_rate,
                     },
                 ];
-                graph(ui, IO_HEIGHT, &lines, d.capacity(), peak(d, u, NET_FLOOR));
+                graph_card(
+                    ui,
+                    ui.available_width(),
+                    IO_HEIGHT,
+                    &GraphCard {
+                        title: &a.name,
+                        detail: &total,
+                        lines: &lines,
+                        capacity: d.capacity(),
+                        max: peak(d, u, NET_FLOOR),
+                        step_secs: STEP_SECS,
+                        stats: &stats,
+                        note: None,
+                    },
+                );
+            } else {
+                section(ui, &a.name, &total, &stats);
             }
-            let total = format!(
-                "{} down, {} up",
-                size_plain(a.total_down),
-                size_plain(a.total_up)
-            );
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 20.0;
-                stat(ui, &rate(a.down_bps), "Down");
-                stat(ui, &rate(a.up_bps), "Up");
-                stat(ui, &total, "Total");
-            });
         }
     }
 }
