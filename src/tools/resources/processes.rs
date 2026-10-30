@@ -25,18 +25,18 @@ use crate::format::{friendly_name, size_plain, uptime};
 use crate::ui::{CARD_PAD, GAP, RED};
 use crate::win::Handle;
 
-const ROW_HEIGHT: f32 = 22.0;
-const INSPECTOR_WIDTH: f32 = 190.0;
-const INSPECTOR_PAD: f32 = 8.0;
+pub(super) const ROW_HEIGHT: f32 = 22.0;
+pub(super) const INSPECTOR_WIDTH: f32 = 190.0;
+pub(super) const INSPECTOR_PAD: f32 = 8.0;
 /// Time between two process refreshes while the page is visible.
-const REFRESH: Duration = Duration::from_secs(2);
+pub(super) const REFRESH: Duration = Duration::from_secs(2);
 /// Wait before the second refresh that makes CPU percentages meaningful.
 const PRIME: Duration = Duration::from_secs(1);
 /// A ping older than this means the page is no longer shown.
-const VISIBLE_WINDOW_MS: u64 = 2500;
+pub(super) const VISIBLE_WINDOW_MS: u64 = 2500;
 /// Result lines shown in the inspector before "and N more".
 const MAX_LINES: usize = 6;
-const PROTECTED_NOTE: &str = "Windows needs this to run";
+pub(super) const PROTECTED_NOTE: &str = "Windows needs this to run";
 
 /// System and shell processes that are never ended or re-prioritised. Lowercase.
 const PROTECTED: &[&str] = &[
@@ -99,7 +99,7 @@ enum SortKey {
 }
 
 /// True for processes Windows needs, this app itself, and any that refused an action before.
-fn is_protected(pid: u32, name: &str, own_pid: u32, denied: &HashSet<u32>) -> bool {
+pub(super) fn is_protected(pid: u32, name: &str, own_pid: u32, denied: &HashSet<u32>) -> bool {
     pid == own_pid
         || pid == 0
         || pid == 4
@@ -197,7 +197,7 @@ fn plan_end(selected: &[Proc], protected: &dyn Fn(&Proc) -> bool) -> (Vec<Proc>,
 }
 
 /// The question asked before ending: `label` is an app name or a short description.
-fn confirm_text(label: &str, count: usize) -> String {
+pub(super) fn confirm_text(label: &str, count: usize) -> String {
     if count <= 1 {
         format!("End {label}? Unsaved work in this app will be lost.")
     } else {
@@ -233,7 +233,7 @@ fn cpu_text(cpu: f32, ready: bool) -> String {
     }
 }
 
-fn sort_arrow(active: bool, descending: bool) -> &'static str {
+pub(super) fn sort_arrow(active: bool, descending: bool) -> &'static str {
     match (active, descending) {
         // Plain letters: the bundled font has none of the arrow or triangle glyphs.
         (true, true) => " v",
@@ -300,7 +300,12 @@ impl Selection {
 }
 
 /// One result line for the inspector.
-fn result_line(done: &str, name: &str, pid: u32, result: Result<(), ActionError>) -> String {
+pub(super) fn result_line(
+    done: &str,
+    name: &str,
+    pid: u32,
+    result: Result<(), ActionError>,
+) -> String {
     match result {
         Ok(()) => format!("{done} {name} (pid {pid})"),
         Err(ActionError::AccessDenied) => format!("{name} (pid {pid}): Access denied"),
@@ -315,7 +320,7 @@ fn result_line(done: &str, name: &str, pid: u32, result: Result<(), ActionError>
 // ---------------------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ActionError {
+pub(super) enum ActionError {
     AccessDenied,
     Failed,
 }
@@ -328,7 +333,7 @@ fn classify(e: &windows::core::Error) -> ActionError {
     }
 }
 
-fn end_process(pid: u32) -> Result<(), ActionError> {
+pub(super) fn end_process(pid: u32) -> Result<(), ActionError> {
     // SAFETY: plain FFI call; the returned handle is wrapped for closing right away.
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }
         .map(Handle)
@@ -443,7 +448,7 @@ struct Worker {
     epoch: Instant,
 }
 
-fn visible(last_ping_plus_one: u64, now_ms: u64) -> bool {
+pub(super) fn visible(last_ping_plus_one: u64, now_ms: u64) -> bool {
     last_ping_plus_one != 0 && (now_ms + 1).saturating_sub(last_ping_plus_one) < VISIBLE_WINDOW_MS
 }
 
@@ -1024,7 +1029,7 @@ impl Page {
 }
 
 /// A small caption over a value.
-fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
+pub(super) fn kv(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.label(RichText::new(key).small().weak());
     ui.add(egui::Label::new(value).wrap());

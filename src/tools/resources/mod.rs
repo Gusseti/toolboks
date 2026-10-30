@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
+mod connections;
 mod details;
 mod gpu;
 mod history;
@@ -103,6 +104,7 @@ pub struct Resources {
     /// Samples in a row that arrived without GPU data.
     gpu_missing: u32,
     processes: processes::Page,
+    connections: connections::Page,
 }
 
 impl Resources {
@@ -127,6 +129,7 @@ impl Resources {
             gpu: None,
             gpu_missing: 0,
             processes: processes::Page::new(),
+            connections: connections::Page::new(),
         }
     }
 }
@@ -137,7 +140,7 @@ impl crate::tools::Tool for Resources {
     }
 
     fn pages(&self) -> &'static [&'static str] {
-        &["Overview", "Details", "Processes"]
+        &["Overview", "Details", "Processes", "Connections"]
     }
 
     fn status(&self) -> Vec<String> {
@@ -154,6 +157,7 @@ impl crate::tools::Tool for Resources {
 
     fn tick(&mut self, _ctx: &egui::Context) {
         self.processes.tick();
+        self.connections.tick();
         let Some(sampler) = &self.sampler else {
             return;
         };
@@ -210,9 +214,16 @@ impl crate::tools::Tool for Resources {
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {
         let sampler = self.sampler.get_or_insert_with(|| Sampler::start(ui.ctx()));
         sampler.ping();
-        if page == 2 {
-            self.processes.ui(ui);
-            return;
+        match page {
+            2 => {
+                self.processes.ui(ui);
+                return;
+            }
+            3 => {
+                self.connections.ui(ui);
+                return;
+            }
+            _ => {}
         }
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
