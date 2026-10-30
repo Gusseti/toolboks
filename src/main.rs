@@ -6,7 +6,9 @@ mod app;
 mod crash;
 mod elevation;
 mod format;
+mod instance;
 mod tools;
+mod tray;
 mod ui;
 mod update;
 mod win;
@@ -14,6 +16,11 @@ mod winhttp;
 
 fn main() -> eframe::Result {
     crash::install();
+    // One window per user: a plain second launch shows the first one and exits. Held until exit.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let Some(_instance) = instance::acquire(&args) else {
+        return Ok(());
+    };
     // Removes the previous exe left behind by an update; does nothing otherwise.
     update::cleanup_old_exe();
 

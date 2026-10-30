@@ -49,12 +49,11 @@ pub fn relaunch_elevated_with_args(args: &[&str]) -> bool {
         return false;
     };
     let wide: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
-    let params: Vec<u16> = join_args(args).encode_utf16().chain(Some(0)).collect();
-    let params_ptr = if args.is_empty() {
-        PCWSTR::null()
-    } else {
-        PCWSTR(params.as_ptr())
-    };
+    // `--relaunch` tells the new copy to wait for this one to close instead of handing over.
+    let mut all = vec![crate::instance::RELAUNCH_ARG];
+    all.extend_from_slice(args);
+    let params: Vec<u16> = join_args(&all).encode_utf16().chain(Some(0)).collect();
+    let params_ptr = PCWSTR(params.as_ptr());
     // SAFETY: `wide` and `params` are NUL-terminated and outlive the call.
     let result = unsafe {
         ShellExecuteW(
@@ -67,7 +66,11 @@ pub fn relaunch_elevated_with_args(args: &[&str]) -> bool {
         )
     };
     // ShellExecute reports success with a value greater than 32.
-    result.0 as isize > 32
+    let started = result.0 as isize > 32;
+    if started {
+        crate::instance::mark_relaunching();
+    }
+    started
 }
 
 /// Quotes one argument by the Windows command-line rules (`CommandLineToArgvW`).

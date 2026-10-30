@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use eframe::egui;
 
+use crate::instance;
 use crate::tools::{self, Tool};
+use crate::tray::{self, Tray};
 use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
 
@@ -35,6 +37,13 @@ pub struct App {
     silent_check: bool,
     /// Show the "update available" prompt window.
     prompt_open: bool,
+    /// "Keep running in the tray": the window's X hides it instead of quitting. Memory only.
+    keep_in_tray: bool,
+    tray: Option<Tray>,
+    /// The window is hidden in the tray.
+    hidden: bool,
+    /// The tray's Quit was chosen: the next close request really closes.
+    quitting: bool,
 }
 
 /// `--open "Tool"` or `--open "Tool/Page"` (case-insensitive, also `--open=...`) picks the page
@@ -77,6 +86,10 @@ impl App {
             launch_check_started: false,
             silent_check: false,
             prompt_open: false,
+            keep_in_tray: false,
+            tray: None,
+            hidden: false,
+            quitting: false,
         }
     }
 
@@ -212,7 +225,10 @@ fn status_items(groups: impl IntoIterator<Item = Vec<String>>) -> Vec<String> {
 
 /// Starts the freshly installed exe. It inherits this process's rights, admin included.
 fn restart() -> std::io::Result<()> {
-    std::process::Command::new(std::env::current_exe()?).spawn()?;
+    std::process::Command::new(std::env::current_exe()?)
+        .arg(instance::RELAUNCH_ARG)
+        .spawn()?;
+    instance::mark_relaunching();
     Ok(())
 }
 
@@ -220,6 +236,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.check_on_launch(ctx);
         self.poll_update(ctx);
+        self.tray_tick(ctx);
         for tool in &mut self.tools {
             tool.tick(ctx);
         }
@@ -251,6 +268,13 @@ impl eframe::App for App {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         ui.weak(format!("v{}", Version::current()));
                         self.update_ui(ui);
+                        ui.checkbox(
+                            &mut self.keep_in_tray,
+                            egui::RichText::new("Keep running in the tray").size(11.0),
+                        )
+                        .on_hover_text(
+                            "The close button hides toolboks next to the clock instead of                              quitting, so auto-clean keeps working. Quit from the tray icon.",
+                        );
                     });
                 });
             });
@@ -311,6 +335,71 @@ impl eframe::App for App {
 }
 
 impl App {
+    /// Tray mode: icon, menu, hiding on close, and keeping the app ticking while hidden.
+    /// eframe 0.37 calls `logic` (and repaints every ~100 ms when asked) for a hidden window,
+    /// so the tools' background work keeps running without any minimize trick.
+    fn tray_tick(&mut self, ctx: &egui::Context) {
+        if !self.keep_in_tray {
+            if let Some(tray) = &self.tray {
+                tray.set_visible(false);
+            }
+            if self.hidden {
+                self.show_window(ctx);
+            }
+            return;
+        }
+        if self.tray.is_none() {
+            self.tray = Tray::new(ctx);
+            if self.tray.is_none() {
+                // No icon means no way back from hiding: stay a normal window.
+                self.keep_in_tray = false;
+                return;
+            }
+        }
+        let Some(tray) = self.tray.as_mut() else {
+            return;
+        };
+        tray.set_visible(true);
+        tray.refresh();
+        let actions = tray.actions();
+        // The percentage is polled, so wake up regularly even if nothing else asks.
+        ctx.request_repaint_after(Duration::from_secs(if self.hidden { 1 } else { 2 }));
+
+        for action in actions {
+            match action {
+                tray::Action::Toggle if self.hidden => self.show_window(ctx),
+                tray::Action::Toggle => self.hide_window(ctx),
+                tray::Action::Show => self.show_window(ctx),
+                tray::Action::Quit => {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+
+        let close = ctx.input(|i| i.viewport().close_requested());
+        if close && !self.quitting && !instance::is_relaunching() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hide_window(ctx);
+        }
+        // Another launch (or the user) brought the window back without the tray.
+        if self.hidden && ctx.input(|i| i.viewport().focused) == Some(true) {
+            self.hidden = false;
+        }
+    }
+
+    fn hide_window(&mut self, ctx: &egui::Context) {
+        self.hidden = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
+
+    fn show_window(&mut self, ctx: &egui::Context) {
+        self.hidden = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
     /// The "update available" question: shown once a newer release is found, and dismissed
     /// with "Not now" until the next launch (the top bar keeps an Install button).
     fn update_prompt(&mut self, ctx: &egui::Context) {
