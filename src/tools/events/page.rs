@@ -967,11 +967,11 @@ impl Page {
             .striped(true)
             .sense(Sense::click())
             .auto_shrink([false, false])
-            .column(Column::exact(124.0))
+            .column(Column::exact(144.0))
             .column(Column::exact(PILL_W + 8.0))
             .column(Column::exact(64.0))
             .column(Column::remainder().at_least(120.0).clip(true))
-            .column(Column::exact(150.0).clip(true))
+            .column(Column::exact(190.0).clip(true))
             .header(ROW_H, |mut header| {
                 for title in [
                     "Time (UTC)",
