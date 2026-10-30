@@ -143,6 +143,24 @@ fn lookup(provider: &str, id: u32) -> Option<Info> {
             "A program was refused a permission it asked for.",
             "This is very common and usually harmless.",
         ),
+        ("bthusb" | "bthmini" | "bthport", _) => entry(
+            C::Driver,
+            S::Info,
+            "The Bluetooth driver logged a message.",
+            "Often caused by a Bluetooth device connecting or dropping. Only worth a look if Bluetooth stops working.",
+        ),
+        ("system restore", 8193) => entry(
+            C::System,
+            S::Info,
+            "Windows could not create a restore point.",
+            "Restore points may be turned off or the drive is short on space. Only matters if you rely on System Restore.",
+        ),
+        ("windowsupdateclient", 20) => entry(
+            C::Software,
+            S::WorthWatching,
+            "A Windows update failed to install.",
+            "Windows usually retries by itself. If the same update keeps failing, run the Windows Update troubleshooter.",
+        ),
         ("kernel-processor-power", 37) => entry(
             C::Power,
             S::Harmless,
@@ -278,6 +296,20 @@ mod tests {
             37,
             Category::Power,
             Severity::Harmless,
+        );
+    }
+
+    #[test]
+    fn noisy_everyday_events() {
+        for id in [3, 16, 99] {
+            check("BTHUSB", id, Category::Driver, Severity::Info);
+        }
+        check("System Restore", 8193, Category::System, Severity::Info);
+        check(
+            "Microsoft-Windows-WindowsUpdateClient",
+            20,
+            Category::Software,
+            Severity::WorthWatching,
         );
     }
 
