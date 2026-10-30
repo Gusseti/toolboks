@@ -10,6 +10,7 @@ mod gpu;
 mod history;
 mod nvml;
 mod overview;
+mod power;
 mod processes;
 mod sampler;
 
@@ -94,6 +95,9 @@ pub struct Resources {
     net_down: History,
     net_up: History,
     gpu_load: History,
+    gpu_power: History,
+    /// Rated power of the processor for the power estimate, set by the user.
+    cpu_rated_w: f32,
     cores: Vec<History>,
     engines: Keyed<1>,
     drives: Keyed<2>,
@@ -122,6 +126,8 @@ impl Resources {
             net_down: History::new(),
             net_up: History::new(),
             gpu_load: History::new(),
+            gpu_power: History::new(),
+            cpu_rated_w: power::DEFAULT_RATED_W,
             cores: Vec::new(),
             engines: Keyed::new(),
             drives: Keyed::new(),
@@ -145,6 +151,18 @@ impl Resources {
                     self.range = range;
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.cpu_rated_w)
+                        .range(10.0..=400.0)
+                        .speed(1.0)
+                        .suffix(" W"),
+                )
+                .on_hover_text(
+                    "Rated power of your processor, used for the processor power estimate.                      Find it in your processor's specifications (often called TDP).",
+                );
+                ui.label(egui::RichText::new("CPU rated power").weak());
+            });
         });
         ui.add_space(2.0);
     }
@@ -214,6 +232,7 @@ impl crate::tools::Tool for Resources {
                     match &sample.gpu {
                         Some(g) => {
                             self.gpu_load.push(g.load.unwrap_or(0.0));
+                            self.gpu_power.push(g.power_w.unwrap_or(0.0));
                             self.gpu = Some(g.clone());
                             self.gpu_missing = 0;
                         }

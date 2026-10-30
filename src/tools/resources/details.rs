@@ -125,6 +125,8 @@ impl Resources {
             ui.add_space(6.0);
             self.gpu_details(ui);
             ui.add_space(6.0);
+            self.power_card(ui, ui.available_width(), IO_HEIGHT);
+            ui.add_space(6.0);
             self.disk_details(ui);
             ui.add_space(6.0);
             self.net_details(ui);

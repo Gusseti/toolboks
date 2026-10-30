@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Align, Color32, Layout, RichText, Vec2};
 
-use super::{Resources, TopTab};
+use super::{power, Resources, TopTab};
 use crate::format::{clock, friendly_name, rate, size_plain, uptime};
 use crate::ui::{card, graph_card, pill, GraphCard, Line, ACCENT, AMBER, CARD_PAD, GAP, GREEN};
 
@@ -130,6 +130,8 @@ impl Resources {
                 |ui| self.net_card(ui, other, IO_CARD_HEIGHT),
             );
         });
+
+        self.power_card(ui, total, IO_CARD_HEIGHT);
 
         card(ui, total, 0.0, |ui| self.top_card(ui, total));
     }
@@ -289,6 +291,82 @@ impl Resources {
                 capacity: self.range.points(),
                 max,
                 step_secs: self.range.step_secs(),
+                stats: &stats,
+                note: None,
+            },
+        );
+    }
+
+    /// GPU power (measured) and processor power (estimated) as two lines, with the energy used
+    /// over the shown range for each.
+    pub(super) fn power_card(&self, ui: &mut egui::Ui, width: f32, height: f32) {
+        let range = self.range;
+        let gpu = self.gpu_power.view(range);
+        let cpu: Vec<f32> = self
+            .cpu
+            .view(range)
+            .iter()
+            .map(|l| power::cpu_estimate_w(*l, self.cpu_rated_w))
+            .collect();
+        let has_gpu = self.gpu.as_ref().is_some_and(|g| g.power_w.is_some());
+        let mut lines = vec![Line {
+            values: &cpu,
+            color: VIOLET,
+            fill: false,
+            label: "CPU (estimate)",
+            fmt: power::fmt_watts,
+        }];
+        if has_gpu {
+            lines.insert(
+                0,
+                Line {
+                    values: gpu,
+                    color: GREEN,
+                    fill: true,
+                    label: "GPU (measured)",
+                    fmt: power::fmt_watts,
+                },
+            );
+        }
+        let max = peak_ceiling(&[gpu, &cpu], 50.0);
+        let step = range.step_secs();
+        let mut stats = Vec::new();
+        if has_gpu {
+            stats.push((
+                self.gpu_power
+                    .last()
+                    .map_or(NONE.to_string(), power::fmt_watts),
+                "GPU now",
+            ));
+        }
+        stats.push((
+            cpu.last()
+                .copied()
+                .map_or(NONE.to_string(), power::fmt_watts),
+            "CPU now (estimate)",
+        ));
+        if has_gpu {
+            stats.push((power::fmt_energy(power::energy_wh(gpu, step)), "GPU used"));
+        }
+        stats.push((
+            power::fmt_energy(power::energy_wh(&cpu, step)),
+            "CPU used (estimate)",
+        ));
+        graph_card(
+            ui,
+            width,
+            height,
+            &GraphCard {
+                title: "Power",
+                detail: if has_gpu {
+                    "GPU measured, CPU estimated from its load"
+                } else {
+                    "CPU estimated from its load; no GPU power reading"
+                },
+                lines: &lines,
+                capacity: range.points(),
+                max,
+                step_secs: step,
                 stats: &stats,
                 note: None,
             },
