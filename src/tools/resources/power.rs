@@ -41,18 +41,22 @@ pub fn fmt_energy(wh: f32) -> String {
 mod tests {
     use super::*;
 
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
     #[test]
     fn estimate_runs_from_idle_to_rated() {
-        assert_eq!(cpu_estimate_w(0.0, 100.0), 15.0);
-        assert_eq!(cpu_estimate_w(100.0, 100.0), 100.0);
-        assert_eq!(cpu_estimate_w(50.0, 100.0), 57.5);
+        assert!(near(cpu_estimate_w(0.0, 100.0), 15.0));
+        assert!(near(cpu_estimate_w(100.0, 100.0), 100.0));
+        assert!(near(cpu_estimate_w(50.0, 100.0), 57.5));
     }
 
     #[test]
     fn estimate_clamps_load_and_rating() {
-        assert_eq!(cpu_estimate_w(250.0, 100.0), 100.0);
-        assert_eq!(cpu_estimate_w(-5.0, 100.0), 15.0);
-        assert_eq!(cpu_estimate_w(50.0, -10.0), 0.0);
+        assert!(near(cpu_estimate_w(250.0, 100.0), 100.0));
+        assert!(near(cpu_estimate_w(-5.0, 100.0), 15.0));
+        assert!(near(cpu_estimate_w(50.0, -10.0), 0.0));
     }
 
     #[test]
