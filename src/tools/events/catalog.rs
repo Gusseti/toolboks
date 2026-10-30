@@ -161,6 +161,24 @@ fn lookup(provider: &str, id: u32) -> Option<Info> {
             "A Windows update failed to install.",
             "Windows usually retries by itself. If the same update keeps failing, run the Windows Update troubleshooter.",
         ),
+        ("distributedcom", 10029) => entry(
+            C::Software,
+            S::Harmless,
+            "Windows started a service for a program.",
+            "Microsoft describes this as normal operation. Nothing to do unless it comes with a failure event.",
+        ),
+        ("deviceassociationservice", 3503) => entry(
+            C::Driver,
+            S::Info,
+            "Windows had trouble finding a connected device.",
+            "Often logged around shutdown and usually harmless. Updating device and Wi-Fi drivers is the common fix if it bothers you.",
+        ),
+        ("tpm-wmi", 1796) => entry(
+            C::System,
+            S::WorthWatching,
+            "Windows could not apply a Secure Boot certificate update.",
+            "The computer's firmware did not accept the update. A BIOS update from the maker often fixes it. Your computer keeps working meanwhile.",
+        ),
         ("kernel-processor-power", 37) => entry(
             C::Power,
             S::Harmless,
@@ -309,6 +327,28 @@ mod tests {
             "Microsoft-Windows-WindowsUpdateClient",
             20,
             Category::Software,
+            Severity::WorthWatching,
+        );
+    }
+
+    #[test]
+    fn researched_noisy_events() {
+        check(
+            "DistributedCOM",
+            10029,
+            Category::Software,
+            Severity::Harmless,
+        );
+        check(
+            "Microsoft-Windows-DeviceAssociationService",
+            3503,
+            Category::Driver,
+            Severity::Info,
+        );
+        check(
+            "Microsoft-Windows-TPM-WMI",
+            1796,
+            Category::System,
             Severity::WorthWatching,
         );
     }
