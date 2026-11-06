@@ -347,6 +347,11 @@ fn fetch(
 
 /// Asks GitHub for the latest stable release. Blocking: run it off the UI thread.
 pub fn check() -> Result<CheckOutcome, UpdateError> {
+    if cfg!(feature = "preview") {
+        return Err(UpdateError::BadResponse(
+            "updates disabled in preview builds",
+        ));
+    }
     let json = fetch(
         LATEST_RELEASE_URL,
         "application/vnd.github+json",
@@ -364,6 +369,11 @@ pub fn check() -> Result<CheckOutcome, UpdateError> {
 /// Downloads, verifies and swaps in the release. Blocking: run it off the UI thread.
 /// On success the new exe is in place; the caller restarts the app.
 pub fn install(release: &Release) -> Result<(), UpdateError> {
+    if cfg!(feature = "preview") {
+        return Err(UpdateError::BadResponse(
+            "updates disabled in preview builds",
+        ));
+    }
     let exe = fetch(
         &release.exe_url,
         "application/octet-stream",
@@ -455,6 +465,30 @@ pub fn cleanup_old_exe() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn preview_refuses_update_checks_and_installs() {
+        assert!(matches!(
+            check(),
+            Err(UpdateError::BadResponse(
+                "updates disabled in preview builds"
+            ))
+        ));
+        let release = Release {
+            version: Version::current(),
+            exe_url: String::new(),
+            sha_url: String::new(),
+            notes: String::new(),
+            size: None,
+        };
+        assert!(matches!(
+            install(&release),
+            Err(UpdateError::BadResponse(
+                "updates disabled in preview builds"
+            ))
+        ));
+    }
 
     fn v(s: &str) -> Version {
         Version::parse(s).unwrap()

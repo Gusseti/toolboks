@@ -684,6 +684,7 @@ impl Page {
                     });
             });
         let rect = panel.response.rect;
+        toolboks_addon_sdk::tutorial::mark(ui, "inspector", rect);
         ui.painter().vline(
             rect.left(),
             rect.y_range(),
@@ -695,7 +696,7 @@ impl Page {
             ui.spacing_mut().item_spacing.y = 4.0;
             ui.spacing_mut().button_padding = Vec2::new(6.0, 1.0);
             self.banner(ui);
-            self.toolbar(ui, rows.len());
+            toolboks_addon_sdk::tutorial::region(ui, "toolbar", |ui| self.toolbar(ui, rows.len()));
             let line = summary_text(&top);
             if !line.is_empty() {
                 ui.label(
@@ -708,7 +709,7 @@ impl Page {
                 ui.label(RichText::new(e).color(RED).small());
             }
             ui.add_space(2.0);
-            self.table(ui, &rows);
+            toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.table(ui, &rows));
         });
 
         if let Some(intent) = intent {

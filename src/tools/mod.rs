@@ -16,6 +16,10 @@ pub trait Tool {
 
     /// Draws page number `page` (always 0 for a tool without `pages`).
     fn ui(&mut self, ui: &mut egui::Ui, page: usize);
+    fn tutorial_location(&self) -> String {
+        String::new()
+    }
+    fn tutorial_navigate(&mut self, _section: &str) {}
 
     /// Called every frame for every tool, selected or not, and also while the window is hidden
     /// (minimized). For background work such as auto-clean; keep it cheap.

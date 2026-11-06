@@ -38,8 +38,8 @@ impl Tray {
     pub fn new(ctx: &egui::Context) -> Option<Self> {
         let (tx, rx) = mpsc::channel();
 
-        let show = MenuItem::new("Show toolboks", true, None);
-        let quit = MenuItem::new("Quit toolboks", true, None);
+        let show = MenuItem::new(format!("Show {}", crate::instance::APP_NAME), true, None);
+        let quit = MenuItem::new(format!("Quit {}", crate::instance::APP_NAME), true, None);
         let menu = Menu::new();
         menu.append(&show).ok()?;
         menu.append(&quit).ok()?;
@@ -133,7 +133,7 @@ fn memory_percent() -> u32 {
 }
 
 pub fn tooltip_text(percent: u32) -> String {
-    format!("toolboks - memory {percent}% in use")
+    format!("{} - memory {percent}% in use", crate::instance::APP_NAME)
 }
 
 /// Same thresholds as Memory Home `health()`: green below 70, amber below 85, red above.
@@ -216,7 +216,10 @@ mod tests {
 
     #[test]
     fn tooltip_is_plain() {
-        assert_eq!(tooltip_text(58), "toolboks - memory 58% in use");
+        assert_eq!(
+            tooltip_text(58),
+            format!("{} - memory 58% in use", crate::instance::APP_NAME)
+        );
     }
 
     #[test]

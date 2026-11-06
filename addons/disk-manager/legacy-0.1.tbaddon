@@ -1,0 +1,22 @@
+{
+  "schema_version":1,
+  "manifest":{
+    "id":"toolboks.disk-manager",
+    "title":"Disk Manager",
+    "byline":"by stratum",
+    "native_provider":"stratum.disk-manager",
+    "description":"Find the weight. Keep what matters. Map your storage and uncover the files taking the most space.",
+    "long_description":"Stratum's disk analysis, built for your Toolboks workspace. Scan any drive or folder, explore an interactive space map, find the largest files, filter by size and age, inspect file types, and export your findings. Scans are read-only, run in the background, and can be cancelled. Links and junctions are skipped; access errors are reported transparently. Sizes are logical file lengths and may differ from allocated disk usage.",
+    "version":"0.1.0",
+    "author":"Stratum",
+    "publisher":"Toolboks",
+    "category":"Storage",
+    "icon":"storage",
+    "accent":"#A48ACA",
+    "api_version":2,
+    "min_toolboks_version":"0.8.2",
+    "license":"MIT",
+    "capabilities":["filesystem_read","local_preferences","user_exports"]
+  },
+  "pages":[]
+}

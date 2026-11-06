@@ -647,6 +647,7 @@ impl Page {
                     });
             });
         let rect = panel.response.rect;
+        toolboks_addon_sdk::tutorial::mark(ui, "inspector", rect);
         ui.painter().vline(
             rect.left(),
             rect.y_range(),
@@ -657,9 +658,11 @@ impl Page {
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             ui.spacing_mut().button_padding = Vec2::new(6.0, 1.0);
-            let rows = self.toolbar(ui, all_rows.clone());
+            let rows = toolboks_addon_sdk::tutorial::region(ui, "toolbar", |ui| {
+                self.toolbar(ui, all_rows.clone())
+            });
             ui.add_space(2.0);
-            self.table(ui, rows);
+            toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.table(ui, rows));
         });
 
         if let Some(intent) = intent {
