@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "manifest": {
+    "id": "com.example.hello-system",
+    "title": "Hello System",
+    "description": "A small, working example of an integrated Toolboks add-on.",
+    "long_description": "Built with the Toolboks Add-on SDK. This example combines live memory readings with preferences that survive an app restart. Its pages render directly inside the Toolboks workspace.",
+    "version": "1.0.0",
+    "author": "SDK example",
+    "publisher": "Example developer",
+    "category": "Developer tools",
+    "icon": "leaf",
+    "accent": "#A99CDA",
+    "api_version": 1,
+    "min_toolboks_version": "0.8.2",
+    "license": "MIT",
+    "capabilities": ["host_metrics", "local_preferences"]
+  },
+  "pages": [
+    {"id":"overview","title":"Overview","widgets":[
+      {"kind":"heading","text":"A little window into your system."},
+      {"kind":"text","text":"This is an installed add-on, running inside Toolboks. The outer frame stays put; the workspace belongs to the add-on."},
+      {"kind":"metric","label":"Memory in use","binding":"memory_percent"},
+      {"kind":"metric","label":"Available memory","binding":"memory_available"},
+      {"kind":"metric","label":"System uptime","binding":"uptime"},
+      {"kind":"note","title":"Make it yours","text":"Open Preferences, change a value, then restart Toolboks. Your choices are stored in the local configuration."}
+    ]},
+    {"id":"preferences","title":"Preferences","widgets":[
+      {"kind":"heading","text":"Your add-on. Your preferences."},
+      {"kind":"toggle","key":"show_details","label":"Show detailed information","default":true},
+      {"kind":"text_input","key":"label","label":"A name for this PC","default":"My workstation"}
+    ]}
+  ]
+}

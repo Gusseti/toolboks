@@ -169,6 +169,23 @@ impl Resources {
 }
 
 impl crate::tools::Tool for Resources {
+    fn tutorial_location(&self) -> String {
+        match self.top_tab {
+            TopTab::Cpu => "cpu",
+            TopTab::Memory => "memory",
+            TopTab::Gpu => "gpu",
+            TopTab::Disk => "disk",
+        }
+        .into()
+    }
+    fn tutorial_navigate(&mut self, section: &str) {
+        self.top_tab = match section {
+            "memory" => TopTab::Memory,
+            "gpu" => TopTab::Gpu,
+            "disk" => TopTab::Disk,
+            _ => TopTab::Cpu,
+        };
+    }
     fn name(&self) -> &'static str {
         "Resource Monitor"
     }
@@ -259,7 +276,7 @@ impl crate::tools::Tool for Resources {
             }
             _ => {}
         }
-        self.range_bar(ui);
+        toolboks_addon_sdk::tutorial::region(ui, "resource-range", |ui| self.range_bar(ui));
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match page {

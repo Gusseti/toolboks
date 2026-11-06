@@ -8,16 +8,20 @@ pub const GAP: f32 = 8.0;
 pub const CARD_PAD: f32 = 10.0;
 
 pub const ACCENT: Color32 = Color32::from_rgb(59, 130, 246);
+pub const HOST_ACCENT: Color32 = Color32::from_rgb(164, 138, 202);
+pub const HOST_ACCENT_FILL: Color32 = Color32::from_rgb(105, 68, 158);
 pub const GREEN: Color32 = Color32::from_rgb(52, 168, 107);
 pub const AMBER: Color32 = Color32::from_rgb(232, 163, 23);
 pub const RED: Color32 = Color32::from_rgb(214, 69, 65);
 
 /// Graphite surfaces and text of the dark theme.
-pub const WINDOW_BG: Color32 = Color32::from_rgb(0x13, 0x14, 0x16);
+pub const WINDOW_BG: Color32 = Color32::from_rgb(0x10, 0x12, 0x15);
+pub const PANEL_BG: Color32 = Color32::from_rgb(0x19, 0x1d, 0x22);
+pub const SIDEBAR_BG: Color32 = Color32::from_rgb(0x14, 0x17, 0x1b);
 pub const STATUS_BG: Color32 = Color32::from_rgb(0x0f, 0x10, 0x12);
 pub const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2d, 0x33);
-pub const TEXT: Color32 = Color32::from_rgb(0xe4, 0xe6, 0xea);
-pub const MUTED: Color32 = Color32::from_rgb(0x8d, 0x93, 0x9e);
+pub const TEXT: Color32 = Color32::from_rgb(0xec, 0xec, 0xf1);
+pub const MUTED: Color32 = Color32::from_rgb(0xa4, 0xa8, 0xb2);
 
 /// Sets fonts sizes, spacing, rounding and the dark visuals. Call once at start-up.
 pub fn apply_style(ctx: &egui::Context) {
@@ -28,12 +32,12 @@ pub fn apply_style(ctx: &egui::Context) {
         style.text_styles = [
             (
                 TextStyle::Small,
-                FontId::new(10.5, FontFamily::Proportional),
+                FontId::new(12.0, FontFamily::Proportional),
             ),
-            (TextStyle::Body, FontId::new(12.0, FontFamily::Proportional)),
+            (TextStyle::Body, FontId::new(14.0, FontFamily::Proportional)),
             (
                 TextStyle::Button,
-                FontId::new(12.0, FontFamily::Proportional),
+                FontId::new(14.0, FontFamily::Proportional),
             ),
             (
                 TextStyle::Heading,
@@ -41,15 +45,15 @@ pub fn apply_style(ctx: &egui::Context) {
             ),
             (
                 TextStyle::Monospace,
-                FontId::new(11.5, FontFamily::Monospace),
+                FontId::new(13.0, FontFamily::Monospace),
             ),
         ]
         .into();
 
         let sp = &mut style.spacing;
         sp.item_spacing = Vec2::new(6.0, 4.0);
-        sp.button_padding = Vec2::new(8.0, 3.0);
-        sp.interact_size.y = 20.0;
+        sp.button_padding = Vec2::new(9.0, 4.0);
+        sp.interact_size.y = 24.0;
         sp.slider_width = 110.0;
         sp.indent = 14.0;
 
@@ -59,7 +63,7 @@ pub fn apply_style(ctx: &egui::Context) {
         v.window_fill = WINDOW_BG;
         v.window_stroke = Stroke::new(1.0, BORDER);
         v.extreme_bg_color = STATUS_BG;
-        v.faint_bg_color = Color32::from_rgb(0x1b, 0x1d, 0x21);
+        v.faint_bg_color = PANEL_BG;
         v.code_bg_color = Color32::from_rgb(0x1b, 0x1d, 0x21);
         v.hyperlink_color = ACCENT;
         v.weak_text_color = Some(MUTED);
@@ -331,6 +335,7 @@ fn paint_lines(
 /// Draws a [`GraphCard`] of exactly `width` x `height`, with a hover read-out over the plot.
 pub fn graph_card(ui: &mut egui::Ui, width: f32, height: f32, g: &GraphCard) {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    toolboks_addon_sdk::tutorial::mark(ui, &format!("graph-{}", g.title.to_lowercase()), rect);
     if !ui.is_rect_visible(rect) {
         return;
     }

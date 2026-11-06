@@ -2,11 +2,13 @@
 
 use eframe::egui;
 
+mod addons;
 mod app;
 mod crash;
 mod elevation;
 mod format;
 mod instance;
+mod native;
 mod tools;
 mod tray;
 mod ui;
@@ -22,17 +24,23 @@ fn main() -> eframe::Result {
         return Ok(());
     };
     // Removes the previous exe left behind by an update; does nothing otherwise.
-    update::cleanup_old_exe();
+    if !cfg!(feature = "preview") {
+        update::cleanup_old_exe();
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(concat!("toolboks ", env!("CARGO_PKG_VERSION")))
-            .with_inner_size([960.0, 640.0])
-            .with_min_inner_size([640.0, 420.0]),
+            .with_title(format!(
+                "{} {}",
+                instance::APP_NAME,
+                env!("CARGO_PKG_VERSION")
+            ))
+            .with_inner_size([1540.0, 960.0])
+            .with_min_inner_size([1060.0, 720.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "toolboks",
+        instance::APP_NAME,
         options,
         Box::new(|cc| {
             ui::apply_style(&cc.egui_ctx);

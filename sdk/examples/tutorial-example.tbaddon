@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "manifest": {
+    "id": "com.example.guided-system",
+    "title": "Guided System",
+    "description": "A working example of custom Help walkthroughs with highlighted widgets.",
+    "long_description": "Built with the Toolboks Add-on SDK. This example combines live memory readings with preferences that survive an app restart. Its pages render directly inside the Toolboks workspace.",
+    "version": "1.0.0",
+    "author": "SDK example",
+    "publisher": "Example developer",
+    "category": "Developer tools",
+    "icon": "leaf",
+    "accent": "#A99CDA",
+    "api_version": 1,
+    "min_toolboks_version": "0.8.2",
+    "license": "MIT",
+    "capabilities": [
+      "host_metrics",
+      "local_preferences"
+    ]
+  },
+  "pages": [
+    {
+      "id": "overview",
+      "title": "Overview",
+      "widgets": [
+        {
+          "kind": "heading",
+          "text": "A little window into your system."
+        },
+        {
+          "kind": "text",
+          "text": "This is an installed add-on, running inside Toolboks. The outer frame stays put; the workspace belongs to the add-on."
+        },
+        {
+          "kind": "metric",
+          "label": "Memory in use",
+          "binding": "memory_percent"
+        },
+        {
+          "kind": "metric",
+          "label": "Available memory",
+          "binding": "memory_available"
+        },
+        {
+          "kind": "metric",
+          "label": "System uptime",
+          "binding": "uptime"
+        },
+        {
+          "kind": "note",
+          "title": "Make it yours",
+          "text": "Open Preferences, change a value, then restart Toolboks. Your choices are stored in the local configuration."
+        }
+      ]
+    },
+    {
+      "id": "preferences",
+      "title": "Preferences",
+      "widgets": [
+        {
+          "kind": "heading",
+          "text": "Your add-on. Your preferences."
+        },
+        {
+          "kind": "toggle",
+          "key": "show_details",
+          "label": "Show detailed information",
+          "default": true
+        },
+        {
+          "kind": "text_input",
+          "key": "label",
+          "label": "A name for this PC",
+          "default": "My workstation"
+        }
+      ]
+    }
+  ],
+  "tutorial": [
+    {
+      "target": "widget-0",
+      "description": "This heading introduces this page of the add-on.",
+      "title": "Overview",
+      "page": "overview"
+    },
+    {
+      "target": "widget-1",
+      "description": "This is an installed add-on, running inside Toolboks. The outer frame stays put; the workspace belongs to the add-on.",
+      "title": "Overview",
+      "page": "overview"
+    },
+    {
+      "target": "widget-2",
+      "description": "This live reading is supplied by Toolboks and updates while this page is visible.",
+      "title": "Memory in use",
+      "page": "overview"
+    },
+    {
+      "target": "widget-3",
+      "description": "This live reading is supplied by Toolboks and updates while this page is visible.",
+      "title": "Available memory",
+      "page": "overview"
+    },
+    {
+      "target": "widget-4",
+      "description": "This live reading is supplied by Toolboks and updates while this page is visible.",
+      "title": "System uptime",
+      "page": "overview"
+    },
+    {
+      "target": "widget-5",
+      "description": "Open Preferences, change a value, then restart Toolboks. Your choices are stored in the local configuration.",
+      "title": "Make it yours",
+      "page": "overview"
+    },
+    {
+      "target": "widget-0",
+      "description": "This heading introduces this page of the add-on.",
+      "title": "Preferences",
+      "page": "preferences"
+    },
+    {
+      "target": "widget-1",
+      "description": "This preference switch is saved locally for this add-on. The tour leaves its value unchanged.",
+      "title": "Show detailed information",
+      "page": "preferences"
+    },
+    {
+      "target": "widget-2",
+      "description": "This field saves a name locally in the add-on preferences.",
+      "title": "A name for this PC",
+      "page": "preferences"
+    }
+  ]
+}

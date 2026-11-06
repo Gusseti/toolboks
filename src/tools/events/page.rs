@@ -858,6 +858,7 @@ impl Page {
                         .show(ui, |ui| self.inspector(ui, &ctx));
                 });
             let rect = panel.response.rect;
+            toolboks_addon_sdk::tutorial::mark(ui, "inspector", rect);
             ui.painter().vline(
                 rect.left(),
                 rect.y_range(),
@@ -868,11 +869,13 @@ impl Page {
         let side = egui::Frame::NONE.inner_margin(look::CARD_PAD);
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
-            self.header(ui, &ctx);
+            toolboks_addon_sdk::tutorial::region(ui, "toolbar", |ui| self.header(ui, &ctx));
             match page {
-                0 => self.live_page(ui),
-                1 => self.crashes_page(ui, &ctx),
-                _ => self.summary_page(ui),
+                0 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.live_page(ui)),
+                1 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| {
+                    self.crashes_page(ui, &ctx)
+                }),
+                _ => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.summary_page(ui)),
             }
         });
     }

@@ -133,7 +133,9 @@ impl Resources {
 
         self.power_card(ui, total, IO_CARD_HEIGHT);
 
-        card(ui, total, 0.0, |ui| self.top_card(ui, total));
+        card(ui, total, 0.0, |ui| {
+            toolboks_addon_sdk::tutorial::region(ui, "top-processes", |ui| self.top_card(ui, total))
+        });
     }
 
     fn top_card(&mut self, ui: &mut egui::Ui, total: f32) {

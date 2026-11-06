@@ -235,6 +235,7 @@ impl Debloater {
                     });
             });
         let rect = panel.response.rect;
+        toolboks_addon_sdk::tutorial::mark(ui, "inspector", rect);
         ui.painter().vline(
             rect.left(),
             rect.y_range(),
@@ -245,11 +246,11 @@ impl Debloater {
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             match page {
-                0 => self.privacy_page(ui),
-                1 => self.apps_page(ui),
-                2 => self.startup_page(ui),
-                3 => self.tasks_page(ui),
-                _ => self.services_page(ui),
+                0 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.privacy_page(ui)),
+                1 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.apps_page(ui)),
+                2 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.startup_page(ui)),
+                3 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.tasks_page(ui)),
+                _ => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.services_page(ui)),
             }
         });
     }

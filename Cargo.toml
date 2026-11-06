@@ -6,7 +6,18 @@ description = "A lightweight toolbox of system utilities"
 license = "MIT"
 repository = "https://github.com/Gusseti/toolboks"
 
+[workspace]
+members = ["sdk/toolboks-addon-sdk", "addons/disk-manager"]
+resolver = "2"
+
+[features]
+# Isolated local builds: separate window/instance and no self-update traffic or swaps.
+preview = []
+
 [dependencies]
+toolboks-addon-sdk = { path = "sdk/toolboks-addon-sdk", features = ["native-ui"] }
+toolboks-disk-manager = { path = "addons/disk-manager" }
+serde = { version = "1", features = ["derive"] }
 # glow (OpenGL) instead of the default wgpu renderer: far smaller and lighter on RAM.
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
 egui_extras = { version = "0.37", default-features = false }

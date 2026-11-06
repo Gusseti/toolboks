@@ -9,6 +9,10 @@ use crate::tools::{self, Tool};
 use crate::tray::{self, Tray};
 use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
+mod shell;
+mod tutorial;
+use crate::addons::{self, Registry, SystemAddon};
+use shell::Screen;
 
 /// Results sent back from the update worker thread.
 enum UpdateMsg {
@@ -26,9 +30,21 @@ enum UpdateState {
 }
 
 pub struct App {
-    tools: Vec<Box<dyn Tool>>,
-    /// (tool, page) shown in the main area.
-    selected: (usize, usize),
+    base: SystemAddon,
+    native: crate::native::NativeHost,
+    registry: Registry,
+    screen: Screen,
+    addon_page: usize,
+    search: String,
+    install_path: String,
+    show_install: bool,
+    pending_package: Option<toolboks_addon_sdk::Package>,
+    detail: Option<String>,
+    remove_pending: Option<String>,
+    message: Option<String>,
+    preferences_dirty: Option<std::time::Instant>,
+    tour: Option<tutorial::Run>,
+    help: Option<String>,
     update: UpdateState,
     update_rx: Option<Receiver<UpdateMsg>>,
     /// The check at launch has been started (it runs once per launch).
@@ -44,6 +60,14 @@ pub struct App {
     hidden: bool,
     /// The tray's Quit was chosen: the next close request really closes.
     quitting: bool,
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        if self.preferences_dirty.is_some() {
+            let _ = self.registry.save();
+        }
+    }
 }
 
 /// `--open "Tool"` or `--open "Tool/Page"` (case-insensitive, also `--open=...`) picks the page
@@ -78,15 +102,62 @@ impl App {
         let tools = tools::all();
         let args: Vec<String> = std::env::args().skip(1).collect();
         let selected = parse_open(&args, &tools).unwrap_or((0, 0));
+        let registry = Registry::load(addons::data_root());
+        let mut message = None;
+        if !registry.root.join("config.json").exists() {
+            if let Err(e) = registry.save() {
+                message = Some(format!("Could not save configuration: {e}"));
+            }
+        }
+        let keep_in_tray = registry.config.keep_in_tray;
+        let mut screen = if parse_open(&args, &tools).is_some() {
+            Screen::Base
+        } else {
+            Screen::Home
+        };
+        let mut native = crate::native::NativeHost::default();
+        if let Some(index) = args.iter().position(|a| a == "--open-addon") {
+            if let Some(id) = args.get(index + 1) {
+                if let Some(package) = registry
+                    .packages
+                    .iter()
+                    .find(|p| p.manifest.id == *id && registry.enabled(id))
+                {
+                    screen = Screen::External(id.clone());
+                    if let Some(provider) = &package.manifest.native_provider {
+                        let page = args
+                            .iter()
+                            .position(|a| a == "--addon-page")
+                            .and_then(|i| args.get(i + 1))
+                            .map(String::as_str)
+                            .unwrap_or("0");
+                        native.navigate(provider, page);
+                    }
+                }
+            }
+        }
         Self {
-            tools,
-            selected,
+            native,
+            base: SystemAddon { tools, selected },
+            registry,
+            screen,
+            addon_page: 0,
+            search: String::new(),
+            install_path: String::new(),
+            show_install: false,
+            pending_package: None,
+            detail: None,
+            remove_pending: None,
+            message,
+            preferences_dirty: None,
+            tour: None,
+            help: None,
             update: UpdateState::Idle,
             update_rx: None,
             launch_check_started: false,
             silent_check: false,
             prompt_open: false,
-            keep_in_tray: false,
+            keep_in_tray,
             tray: None,
             hidden: false,
             quitting: false,
@@ -96,7 +167,7 @@ impl App {
     /// Checks for an update once, right after launch. Offline, a private repo or an unreadable
     /// answer are ignored without a word; only a newer version shows the prompt.
     fn check_on_launch(&mut self, ctx: &egui::Context) {
-        if self.launch_check_started {
+        if cfg!(feature = "preview") || self.launch_check_started {
             return;
         }
         self.launch_check_started = true;
@@ -106,6 +177,9 @@ impl App {
     }
 
     fn start_install(&mut self, ctx: &egui::Context, release: Release) {
+        if cfg!(feature = "preview") {
+            return;
+        }
         self.prompt_open = false;
         self.update = UpdateState::Installing;
         self.spawn_update_job(ctx, move || UpdateMsg::Installed(update::install(&release)));
@@ -164,6 +238,10 @@ impl App {
     /// The update control in one row. Meant for a right-to-left layout: the first item added
     /// sits rightmost.
     fn update_ui(&mut self, ui: &mut egui::Ui) {
+        if cfg!(feature = "preview") {
+            ui.weak("Preview · updates disabled");
+            return;
+        }
         let ctx = ui.ctx().clone();
         match &self.update {
             UpdateState::Idle | UpdateState::UpToDate | UpdateState::Failed(_) => {
@@ -237,100 +315,23 @@ impl eframe::App for App {
         self.check_on_launch(ctx);
         self.poll_update(ctx);
         self.tray_tick(ctx);
-        for tool in &mut self.tools {
+        self.native.tick(ctx, &self.registry);
+        for tool in &mut self.base.tools {
             tool.tick(ctx);
+        }
+        if self
+            .preferences_dirty
+            .is_some_and(|t| t.elapsed() > Duration::from_millis(500))
+        {
+            self.preferences_dirty = None;
+            if let Err(e) = self.registry.save() {
+                self.message = Some(format!("Preferences could not be saved: {e}"));
+            }
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let strip = || {
-            egui::Frame::new()
-                .fill(look::WINDOW_BG)
-                .inner_margin(egui::Margin::symmetric(8, 0))
-        };
-
-        // Tool tabs, with the version and the update control on the right.
-        egui::Panel::top("tools")
-            .resizable(false)
-            .frame(strip())
-            .show(ui, |ui| {
-                ui.set_height(28.0);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    for ti in 0..self.tools.len() {
-                        let name = self.tools[ti].name();
-                        let on = self.selected.0 == ti;
-                        if look::tab(ui, name, on, 28.0).clicked() && !on {
-                            self.selected = (ti, 0);
-                        }
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.weak(format!("v{}", Version::current()));
-                        self.update_ui(ui);
-                        ui.checkbox(
-                            &mut self.keep_in_tray,
-                            egui::RichText::new("Keep running in the tray").size(11.0),
-                        )
-                        .on_hover_text(
-                            "The close button hides toolboks next to the clock instead of                              quitting, so auto-clean keeps working. Quit from the tray icon.",
-                        );
-                    });
-                });
-            });
-
-        // Pages of the selected tool; hidden when there is one page or none.
-        let pages = self
-            .tools
-            .get(self.selected.0)
-            .map_or(&[][..], |tool| tool.pages());
-        if pages.len() > 1 {
-            egui::Panel::top("pages")
-                .resizable(false)
-                .frame(strip())
-                .show(ui, |ui| {
-                    ui.set_height(24.0);
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        for (pi, page) in pages.iter().enumerate() {
-                            let on = self.selected.1 == pi;
-                            if look::tab(ui, page, on, 24.0).clicked() {
-                                self.selected.1 = pi;
-                            }
-                        }
-                    });
-                });
-        }
-
-        // Status bar: the status items of every tool, in tool order.
-        let items = status_items(self.tools.iter().map(|tool| tool.status()));
-        egui::Panel::bottom("status")
-            .resizable(false)
-            .exact_size(22.0)
-            .frame(
-                egui::Frame::new()
-                    .fill(look::STATUS_BG)
-                    .inner_margin(egui::Margin::symmetric(10, 0)),
-            )
-            .show(ui, |ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 14.0;
-                    for item in &items {
-                        ui.label(egui::RichText::new(item).size(11.0).color(look::MUTED));
-                    }
-                });
-            });
-
-        egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(ui.style()).inner_margin(look::CARD_PAD))
-            .show(ui, |ui| {
-                let (tool, page) = self.selected;
-                if let Some(tool) = self.tools.get_mut(tool) {
-                    tool.ui(ui, page);
-                }
-            });
-
-        self.update_prompt(&ui.ctx().clone());
+        self.shell_ui(ui);
     }
 }
 
