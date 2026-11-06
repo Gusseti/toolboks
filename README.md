@@ -1,6 +1,22 @@
 # toolboks
 
-A lightweight toolbox of system utilities, written in Rust. One exe, nothing written to disk.
+A lightweight workspace for system utilities, written in Rust.
+
+## Local add-on preview
+
+The local development branch introduces a Stratum-inspired shell, a persistent sidebar,
+and an add-on framework. The original four tools are grouped into **System Essentials**.
+Local `.tbaddon` packages render inside the same window. See [the architecture](docs/ADDON-ARCHITECTURE.md),
+[SDK](sdk/README.md), and [preview build instructions](docs/LOCAL-DEVELOPMENT.md).
+
+The initial external runtime supports declarative pages, basic host metrics and saved
+preferences. **Disk Manager by stratum** is the first host-linked native add-on,
+with background disk analysis, an integrated space map, fragmentation reports and Windows drive optimization. Install it from the
+add-on browser in the current preview. See [Disk Manager](docs/DISK-MANAGER.md).
+Independent third-party native binaries and an online signed catalog remain later stages.
+
+Help offers full and current-tab walkthroughs with purple highlights and cancellation.
+See [Guided tours](docs/GUIDED-TOURS.md) and [Drive optimization](docs/DRIVE-OPTIMIZATION.md).
 
 ## Tools
 
@@ -29,11 +45,13 @@ The workflow fails if a tag and the `Cargo.toml` version disagree. Each release 
 
 ## Updates
 
-On launch the app makes one request to GitHub for the latest stable release (pre-releases are ignored). If a newer version exists it asks whether to update; **Update now** downloads the exe into memory, verifies the SHA-256, swaps itself in place and restarts, and **Not now** keeps the **Install and restart** button in the sidebar. Offline or no release: it says nothing. There is also a **Check for updates** button. No files are left behind. It needs the repository to be public, since it cannot carry a token.
+On launch the app makes one request to GitHub for the latest stable release (pre-releases are ignored). If a newer version exists it asks whether to update; **Update now** downloads the exe into memory, verifies the SHA-256, swaps itself in place and restarts, and **Not now** keeps the **Install and restart** button in Settings. Offline or no release: it says nothing. There is also a **Check for updates** button. Updater temporary files are cleaned up after restart. It needs the repository to be public, since it cannot carry a token.
 
 ## Design rules
 
-toolboks is one self-contained exe: it creates no folders, config, logs or caches, and keeps all state in memory only. See [docs/PLAN.md](docs/PLAN.md).
+The add-on preview saves configuration and installed packages locally. Preview and stable
+data folders are separate. This supersedes the historical no-config rule in [docs/PLAN.md](docs/PLAN.md).
+Original native-tool options remain session-only until their settings migration is implemented.
 
 ## License
 

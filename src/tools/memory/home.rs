@@ -397,7 +397,11 @@ impl Memory {
             .resizable(false)
             .exact_size(LEFT_WIDTH)
             .frame(side)
-            .show(ui, |ui| self.left_column(ui, &ctx));
+            .show(ui, |ui| {
+                toolboks_addon_sdk::tutorial::region(ui, "memory-summary", |ui| {
+                    self.left_column(ui, &ctx)
+                })
+            });
 
         let inspector = egui::Frame::NONE
             .fill(ui.visuals().extreme_bg_color)
@@ -409,7 +413,11 @@ impl Memory {
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| self.inspector(ui));
+                    .show(ui, |ui| {
+                        toolboks_addon_sdk::tutorial::region(ui, "memory-options", |ui| {
+                            self.inspector(ui)
+                        })
+                    });
             });
         let rect = panel.response.rect;
         ui.painter().vline(
@@ -420,7 +428,7 @@ impl Memory {
 
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
             self.hint(ui);
-            self.memory_goes(ui);
+            toolboks_addon_sdk::tutorial::region(ui, "memory-apps", |ui| self.memory_goes(ui));
         });
     }
 
@@ -478,10 +486,11 @@ impl Memory {
         let response = ui.add_enabled(!self.busy(), button).on_hover_text(
             "Moves memory that apps are not using right now out of RAM. Windows does this by itself when it needs to. You may notice no difference.",
         );
+        toolboks_addon_sdk::tutorial::mark(ui, "memory-optimize", response.rect);
         if response.clicked() {
             self.start_optimize(ctx, false);
         }
-        self.commit_row(ui, width);
+        toolboks_addon_sdk::tutorial::region(ui, "memory-commit", |ui| self.commit_row(ui, width));
     }
 
     /// Commit charge: promised memory against the limit, amber/red near the limit.

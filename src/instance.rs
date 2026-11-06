@@ -21,7 +21,14 @@ use crate::win::Handle;
 
 /// Marker argument added by the app's own restarts.
 pub const RELAUNCH_ARG: &str = "--relaunch";
+#[cfg(not(feature = "preview"))]
+pub const APP_NAME: &str = "toolboks";
+#[cfg(feature = "preview")]
+pub const APP_NAME: &str = "Toolboks Preview";
+#[cfg(not(feature = "preview"))]
 const MUTEX_NAME: PCWSTR = w!("Local\\toolboks-single-instance");
+#[cfg(feature = "preview")]
+const MUTEX_NAME: PCWSTR = w!("Local\\toolboks-preview-single-instance");
 const WAIT: Duration = Duration::from_secs(5);
 
 static RELAUNCHING: AtomicBool = AtomicBool::new(false);
@@ -115,7 +122,7 @@ fn bring_forward() {
         };
         let class = String::from_utf16_lossy(&class[..cl.max(0) as usize]);
         let title = String::from_utf16_lossy(&title[..tl.max(0) as usize]);
-        if class == "Window Class" && title.starts_with("toolboks ") {
+        if class == "Window Class" && title.starts_with(&format!("{APP_NAME} ")) {
             // SAFETY: `found` points to the `HWND` slot owned by `bring_forward`.
             unsafe { *(found.0 as *mut HWND) = hwnd };
             return false.into();

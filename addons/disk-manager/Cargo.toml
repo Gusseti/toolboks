@@ -1,0 +1,16 @@
+[package]
+name = "toolboks-disk-manager"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Disk Manager by stratum - native Toolboks add-on"
+
+[dependencies]
+egui = { version = "0.37", default-features = false }
+egui_extras = { version = "0.37", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toolboks-addon-sdk = { path = "../../sdk/toolboks-addon-sdk", features = ["native-ui"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_SystemInformation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

@@ -2588,10 +2588,34 @@ version = "0.8.2"
 dependencies = [
  "eframe",
  "egui_extras",
+ "serde",
  "serde_json",
  "sha2",
  "sysinfo",
+ "toolboks-addon-sdk",
+ "toolboks-disk-manager",
  "tray-icon",
+ "windows",
+]
+
+[[package]]
+name = "toolboks-addon-sdk"
+version = "0.4.0"
+dependencies = [
+ "egui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "toolboks-disk-manager"
+version = "0.2.0"
+dependencies = [
+ "egui",
+ "egui_extras",
+ "serde",
+ "serde_json",
+ "toolboks-addon-sdk",
  "windows",
 ]
 

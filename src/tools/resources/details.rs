@@ -121,15 +121,15 @@ impl Resources {
         let width = ui.available_width() - SCROLL_GUTTER;
         ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::LEFT), |ui| {
             ui.spacing_mut().item_spacing = Vec2::splat(TIGHT);
-            self.cpu_details(ui);
+            toolboks_addon_sdk::tutorial::region(ui, "details-cpu", |ui| self.cpu_details(ui));
             ui.add_space(6.0);
-            self.gpu_details(ui);
+            toolboks_addon_sdk::tutorial::region(ui, "details-gpu", |ui| self.gpu_details(ui));
             ui.add_space(6.0);
             self.power_card(ui, ui.available_width(), IO_HEIGHT);
             ui.add_space(6.0);
-            self.disk_details(ui);
+            toolboks_addon_sdk::tutorial::region(ui, "details-disk", |ui| self.disk_details(ui));
             ui.add_space(6.0);
-            self.net_details(ui);
+            toolboks_addon_sdk::tutorial::region(ui, "details-network", |ui| self.net_details(ui));
         });
     }
 

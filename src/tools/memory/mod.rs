@@ -154,6 +154,21 @@ impl Memory {
 }
 
 impl Tool for Memory {
+    fn tutorial_location(&self) -> String {
+        match self.tab {
+            advanced::Tab::Selected => "selected",
+            advanced::Tab::System => "system",
+            advanced::Tab::Rules => "rules",
+        }
+        .into()
+    }
+    fn tutorial_navigate(&mut self, section: &str) {
+        self.tab = match section {
+            "system" => advanced::Tab::System,
+            "rules" => advanced::Tab::Rules,
+            _ => advanced::Tab::Selected,
+        };
+    }
     fn name(&self) -> &'static str {
         "Memory Cleaner"
     }
