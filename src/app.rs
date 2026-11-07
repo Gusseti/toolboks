@@ -42,6 +42,8 @@ pub struct App {
     show_install: bool,
     pending_package: Option<toolboks_addon_sdk::Package>,
     detail: Option<String>,
+    /// The add-on selected in the Home list (by id). Memory only.
+    home_selected: Option<String>,
     remove_pending: Option<String>,
     message: Option<String>,
     preferences_dirty: Option<std::time::Instant>,
@@ -168,6 +170,7 @@ impl App {
             show_install: false,
             pending_package: None,
             detail: None,
+            home_selected: None,
             remove_pending: None,
             message,
             preferences_dirty: None,
@@ -250,65 +253,61 @@ impl App {
                     UpdateState::Installing
                 }
                 Err(e) => UpdateState::Failed(format!(
-                    "Updated, but could not restart ({e}). Start toolboks again."
+                    "Updated, but could not restart ({e}). Start Toolboks again."
                 )),
             },
         };
     }
 
-    /// The update control in one row. Meant for a right-to-left layout: the first item added
-    /// sits rightmost.
+    /// The update control: one wrapping row of a button and a plain status line.
     fn update_ui(&mut self, ui: &mut egui::Ui) {
         if cfg!(feature = "preview") {
-            ui.weak("Preview · updates disabled");
+            ui.label(
+                egui::RichText::new("This is a preview. Updates are turned off.")
+                    .size(look::TEXT_CAPTION)
+                    .color(look::MUTED),
+            );
             return;
         }
         let ctx = ui.ctx().clone();
-        match &self.update {
+        let status = |ui: &mut egui::Ui, text: &str, color: egui::Color32| {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(text)
+                        .size(look::TEXT_CAPTION)
+                        .color(color),
+                )
+                .wrap(),
+            );
+        };
+        ui.horizontal_wrapped(|ui| match &self.update {
             UpdateState::Idle | UpdateState::UpToDate | UpdateState::Failed(_) => {
-                let check = egui::Button::new(egui::RichText::new("Check for updates").size(11.0))
-                    .small()
-                    .frame(false);
-                if ui.add(check).clicked() {
+                if ui.button("Check for updates").clicked() {
                     self.update = UpdateState::Checking;
                     self.spawn_update_job(&ctx, || UpdateMsg::Checked(update::check()));
                 }
                 match &self.update {
                     UpdateState::UpToDate => {
-                        ui.small("You have the latest version.");
+                        status(ui, "You have the latest version.", look::MUTED)
                     }
-                    UpdateState::Failed(message) => {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(message).small().color(look::AMBER),
-                            )
-                            .truncate(),
-                        );
-                    }
+                    UpdateState::Failed(message) => status(ui, message, look::AMBER),
                     _ => {}
                 }
             }
-            UpdateState::Checking => {
-                ui.small("Checking\u{2026}");
-            }
+            UpdateState::Checking => status(ui, "Checking for updates...", look::MUTED),
             UpdateState::Available(release) => {
                 let release = release.clone();
-                let install = egui::Button::new(
-                    egui::RichText::new("Install and restart")
-                        .size(11.0)
-                        .color(egui::Color32::WHITE),
-                )
-                .small()
-                .fill(look::ACCENT);
-                if ui.add(install).clicked() {
+                if shell::primary(ui, "Install and restart").clicked() {
                     self.start_install(&ctx, release.clone());
                 }
-                ui.small(format!("Version {} is available.", release.version));
+                status(
+                    ui,
+                    &format!("Version {} is available.", release.version),
+                    look::MUTED,
+                );
             }
-            UpdateState::Installing => {
-                ui.small("Installing\u{2026}");
-            }
-        }
+            UpdateState::Installing => status(ui, "Installing the update...", look::MUTED),
+        });
     }
 }
 
@@ -441,47 +440,66 @@ impl App {
         egui::Window::new("Update available")
             .collapsible(false)
             .resizable(false)
+            .frame(shell::panel().shadow(egui::Shadow {
+                offset: [0, 4],
+                blur: 16,
+                spread: 0,
+                color: egui::Color32::from_black_alpha(120),
+            }))
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.set_max_width(340.0);
+                ui.set_max_width(340.0_f32.min((ctx.content_rect().width() - 64.0).max(200.0)));
                 ui.label(
-                    egui::RichText::new(format!("toolboks {} is ready", release.version))
+                    egui::RichText::new(format!("Toolboks {} is ready", release.version))
+                        .size(look::TEXT_TITLE)
                         .strong()
-                        .size(17.0),
+                        .color(look::TEXT),
                 );
-                ui.label(format!(
-                    "You are using version {}. Do you want to update now? \
-                     The app will restart.",
-                    Version::current()
-                ));
+                ui.label(
+                    egui::RichText::new(format!(
+                        "You are using version {}. Update now? Toolboks restarts to finish.",
+                        Version::current()
+                    ))
+                    .color(look::MUTED),
+                );
                 if let Some(size) = release.size {
-                    ui.small(format!("Download about {}", update::download_size(size)));
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Download about {}",
+                            update::download_size(size)
+                        ))
+                        .size(look::TEXT_CAPTION)
+                        .color(look::MUTED),
+                    );
                 }
                 let notes = update::plain_notes(&release.notes);
                 if !notes.is_empty() {
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("What's new").strong());
+                    ui.add_space(look::GAP);
+                    ui.label(
+                        egui::RichText::new("What is new")
+                            .size(look::TEXT_SECTION)
+                            .strong()
+                            .color(look::TEXT),
+                    );
                     egui::ScrollArea::vertical()
                         .max_height(140.0)
                         .id_salt("update_notes")
                         .show(ui, |ui| {
-                            ui.label(egui::RichText::new(notes).small().weak());
+                            ui.label(
+                                egui::RichText::new(notes)
+                                    .size(look::TEXT_CAPTION)
+                                    .color(look::MUTED),
+                            );
                         });
                 }
-                ui.add_space(10.0);
+                ui.add_space(look::SPACE_M);
                 ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new("Update now").color(egui::Color32::WHITE),
-                            )
-                            .fill(egui::Color32::from_rgb(38, 110, 214)),
-                        )
-                        .clicked()
-                    {
+                    if shell::primary(ui, "Update now").clicked() {
                         install = true;
                     }
-                    if ui.button("Not now").clicked() {
+                    if ui.button("Not now").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
                         later = true;
                     }
                 });
