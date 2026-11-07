@@ -456,7 +456,7 @@ impl Debloater {
 
         style::divider(ui);
         style::panel_heading(ui, "Undo");
-        let can_undo = self.last_run.is_some();
+        let can_undo = !self.undo_runs.is_empty();
         if ui
             .add_enabled(can_undo, egui::Button::new("Undo last run"))
             .clicked()
@@ -464,9 +464,7 @@ impl Debloater {
             self.undo_last_run();
         }
         if can_undo && ui.link(RichText::new("Copy undo steps").small()).clicked() {
-            if let Some(run) = &self.last_run {
-                ctx.copy_text(undo_text(run));
-            }
+            ctx.copy_text(undo_text(&self.undo_runs));
         }
         style::note(
             ui,
@@ -480,26 +478,24 @@ impl Debloater {
         let run = plan::apply(catalog::items(), ids, &mut backend::WinRegistry, self.env);
         self.message = Some(summarize(&run));
         self.run_notes = run_notes(&run);
-        // Keep an earlier run's undo steps if this one changed nothing.
         if !run.undo.is_empty() {
-            self.last_run = Some(run);
+            self.undo_runs.push(run.undo);
         }
         // Refreshing also clears the ticks of items that are now off.
         self.refresh();
     }
 
     fn undo_last_run(&mut self) {
-        let Some(run) = self.last_run.take() else {
+        let Some(steps) = self.undo_runs.last_mut() else {
             return;
         };
-        let results = plan::undo(&run, &mut backend::WinRegistry);
-        let failed = results.iter().filter(|(_, r)| r.is_err()).count();
-        self.message = Some(undo_summary(results.len(), failed));
-        self.run_notes.clear();
-        if failed > 0 {
-            // Keep the steps so the user can try again or copy them.
-            self.last_run = Some(run);
+        let total = steps.len();
+        plan::undo(steps, &mut backend::WinRegistry);
+        self.message = Some(undo_summary(total, steps.len()));
+        if steps.is_empty() {
+            self.undo_runs.pop();
         }
+        self.run_notes.clear();
         self.refresh();
     }
 }
@@ -561,9 +557,9 @@ fn hive_text(hive: Hive) -> &'static str {
 }
 
 /// A plain text list of what to put back by hand: item, setting path, previous value.
-fn undo_text(run: &plan::Run) -> String {
+fn undo_text(runs: &[Vec<plan::UndoOp>]) -> String {
     let mut out = String::from("toolboks undo steps\n");
-    for op in &run.undo {
+    for op in runs.iter().rev().flat_map(|steps| steps.iter().rev()) {
         let previous = match &op.previous {
             Some(RegValue::Dword(v)) => format!("number {v}"),
             Some(RegValue::Sz(s)) => format!("text \"{s}\""),
@@ -2289,32 +2285,30 @@ mod tests {
 
     #[test]
     fn undo_text_lists_previous_values() {
-        let run = plan::Run {
-            applied: Vec::new(),
-            undo: vec![
-                plan::UndoOp {
-                    id: "unknown-id",
-                    hive: Hive::CurrentUser,
-                    path: r"Software\T",
-                    name: "A",
-                    previous: Some(RegValue::Dword(1)),
-                },
-                plan::UndoOp {
-                    id: "unknown-id",
-                    hive: Hive::LocalMachine,
-                    path: r"Software\T",
-                    name: "B",
-                    previous: None,
-                },
-            ],
-        };
-        let text = undo_text(&run);
+        let runs = [
+            vec![plan::UndoOp {
+                id: "unknown-id",
+                hive: Hive::CurrentUser,
+                path: r"Software\T",
+                name: "A",
+                previous: Some(RegValue::Dword(1)),
+            }],
+            vec![plan::UndoOp {
+                id: "unknown-id",
+                hive: Hive::LocalMachine,
+                path: r"Software\T",
+                name: "B",
+                previous: None,
+            }],
+        ];
+        let text = undo_text(&runs);
         assert!(text.contains("unknown-id"));
         assert!(text.contains(r"HKEY_CURRENT_USER\Software\T"));
         assert!(text.contains("value: A"));
         assert!(text.contains("previous: number 1"));
         assert!(text.contains("HKEY_LOCAL_MACHINE"));
         assert!(text.contains("previous: not set"));
+        assert!(text.find("value: B").unwrap() < text.find("value: A").unwrap());
     }
 
     #[test]

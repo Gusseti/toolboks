@@ -148,7 +148,8 @@ pub struct Debloater {
     selected: HashSet<&'static str>,
     /// The item shown in "About this item".
     focus: Option<&'static str>,
-    last_run: Option<plan::Run>,
+    /// Registry undo steps grouped by apply run, oldest first.
+    undo_runs: Vec<Vec<plan::UndoOp>>,
     message: Option<String>,
     /// Plain-words lines for items of the last run that did not fully work.
     run_notes: Vec<String>,
@@ -170,7 +171,7 @@ impl Debloater {
             statuses: Vec::new(),
             selected: HashSet::new(),
             focus: None,
-            last_run: None,
+            undo_runs: Vec::new(),
             message: None,
             run_notes: Vec::new(),
             confirming: false,

@@ -36,6 +36,15 @@ pub struct RegSetting {
     pub path: &'static str,
     pub name: &'static str,
     pub off_value: u32,
+    /// Lower values are already stricter than the requested setting.
+    pub off_at_or_below: bool,
+}
+
+impl RegSetting {
+    pub fn is_off(&self, value: Option<&RegValue>) -> bool {
+        matches!(value, Some(RegValue::Dword(v))
+            if *v == self.off_value || (self.off_at_or_below && *v < self.off_value))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

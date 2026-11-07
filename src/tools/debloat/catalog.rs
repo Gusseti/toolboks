@@ -18,6 +18,7 @@ const fn user(path: &'static str, name: &'static str, off_value: u32) -> RegSett
         path,
         name,
         off_value,
+        off_at_or_below: false,
     }
 }
 
@@ -27,6 +28,7 @@ const fn machine(path: &'static str, name: &'static str, off_value: u32) -> RegS
         path,
         name,
         off_value,
+        off_at_or_below: false,
     }
 }
 
@@ -286,7 +288,10 @@ static ITEMS: &[Item] = &[
         could_break: "Nothing noticeable. Optional diagnostic settings in Windows are greyed out.",
         risk: Risk::Safe,
         min_edition: Edition::Pro,
-        settings: &[machine(DATA_COLLECTION, "AllowTelemetry", 1)],
+        settings: &[RegSetting {
+            off_at_or_below: true,
+            ..machine(DATA_COLLECTION, "AllowTelemetry", 1)
+        }],
     },
     Item {
         id: "feedback-notifications",
@@ -310,16 +315,6 @@ static ITEMS: &[Item] = &[
             machine(DATA_COLLECTION, "LimitDiagnosticLogCollection", 1),
             machine(DATA_COLLECTION, "LimitDumpCollection", 1),
         ],
-    },
-    Item {
-        id: "onesettings-downloads",
-        group: Group::PrivacyAds,
-        title: "Settings pushed by Microsoft",
-        what_changes: "Stops Windows from downloading configuration changes that Microsoft sends to your PC in the background.",
-        could_break: "Microsoft can no longer adjust some Windows features remotely. The exact effect on staged updates is not confirmed.",
-        risk: Risk::Careful,
-        min_edition: Edition::Pro,
-        settings: &[machine(DATA_COLLECTION, "DisableOneSettingsDownloads", 1)],
     },
     Item {
         id: "advertising-id-policy",
@@ -464,6 +459,18 @@ mod tests {
                 assert!(s.off_value <= 3, "{} {}", item.id, s.name);
             }
         }
+    }
+
+    #[test]
+    fn windows_update_configuration_is_never_offered() {
+        assert!(items()
+            .iter()
+            .flat_map(|item| item.settings)
+            .all(|setting| {
+                !setting
+                    .name
+                    .eq_ignore_ascii_case("DisableOneSettingsDownloads")
+            }));
     }
 
     #[test]

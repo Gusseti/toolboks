@@ -246,14 +246,6 @@ static CATALOG: &[TaskDef] = &[
     },
     // ---- Careful ----
     TaskDef {
-        id: "appexp-appraiser",
-        path: "\\Microsoft\\Windows\\Application Experience\\Microsoft Compatibility Appraiser",
-        title: "Compatibility appraiser",
-        what_changes: "Stops the job that scans your PC and sends compatibility data to Microsoft.",
-        could_break: "Windows Update may have less information when deciding whether to offer you a big feature update. Some PCs may be offered updates later, or not at all.",
-        risk: Risk::Careful,
-    },
-    TaskDef {
         id: "autochk-proxy",
         path: "\\Microsoft\\Windows\\Autochk\\Proxy",
         title: "System quality data proxy",
@@ -293,30 +285,6 @@ static CATALOG: &[TaskDef] = &[
         could_break: "Parental controls and screen time limits from Family Safety stop updating. Fine on a PC that does not use them.",
         risk: Risk::Careful,
     },
-    TaskDef {
-        id: "flighting-usage-reporting",
-        path: "\\Microsoft\\Windows\\Flighting\\FeatureConfig\\UsageDataReporting",
-        title: "Feature usage reporting",
-        what_changes: "Stops reports on which Windows features you use.",
-        could_break: "Not fully known. Microsoft may roll out new features to your PC differently.",
-        risk: Risk::Careful,
-    },
-    TaskDef {
-        id: "flighting-usage-receiver",
-        path: "\\Microsoft\\Windows\\Flighting\\FeatureConfig\\UsageDataReceiver",
-        title: "Feature usage collector",
-        what_changes: "Stops the collector of Windows feature usage data.",
-        could_break: "Not fully known. Microsoft may roll out new features to your PC differently.",
-        risk: Risk::Careful,
-    },
-    TaskDef {
-        id: "flighting-usage-flushing",
-        path: "\\Microsoft\\Windows\\Flighting\\FeatureConfig\\UsageDataFlushing",
-        title: "Feature usage data sender",
-        what_changes: "Stops sending of collected Windows feature usage data.",
-        could_break: "Not fully known. Microsoft may roll out new features to your PC differently.",
-        risk: Risk::Careful,
-    },
 ];
 
 /// All known tasks (Safe first, then Careful).
@@ -343,6 +311,8 @@ pub fn is_never_offered(path: &str) -> bool {
         "\\reconcilefeatures",
         "\\safeguardsreconciliation",
         "\\onesettings",
+        "\\flighting\\featureconfig\\",
+        "\\application experience\\microsoft compatibility appraiser",
         "\\cloudexperiencehost",
     ];
     let p = path.to_lowercase();
@@ -515,6 +485,10 @@ mod tests {
             "\\Microsoft\\Windows\\Flighting\\ReconcileFeatures",
             "\\Microsoft\\Windows\\Flighting\\SafeguardsReconciliation",
             "\\Microsoft\\Windows\\Flighting\\OneSettings\\RefreshCache",
+            "\\Microsoft\\Windows\\Flighting\\FeatureConfig\\UsageDataReporting",
+            "\\Microsoft\\Windows\\Flighting\\FeatureConfig\\UsageDataReceiver",
+            "\\Microsoft\\Windows\\Flighting\\FeatureConfig\\UsageDataFlushing",
+            "\\Microsoft\\Windows\\Application Experience\\Microsoft Compatibility Appraiser",
             "\\microsoft\\windows\\updateorchestrator\\x",
         ] {
             assert!(is_never_offered(p), "{p}");

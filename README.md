@@ -49,8 +49,10 @@ On launch the app makes one request to GitHub for the latest stable release (pre
 
 ## Design rules
 
-The add-on preview saves configuration and installed packages locally. Preview and stable
-data folders are separate. This supersedes the historical no-config rule in [docs/PLAN.md](docs/PLAN.md).
+Toolboks saves preferences and installed packages locally when you change a setting or manage an
+add-on. Opening and closing Toolboks without changes does not create a configuration file.
+Preview and stable data folders are separate. This supersedes the historical no-config rule in
+[docs/PLAN.md](docs/PLAN.md).
 Original native-tool options remain session-only until their settings migration is implemented.
 
 ## License

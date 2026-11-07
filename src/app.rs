@@ -57,7 +57,7 @@ pub struct App {
     silent_check: bool,
     /// Show the "update available" prompt window.
     prompt_open: bool,
-    /// "Keep running in the tray": the window's X hides it instead of quitting. Memory only.
+    /// "Keep running in the tray": the window's X hides it instead of quitting.
     keep_in_tray: bool,
     tray: Option<Tray>,
     /// The window is hidden in the tray.
@@ -120,11 +120,6 @@ impl App {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let registry = Registry::load(addons::data_root());
         let mut message = None;
-        if !registry.root.join("config.json").exists() {
-            if let Err(e) = registry.save() {
-                message = Some(format!("Could not save configuration: {e}"));
-            }
-        }
         let keep_in_tray = registry.config.keep_in_tray;
         let mut selected = (0, 0);
         let mut screen = Screen::Home;

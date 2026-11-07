@@ -54,7 +54,7 @@ fn state_of(item: &Item, reg: &dyn Registry) -> State {
     for s in item.settings {
         match reg.read(s.hive, s.path, s.name) {
             Err(_) => return State::Unknown,
-            Ok(Some(RegValue::Dword(v))) if v == s.off_value => {}
+            Ok(value) if s.is_off(value.as_ref()) => {}
             Ok(_) => active = true,
         }
     }
@@ -128,6 +128,9 @@ fn apply_item(item: &Item, reg: &mut dyn Registry, ops: &mut Vec<UndoOp>) -> Out
             Ok(p) => p,
             Err(e) => return fail(e, written, reg),
         };
+        if s.off_at_or_below && s.is_off(previous.as_ref()) {
+            continue;
+        }
         let op = UndoOp {
             id: item.id,
             hive: s.hive,
@@ -144,7 +147,7 @@ fn apply_item(item: &Item, reg: &mut dyn Registry, ops: &mut Vec<UndoOp>) -> Out
     let effective = item.settings.iter().all(|s| {
         matches!(
             reg.read(s.hive, s.path, s.name),
-            Ok(Some(RegValue::Dword(v))) if v == s.off_value
+            Ok(value) if s.is_off(value.as_ref())
         )
     });
     ops.extend(written);
@@ -186,13 +189,11 @@ pub fn apply(items: &[Item], selected: &[&str], reg: &mut dyn Registry, env: Env
     run
 }
 
-/// Restores the recorded previous values (newest first). One result per undo op.
-pub fn undo(run: &Run, reg: &mut dyn Registry) -> Vec<(&'static str, Result<(), String>)> {
-    run.undo
-        .iter()
-        .rev()
-        .map(|op| (op.id, restore(op, reg)))
-        .collect()
+/// Restores the recorded previous values (newest first), keeping failures for retry.
+pub fn undo(steps: &mut Vec<UndoOp>, reg: &mut dyn Registry) {
+    steps.reverse();
+    steps.retain(|op| restore(op, reg).is_err());
+    steps.reverse();
 }
 
 #[cfg(test)]
@@ -211,6 +212,7 @@ mod tests {
             path: P,
             name,
             off_value: 0,
+            off_at_or_below: false,
         }
     }
 
@@ -239,6 +241,7 @@ mod tests {
         path: P,
         name: "M1",
         off_value: 1,
+        off_at_or_below: false,
     }];
 
     fn test_items() -> Vec<Item> {
@@ -460,6 +463,35 @@ mod tests {
     }
 
     #[test]
+    fn minimum_diagnostic_data_preserves_stricter_policy() {
+        let items = catalog::items();
+        let id = "diagnostic-data-minimum";
+        let setting = items.iter().find(|item| item.id == id).unwrap().settings[0];
+        let env = Env {
+            edition: Edition::Enterprise,
+            ..PRO_ADMIN
+        };
+        for (level, expected, writes) in [(0, 0, 0), (1, 1, 0), (3, 1, 1)] {
+            let mut reg = FakeRegistry::default();
+            let policy = key(setting.hive, setting.path, setting.name);
+            reg.map.insert(policy.clone(), RegValue::Dword(level));
+            let status = status_of(items, &reg, env, id);
+            assert_eq!(
+                status.state,
+                if writes == 0 {
+                    State::Off
+                } else {
+                    State::Active
+                }
+            );
+            let run = apply(items, &[id], &mut reg, env);
+            assert_eq!(run.undo.len(), writes);
+            assert_eq!(reg.writes, writes);
+            assert_eq!(reg.map.get(&policy), Some(&RegValue::Dword(expected)));
+        }
+    }
+
+    #[test]
     fn apply_not_effective_when_writes_ignored() {
         let items = test_items();
         let mut reg = FakeRegistry {
@@ -495,14 +527,32 @@ mod tests {
         reg.set(Hive::CurrentUser, "A1", RegValue::Dword(7));
         reg.set(Hive::CurrentUser, "B1", RegValue::Sz("keep".into()));
         let before = reg.map.clone();
-        let run = apply(&items, &["a", "b"], &mut reg, PRO);
+        let mut run = apply(&items, &["a", "b"], &mut reg, PRO);
         assert_ne!(reg.map, before);
-        let results = undo(&run, &mut reg);
-        assert_eq!(results.len(), run.undo.len());
-        assert!(results.iter().all(|(_, r)| r.is_ok()));
-        // Newest first.
-        assert_eq!(results[0].0, "b");
+        undo(&mut run.undo, &mut reg);
+        assert!(run.undo.is_empty());
         assert_eq!(reg.map, before);
+    }
+
+    #[test]
+    fn undo_retries_only_failed_steps() {
+        let items = test_items();
+        let mut reg = FakeRegistry::default();
+        reg.set(Hive::CurrentUser, "A1", RegValue::Dword(1));
+        reg.set(Hive::CurrentUser, "A2", RegValue::Dword(2));
+        let mut run = apply(&items, &["a"], &mut reg, PRO);
+        // The first attempt restores A2 first, and the second write (A1) fails.
+        reg.fail_write_at = Some(reg.writes + 2);
+        undo(&mut run.undo, &mut reg);
+        assert_eq!(run.undo.len(), 1);
+        assert_eq!(run.undo[0].name, "A1");
+        assert_eq!(reg.get(Hive::CurrentUser, "A2"), Some(RegValue::Dword(2)));
+
+        reg.set(Hive::CurrentUser, "A2", RegValue::Dword(3));
+        undo(&mut run.undo, &mut reg);
+        assert!(run.undo.is_empty());
+        assert_eq!(reg.get(Hive::CurrentUser, "A1"), Some(RegValue::Dword(1)));
+        assert_eq!(reg.get(Hive::CurrentUser, "A2"), Some(RegValue::Dword(3)));
     }
 
     #[test]

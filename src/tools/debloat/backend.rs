@@ -329,6 +329,7 @@ mod tests {
             path,
             name: "Flag",
             off_value: 0,
+            off_at_or_below: false,
         }]));
         let items = [Item {
             id: "scratch",
@@ -347,14 +348,14 @@ mod tests {
         let mut r = WinRegistry;
         r.write(Hive::CurrentUser, path, "Flag", &RegValue::Dword(1))
             .unwrap();
-        let run = plan::apply(&items, &["scratch"], &mut r, env);
+        let mut run = plan::apply(&items, &["scratch"], &mut r, env);
         assert_eq!(run.applied.len(), 1);
         assert_eq!(
             r.read(Hive::CurrentUser, path, "Flag"),
             Ok(Some(RegValue::Dword(0)))
         );
-        let results = plan::undo(&run, &mut r);
-        assert!(results.iter().all(|(_, res)| res.is_ok()));
+        plan::undo(&mut run.undo, &mut r);
+        assert!(run.undo.is_empty());
         assert_eq!(
             r.read(Hive::CurrentUser, path, "Flag"),
             Ok(Some(RegValue::Dword(1)))

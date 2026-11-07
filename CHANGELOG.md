@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Toolboks creates its local configuration only after a settings or add-on change.
+- Debloater preserves stricter diagnostic-data settings and no longer offers the Compatibility Appraiser, Flighting feature-configuration tasks or OneSettings download policy.
+- Debloater keeps privacy and ads undo history across Apply runs. Undo works newest first, and failed steps stay available to retry.
+
 ## [0.11.0] - 2026-11-07
 
 ### Changed
