@@ -10,7 +10,7 @@
     "publisher": "Example developer",
     "category": "Developer tools",
     "icon": "leaf",
-    "accent": "#A99CDA",
+    "accent": "#8B5CF6",
     "api_version": 1,
     "min_toolboks_version": "0.8.2",
     "license": "MIT",
@@ -18,15 +18,15 @@
   },
   "pages": [
     {"id":"overview","title":"Overview","widgets":[
-      {"kind":"heading","text":"A little window into your system."},
-      {"kind":"text","text":"This is an installed add-on, running inside Toolboks. The outer frame stays put; the workspace belongs to the add-on."},
+      {"kind":"heading","text":"Your system at a glance"},
+      {"kind":"text","text":"This add-on runs inside Toolboks and uses its look, so you do not style anything yourself."},
       {"kind":"metric","label":"Memory in use","binding":"memory_percent"},
       {"kind":"metric","label":"Available memory","binding":"memory_available"},
       {"kind":"metric","label":"System uptime","binding":"uptime"},
-      {"kind":"note","title":"Make it yours","text":"Open Preferences, change a value, then restart Toolboks. Your choices are stored in the local configuration."}
+      {"kind":"note","title":"Make it yours","text":"Open Preferences and change a value. Your choice is kept on this PC and is still there after a restart."}
     ]},
     {"id":"preferences","title":"Preferences","widgets":[
-      {"kind":"heading","text":"Your add-on. Your preferences."},
+      {"kind":"heading","text":"Preferences"},
       {"kind":"toggle","key":"show_details","label":"Show detailed information","default":true},
       {"kind":"text_input","key":"label","label":"A name for this PC","default":"My workstation"}
     ]}

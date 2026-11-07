@@ -1,13 +1,6 @@
 use crate::scanner::Node;
+pub use crate::theme::DATA as COLORS;
 use egui::{Color32, Vec2};
-pub const COLORS: [Color32; 6] = [
-    Color32::from_rgb(165, 142, 202),
-    Color32::from_rgb(117, 151, 174),
-    Color32::from_rgb(177, 153, 124),
-    Color32::from_rgb(136, 161, 153),
-    Color32::from_rgb(163, 144, 169),
-    Color32::from_rgb(141, 151, 176),
-];
 const MIN_SIDE: f32 = 48.0;
 const HEIGHT: f32 = 300.0;
 const GAP: f32 = 5.0;
@@ -121,7 +114,7 @@ fn column_geometry(areas: &[f32]) -> (f32, Vec<f32>, f32) {
 }
 pub fn show(ui: &mut egui::Ui, layout: &MapLayout) -> Option<usize> {
     if layout.tiles.is_empty() {
-        ui.label("This folder is empty.");
+        crate::theme::weak(ui, "This folder is empty.");
         return None;
     }
     let mut clicked = None;
@@ -152,7 +145,7 @@ pub fn show(ui: &mut egui::Ui, layout: &MapLayout) -> Option<usize> {
                     ui.painter().rect_stroke(
                         rect,
                         4,
-                        egui::Stroke::new(2.0, Color32::WHITE),
+                        egui::Stroke::new(2.0, crate::theme::TEXT),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -162,14 +155,14 @@ pub fn show(ui: &mut egui::Ui, layout: &MapLayout) -> Option<usize> {
                     egui::Align2::LEFT_TOP,
                     &tile.name,
                     egui::FontId::proportional(12.0),
-                    Color32::from_rgb(28, 24, 35),
+                    crate::theme::ON_DATA,
                 );
                 painter.text(
                     rect.min + Vec2::new(7.0, 26.0),
                     egui::Align2::LEFT_TOP,
                     crate::size(tile.bytes),
                     egui::FontId::proportional(11.0),
-                    Color32::from_rgb(46, 40, 57),
+                    crate::theme::ON_DATA,
                 );
                 if response.clicked() {
                     clicked = Some(tile.id);
@@ -178,7 +171,7 @@ pub fn show(ui: &mut egui::Ui, layout: &MapLayout) -> Option<usize> {
             }
         });
     ui.add_space(5.0);
-    ui.label(egui::RichText::new("Packed by size · Scroll sideways for more · Tiny items are enlarged for selection; labels show actual sizes.").size(12.0).color(Color32::from_rgb(164,168,178)));
+    crate::theme::caption(ui, "Tiles are sized by space used, and tiny items are enlarged so you can click them. Labels show the real sizes. Scroll sideways for more.");
     clicked
 }
 #[cfg(test)]

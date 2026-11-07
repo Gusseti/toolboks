@@ -1,14 +1,30 @@
 {
   "schema_version": 1,
-  "background": "#101215",
-  "sidebar": "#14171B",
-  "panel": "#191D22",
-  "status": "#0F1012",
-  "border": "#2A2D33",
-  "text": "#ECECF1",
-  "muted": "#A4A8B2",
-  "host_accent": "#A48ACA",
-  "host_accent_fill": "#69449E",
-  "body_font_size": 14,
-  "small_font_size": 12
+  "background": "#0E0F11",
+  "sidebar": "#0A0B0C",
+  "panel": "#15161A",
+  "status": "#0A0B0C",
+  "border": "#24262C",
+  "text": "#E8E9EC",
+  "muted": "#9A9EA8",
+  "host_accent": "#8B5CF6",
+  "host_accent_fill": "#8B5CF633",
+  "body_font_size": 12,
+  "small_font_size": 11,
+  "selected_row": "#1B1C21",
+  "bar_divider": "#1C1E22",
+  "data": {
+    "cpu": "#8B5CF6",
+    "memory": "#B39DFA",
+    "gpu": "#3ECF8E",
+    "disk": "#F0A83A",
+    "network": "#45B8F0",
+    "second_line": "#9A9EA8"
+  },
+  "status_colors": {
+    "ok": "#3ECF8E",
+    "watch": "#F0A83A",
+    "problem": "#E5534B"
+  },
+  "design_reference": "../DESIGN.md"
 }

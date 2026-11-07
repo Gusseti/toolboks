@@ -10,7 +10,7 @@
     "publisher": "Example developer",
     "category": "Developer tools",
     "icon": "leaf",
-    "accent": "#A99CDA",
+    "accent": "#8B5CF6",
     "api_version": 1,
     "min_toolboks_version": "0.8.2",
     "license": "MIT",
@@ -26,11 +26,11 @@
       "widgets": [
         {
           "kind": "heading",
-          "text": "A little window into your system."
+          "text": "Your system at a glance"
         },
         {
           "kind": "text",
-          "text": "This is an installed add-on, running inside Toolboks. The outer frame stays put; the workspace belongs to the add-on."
+          "text": "This add-on runs inside Toolboks and uses its look, so you do not style anything yourself."
         },
         {
           "kind": "metric",
@@ -50,7 +50,7 @@
         {
           "kind": "note",
           "title": "Make it yours",
-          "text": "Open Preferences, change a value, then restart Toolboks. Your choices are stored in the local configuration."
+          "text": "Open Preferences and change a value. Your choice is kept on this PC and is still there after a restart."
         }
       ]
     },
@@ -60,7 +60,7 @@
       "widgets": [
         {
           "kind": "heading",
-          "text": "Your add-on. Your preferences."
+          "text": "Preferences"
         },
         {
           "kind": "toggle",
@@ -86,7 +86,7 @@
     },
     {
       "target": "widget-1",
-      "description": "This is an installed add-on, running inside Toolboks. The outer frame stays put; the workspace belongs to the add-on.",
+      "description": "This add-on runs inside Toolboks and uses its look, so you do not style anything yourself.",
       "title": "Overview",
       "page": "overview"
     },
@@ -110,7 +110,7 @@
     },
     {
       "target": "widget-5",
-      "description": "Open Preferences, change a value, then restart Toolboks. Your choices are stored in the local configuration.",
+      "description": "Open Preferences and change a value. Your choice is kept on this PC and is still there after a restart.",
       "title": "Make it yours",
       "page": "overview"
     },

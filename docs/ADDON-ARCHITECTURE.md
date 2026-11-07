@@ -1,5 +1,9 @@
 # Add-on architecture
 
+Every add-on follows the design system in [DESIGN.md](../DESIGN.md) and passes the
+[add-on design checklist](ADDON-DESIGN-CHECKLIST.md). Declarative packages pick up the
+host look with no change; native add-ons use the host helpers and the tokens only.
+
 Toolboks owns the window, background palette, collapsible sidebar, overview, local
 add-on browser, settings and status bar. Add-ons render inside that workspace.
 The four original tools are separate preinstalled (built-in) add-ons with their own
@@ -62,7 +66,8 @@ packages without them receive basic page/widget tours. See [GUIDED-TOURS.md](GUI
 
 ## Native storage tools
 
-Disk Manager uses background scanning and export workers, a packed clickable map,
+Disk Manager follows DESIGN.md (tokens in its `theme.rs`, inline stats bar, hairline
+cards, sentence-case table headers). It uses background scanning and export workers, a packed clickable map,
 folder browsing, largest-file rankings, filters, type totals and coverage reports.
 Drive optimization uses Windows numeric analysis and retained success history.
 HDD defrag, SSD TRIM and Windows-selected fallback actions require an approved

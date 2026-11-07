@@ -79,18 +79,18 @@ impl Panel {
         if state.refreshing || state.job.is_some() {
             ui.request_repaint_after(Duration::from_millis(250));
         }
-        ui.label(RichText::new("Drive optimization").size(23.0));
+        theme::title(ui, "Drive optimization");
         weak(
             ui,
-            "Understand fragmentation. Defragment hard drives or TRIM solid-state storage.",
+            "Check how fragmented a drive is, then defragment a hard drive or run TRIM on an SSD. Nothing starts until you confirm.",
         );
         if tutorial {
-            ui.label(RichText::new("TUTORIAL SAMPLE · No disk operation runs").color(ACCENT));
+            weak(ui, "Tutorial sample. No disk operation runs.");
         }
-        ui.add_space(14.0);
+        ui.add_space(theme::SPACE_L);
         if !self.allowed {
-            card().show(ui,|ui|{ui.set_width(ui.available_width());ui.label("Disk Manager has a new drive-optimization permission.");weak(ui,"Your installed version keeps its original read-only access. Review the add-on update to enable analysis and optimization.");if ui.button("Review Disk Manager update").clicked(){self.request=Some(HostRequest::ReviewUpdate);}});
-            ui.add_space(12.0);
+            card().show(ui,|ui|{ui.set_width(ui.available_width());theme::section(ui, "Optimization is turned off");weak(ui,"This version of Disk Manager can only read. Review the add-on update to allow analysis and optimization. You can still say no.");if ui.add(theme::outlined("Review Disk Manager update")).clicked(){self.request=Some(HostRequest::ReviewUpdate);}});
+            ui.add_space(theme::SPACE_L);
         }
         if let Some(m) = &state.metadata {
             if !m.volumes.iter().any(|v| v.letter == self.selected) {
@@ -124,7 +124,7 @@ impl Panel {
                     if ui
                         .add_enabled(
                             !state.refreshing && state.job.is_none(),
-                            egui::Button::new("Refresh drive information"),
+                            theme::outlined("Refresh drive information"),
                         )
                         .clicked()
                     {
@@ -133,7 +133,7 @@ impl Panel {
                 })
             });
             if let Some(v) = m.volumes.iter().find(|v| v.letter == self.selected) {
-                ui.add_space(8.0);
+                ui.add_space(theme::SPACE_M);
                 weak(
                     ui,
                     format!(
@@ -151,38 +151,38 @@ impl Panel {
                 if v.media == Media::Unknown {
                     weak(ui,"The hardware did not expose a reliable media type. Windows will choose its appropriate optimization.");
                 }
-                ui.add_space(16.0);
+                ui.add_space(theme::SPACE_L);
                 let report = state.reports.get(&v.device_id);
                 guide::region(ui, "optimize-fragmentation", |ui| {
                     card().show(ui,|ui|{
-                    ui.set_width(ui.available_width());ui.label(RichText::new("Fragmentation").size(18.0));ui.add_space(8.0);
-                    ui.columns(3,|cols|{for(col,(label,value))in cols.iter_mut().zip([("Total fragmentation",report.and_then(|a|a.total_percent)),("File fragmentation",report.and_then(|a|a.file_percent)),("Free-space fragmentation",report.and_then(|a|a.free_percent))]){weak(col,label);col.label(RichText::new(value.map_or("Not analyzed".into(),|n|format!("{n:.0}%"))).size(27.0));}});
+                    ui.set_width(ui.available_width());theme::section(ui,"Fragmentation");ui.add_space(theme::SPACE_S);
+                    ui.horizontal_wrapped(|ui|{for(label,value)in [("total fragmentation",report.and_then(|a|a.total_percent)),("file fragmentation",report.and_then(|a|a.file_percent)),("free-space fragmentation",report.and_then(|a|a.free_percent))]{theme::stat(ui,value.map_or("Not analyzed".into(),|n|format!("{n:.0}%")),label);}});
                     if let Some(r)=report{weak(ui,format!("Analyzed {} · local time · snapshot, not a live reading",r.checked_at));weak(ui,format!("{} fragmented files of {}",r.fragmented_files.map_or("Unknown".into(),|n|n.to_string()),r.total_files.map_or("unknown".into(),|n|n.to_string())));if v.media==Media::Hdd{weak(ui,if r.recommended{"Windows recommended defragmentation at the time of analysis."}else{"Windows did not recommend defragmentation at the time of analysis."});}}
                     else{weak(ui,"Analyze this drive to get a numeric report from Windows. Unavailable measurements are never shown as zero.");}
                     if v.media==Media::Ssd{weak(ui,"Fragmentation is not an SSD health or wear score. TRIM tells the SSD which unused blocks can be reclaimed.");}
                 });
                 });
-                ui.add_space(12.0);
+                ui.add_space(theme::SPACE_L);
                 guide::region(ui, "optimize-history", |ui| {
                     card().show(ui,|ui|{
-                    ui.set_width(ui.available_width());ui.label(RichText::new("Last recorded optimization").size(18.0));
+                    ui.set_width(ui.available_width());theme::section(ui,"Last recorded optimization");
                     ui.columns(3,|cols|{for(col,(title,record))in cols.iter_mut().zip([("Latest Windows record",v.history.first()),("Last defrag",v.history.iter().find(|h|h.kind()=="Defrag")),("Last TRIM",v.history.iter().find(|h|h.kind()=="TRIM"))]){weak(col,title);if let Some(h)=record{col.label(&h.time);weak(col,format!("{} · {}",h.kind(),h.operation));col.label(RichText::new(&h.volume).small().weak()).on_hover_text(&h.utc);}else{col.label("No available record");}}});
                     weak(ui,"Successful Windows optimization events for this drive letter · local time. Missing records do not mean the drive was never optimized. Available history is limited by Windows log retention.");
-                    if let Some(w)=&m.history_warning{ui.label(RichText::new(format!("Windows history could not be read: {w}")).small().color(ACCENT));}
+                    if let Some(w)=&m.history_warning{theme::caption(ui,format!("Windows history could not be read: {w}"));}
                 });
                 });
-                ui.add_space(12.0);
+                ui.add_space(theme::SPACE_L);
                 guide::region(ui, "optimize-actions", |ui| {
                     card().show(ui,|ui|{
-                    ui.set_width(ui.available_width());ui.label(RichText::new("Maintain this drive").size(18.0));
+                    ui.set_width(ui.available_width());theme::section(ui,"Maintain this drive");
                     if v.dirty{weak(ui,"Windows marked this filesystem as needing a check. Optimization is unavailable.");}
                     else if !v.supported(){weak(ui,"Optimization is unavailable for this filesystem or drive state.");}
                     if v.media==Media::Hdd&&v.free as f64/(v.capacity.max(1)as f64)<0.15{weak(ui,"Less than 15% free space: Windows may only partially defragment this drive.");}
                     ui.horizontal(|ui|{
                         let enabled=self.allowed&&m.elevated&&v.supported()&&!self.busy()&&!tutorial;
-                        if ui.add_enabled(enabled,egui::Button::new("Analyze fragmentation")).clicked(){backend::start(&self.service,&v.letter,&v.device_id,Action::Analyze);}
-                        if ui.add_enabled(enabled,egui::Button::new(v.action().label())).clicked(){self.confirm=Some((v.letter.clone(),v.device_id.clone(),v.action()));}
-                        if !m.elevated&&self.allowed&&ui.add_enabled(!self.busy(),egui::Button::new("Restart with administrator access")).clicked(){self.request=Some(HostRequest::RestartElevated{page:"4".into()});}
+                        if ui.add_enabled(enabled,theme::outlined("Analyze fragmentation")).clicked(){backend::start(&self.service,&v.letter,&v.device_id,Action::Analyze);}
+                        if ui.add_enabled(enabled,theme::outlined(v.action().label())).clicked(){self.confirm=Some((v.letter.clone(),v.device_id.clone(),v.action()));}
+                        if !m.elevated&&self.allowed&&ui.add_enabled(!self.busy(),theme::outlined("Restart with administrator access")).clicked(){self.request=Some(HostRequest::RestartElevated{page:"4".into()});}
                     });
                     weak(ui,"Analysis reads fragmentation data. Defrag and TRIM modify storage layout or allocation metadata. Neither starts automatically. Windows performs the work in the background; an optimization already started can continue if Toolboks is closed.");
                 });
@@ -197,23 +197,23 @@ impl Panel {
             if state.refreshing {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Reading drive information and Windows history…");
+                    ui.label("Reading drive information and Windows history...");
                 });
             }
             if ui
                 .add_enabled(
                     !state.refreshing,
-                    egui::Button::new("Retry drive information"),
+                    theme::outlined("Retry drive information"),
                 )
                 .clicked()
             {
                 backend::refresh(&self.service);
             }
         }
-        ui.add_space(12.0);
+        ui.add_space(theme::SPACE_L);
         guide::region(ui, "optimize-progress", |ui| {
             card().show(ui,|ui|{
-            ui.set_width(ui.available_width());ui.label(RichText::new("Activity and Windows report").size(18.0));
+            ui.set_width(ui.available_width());theme::section(ui,"Activity and Windows report");
             if let Some(job)=&state.job{ui.horizontal(|ui|{ui.spinner();ui.label(format!("{} · {} · {}s",job.action.label(),job.letter,job.started.elapsed().as_secs()));});if let Some(p)=job.phase_percent{ui.add(egui::ProgressBar::new(p/100.0).text(format!("Windows-reported percentage · {p:.0}%")));weak(ui,"Windows may report several phases; this is not an overall completion estimate.");}
 if !job.output.is_empty(){egui::ScrollArea::vertical().id_salt("optimize-output").max_height(180.0).show(ui,|ui|{ui.label(RichText::new(&job.output).monospace().size(12.0));});}}
             else{weak(ui,"No Toolboks optimization is running.");}
@@ -222,8 +222,8 @@ if !job.output.is_empty(){egui::ScrollArea::vertical().id_salt("optimize-output"
         });
         });
         if let Some((letter, device_id, action)) = self.confirm.clone() {
-            let result=egui::Modal::new(egui::Id::unique("confirm-drive-optimization")).show(ui.ctx(),|ui|{ui.set_width(430.0);ui.label(RichText::new(format!("{} {letter}?",action.label())).size(23.0));weak(ui,match action{Action::Trim=>"Send TRIM hints for unused blocks on this SSD. Windows performs the operation; it does not run traditional defragmentation.",Action::Defrag=>"Ask Windows to rearrange fragmented file data on this hard drive. The drive can be busy while this runs.",_=>"Ask Windows to choose the appropriate optimization for this media type."});ui.horizontal(|ui|{if ui.button("Start optimization").clicked(){if self.allowed{backend::start(&self.service,&letter,&device_id,action);}self.confirm=None;}
-if ui.button("Cancel").clicked(){self.confirm=None;}});});
+            let result=egui::Modal::new(egui::Id::unique("confirm-drive-optimization")).show(ui.ctx(),|ui|{ui.set_width(430.0);theme::title(ui,&format!("{} {letter}?",action.label()));ui.add_space(theme::SPACE_S);weak(ui,match action{Action::Trim=>"Send TRIM hints for unused blocks on this SSD. Windows performs the operation; it does not run traditional defragmentation.",Action::Defrag=>"Ask Windows to rearrange fragmented file data on this hard drive. The drive can be busy while this runs.",_=>"Ask Windows to choose the appropriate optimization for this media type."});ui.horizontal(|ui|{if theme::primary(ui,"Start optimization").clicked(){if self.allowed{backend::start(&self.service,&letter,&device_id,action);}self.confirm=None;}
+if ui.add(theme::outlined("Cancel")).clicked(){self.confirm=None;}});});
             if result.should_close() {
                 self.confirm = None;
             }

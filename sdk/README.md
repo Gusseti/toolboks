@@ -4,6 +4,10 @@ Build an add-on that stays inside the Toolboks workspace. This SDK includes a Ru
 manifest/UI contract, validation and packaging CLI, JSON Schema, a working starter,
 and the shared background palette. No account is required for local development.
 
+Design: every add-on follows [DESIGN.md](../DESIGN.md), the Toolboks design system, and
+passes the [add-on design checklist](../docs/ADDON-DESIGN-CHECKLIST.md). `tbaddon validate`
+prints the checklist after a package passes; `tbaddon checklist` prints it on its own.
+
 ## Start here
 
 1. Copy `examples/hello-system.tbaddon` and edit the manifest, pages, and widgets.
@@ -41,7 +45,12 @@ native providers use API 2. `min_toolboks_version` is
 checked on install and load. Icons: grid, activity, layers, storage, wrench, leaf.
 `accent` is `#RRGGBB`. URLs must be HTTPS. All unrecognized manifest fields are rejected.
 
-Pages contain headings, text, notes, live metrics, toggles, and text inputs. Each
+Pages contain headings, text, notes, live metrics, toggles, and text inputs. They render
+in the host's style (see DESIGN.md): headings as section titles, notes as one-line muted
+banners with a short title, metrics as inline value and label, toggles as switches.
+A package has no styling fields, so it looks like the built-in tools with no change.
+Write headings and page names in sentence case, use plain words and label estimates.
+Each
 page has a unique ID. Preference keys must be unique across the entire add-on.
 Widgets are keyed by `kind`; see the starter and `package.schema.json`.
 
@@ -53,8 +62,10 @@ Capabilities:
 - `user_exports`: approved native providers can save reports on the user's request.
 
 Toolboks owns the window, navigation, and backgrounds. Add-ons choose their content,
-pages and accent color. Background tokens are in `theme.json`. They are not editable
-by a package. The four built-in tools keep their native egui UI.
+pages and accent color. The design tokens (backgrounds, text, accent, data and status
+colours) are in `theme.json` and mirror DESIGN.md. They are not editable by a package.
+The four built-in tools keep their native egui UI. Native add-ons use the host
+helpers and the tokens only, with no palette, font, radius or icon style of their own.
 
 ## Trust and scope
 
