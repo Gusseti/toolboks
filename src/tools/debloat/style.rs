@@ -4,8 +4,8 @@
 use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::ui::{
-    BAR_DIVIDER, BORDER, CARD_PAD, CARD_RADIUS, CONTROL_RADIUS, GAP, MUTED, PANEL_BG, SELECTED_BG,
-    SPACE_XS, TEXT, TEXT_CAPTION, TEXT_SECTION,
+    row_rule, BAR_DIVIDER, BORDER, CARD_PAD, CARD_RADIUS, CONTROL_RADIUS, GAP, MUTED, PANEL_BG,
+    SELECTED_BG, SPACE_XS, TEXT, TEXT_CAPTION, TEXT_SECTION,
 };
 
 pub const ROW_HEIGHT: f32 = 30.0;
@@ -114,7 +114,7 @@ pub fn row(ui: &mut egui::Ui, focused: bool, chips: &[Chip]) -> (egui::Response,
             painter.rect_filled(rect, CONTROL_RADIUS, BAR_DIVIDER);
         }
         if !focused && !response.hovered() {
-            painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BAR_DIVIDER));
+            row_rule(painter, rect);
         }
         if response.has_focus() {
             painter.rect_stroke(

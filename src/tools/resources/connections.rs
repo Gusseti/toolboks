@@ -22,11 +22,13 @@ use windows::Win32::Networking::WinSock::{
 };
 
 use super::processes::{
-    banner, body_cell, confirm_text, end_process, header_cell, inspector_edge, inspector_frame,
-    is_protected, kv, result_line, row_rule, sort_arrow, switch_row, table_style, visible,
-    ActionError, INSPECTOR_WIDTH, PROTECTED_NOTE, REFRESH, ROW_HEIGHT,
+    confirm_text, end_process, is_protected, kv, result_line, sort_arrow, visible, ActionError,
+    INSPECTOR_WIDTH, PROTECTED_NOTE, REFRESH, ROW_HEIGHT,
 };
-use crate::ui::{CARD_PAD, GAP, RED, SPACE_M, TEXT_SECTION};
+use crate::ui::{
+    banner, body_cell, header_cell, inspector_edge, inspector_frame, row_rule, switch_row,
+    table_style, CARD_PAD, GAP, RED, SPACE_M, TEXT_SECTION,
+};
 
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 const NO_ERROR: u32 = 0;

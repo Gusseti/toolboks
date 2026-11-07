@@ -19,8 +19,8 @@ const MINI_HEIGHT: f32 = 92.0;
 const IO_HEIGHT: f32 = 120.0;
 /// Gap between graph cards on this page.
 const TIGHT: f32 = 4.0;
-/// Space above each section, more than below it.
-const SECTION_GAP: f32 = 12.0;
+/// Visible gap between sections (the card gap, 8 to 12 px); each add_space sits between two item gaps.
+const SECTION_GAP: f32 = 10.0;
 /// Engine types that always get a graph when the GPU reports them.
 const MAIN_ENGINES: [&str; 5] = ["3D", "Copy", "Video Decode", "Video Encode", "Compute"];
 
@@ -127,13 +127,13 @@ impl Resources {
         ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::LEFT), |ui| {
             ui.spacing_mut().item_spacing = Vec2::splat(TIGHT);
             toolboks_addon_sdk::tutorial::region(ui, "details-cpu", |ui| self.cpu_details(ui));
-            ui.add_space(SECTION_GAP);
+            ui.add_space(SECTION_GAP - 2.0 * TIGHT);
             toolboks_addon_sdk::tutorial::region(ui, "details-gpu", |ui| self.gpu_details(ui));
-            ui.add_space(SECTION_GAP);
+            ui.add_space(SECTION_GAP - 2.0 * TIGHT);
             self.power_card(ui, ui.available_width(), IO_HEIGHT);
-            ui.add_space(SECTION_GAP);
+            ui.add_space(SECTION_GAP - 2.0 * TIGHT);
             toolboks_addon_sdk::tutorial::region(ui, "details-disk", |ui| self.disk_details(ui));
-            ui.add_space(SECTION_GAP);
+            ui.add_space(SECTION_GAP - 2.0 * TIGHT);
             toolboks_addon_sdk::tutorial::region(ui, "details-network", |ui| self.net_details(ui));
         });
     }
