@@ -54,6 +54,12 @@ pub struct ServiceDef {
     pub target: StartType,
 }
 
+impl ServiceDef {
+    pub fn is_off(&self, start: StartType) -> bool {
+        start == StartType::Disabled || start == self.target
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServiceState {
     Present {
@@ -659,8 +665,8 @@ pub fn set_off(svc: &mut dyn Services, def: &ServiceDef) -> Result<UndoStep, Str
     if let StartType::Other(_) = previous {
         return Err("This service starts with Windows itself and is left alone".to_string());
     }
-    if previous == known.target {
-        return Err(format!("Already set to {}", known.target.label()));
+    if known.is_off(previous) {
+        return Err(format!("Already set to {}", previous.label()));
     }
     if known.target == StartType::Disabled && !dependents.is_empty() {
         let shown: Vec<&str> = dependents.iter().take(3).map(String::as_str).collect();
@@ -879,6 +885,12 @@ mod tests {
         // Already at target.
         let mut f = FakeServices::with("DiagTrack", StartType::Disabled);
         assert!(set_off(&mut f, &d).is_err());
+        let mut f = FakeServices::with("SysMain", StartType::Disabled);
+        assert_eq!(
+            set_off(&mut f, &find("SysMain")).unwrap_err(),
+            "Already set to Disabled"
+        );
+        assert!(f.writes.is_empty());
         // Other start type.
         let mut f = FakeServices::with("DiagTrack", StartType::Other(1));
         assert!(set_off(&mut f, &d).is_err());

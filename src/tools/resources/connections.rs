@@ -22,8 +22,9 @@ use windows::Win32::Networking::WinSock::{
 };
 
 use super::processes::{
-    confirm_text, end_process, is_protected, kv, result_line, sort_arrow, visible, ActionError,
-    INSPECTOR_WIDTH, PROTECTED_NOTE, REFRESH, ROW_HEIGHT,
+    confirm_text, end_process, is_protected, kv, result_line, sampled_identity, snapshot_start,
+    sort_arrow, visible, ActionError, ProcessIdentity, INSPECTOR_WIDTH, PROTECTED_NOTE, REFRESH,
+    ROW_HEIGHT,
 };
 use crate::ui::{
     banner, body_cell, header_cell, inspector_edge, inspector_frame, row_rule, switch_row,
@@ -71,6 +72,7 @@ fn state_text(state: TcpState) -> &'static str {
 #[derive(Clone, Debug, PartialEq)]
 struct Conn {
     pid: u32,
+    identity: Option<ProcessIdentity>,
     name: String,
     exe: Option<String>,
     proto: Proto,
@@ -84,11 +86,12 @@ impl Conn {
     /// Stable key so the selection survives the refresh.
     fn key(&self) -> String {
         format!(
-            "{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}",
             self.proto.text(),
             addr_text(self.local),
             self.remote.map_or(String::new(), addr_text),
-            self.pid
+            self.pid,
+            self.identity.map_or(0, |id| id.created)
         )
     }
 
@@ -340,16 +343,17 @@ fn copy_row(c: &Conn) -> String {
 }
 
 /// Joins raw rows with process names. Unknown pids get "Unknown".
-fn name_rows(raw: Vec<Raw>, names: &HashMap<u32, (String, Option<String>)>) -> Vec<Conn> {
+fn name_rows(raw: Vec<Raw>, names: &HashMap<u32, Owner>) -> Vec<Conn> {
     raw.into_iter()
         .map(|r| {
-            let (name, exe) = match names.get(&r.pid) {
-                Some((n, e)) => (n.clone(), e.clone()),
-                None if r.pid == 0 => ("System".to_string(), None),
-                None => ("Unknown".to_string(), None),
+            let (name, exe, identity) = match names.get(&r.pid) {
+                Some(owner) => (owner.name.clone(), owner.exe.clone(), owner.identity),
+                None if r.pid == 0 => ("System".to_string(), None, None),
+                None => ("Unknown".to_string(), None, None),
             };
             Conn {
                 pid: r.pid,
+                identity,
                 name,
                 exe,
                 proto: r.proto,
@@ -359,6 +363,12 @@ fn name_rows(raw: Vec<Raw>, names: &HashMap<u32, (String, Option<String>)>) -> V
             }
         })
         .collect()
+}
+
+struct Owner {
+    name: String,
+    exe: Option<String>,
+    identity: Option<ProcessIdentity>,
 }
 
 /// What the Resolve button shows once the lookup is done.
@@ -528,21 +538,26 @@ impl Worker {
                         continue;
                     }
                     last = Some(Instant::now());
-                    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
-                    let names: HashMap<u32, (String, Option<String>)> = sys
-                        .processes()
-                        .values()
-                        .map(|p| {
-                            (
-                                p.pid().as_u32(),
-                                (
-                                    p.name().to_string_lossy().into_owned(),
-                                    p.exe().map(|e| e.display().to_string()),
-                                ),
-                            )
-                        })
-                        .collect();
-                    let snap = read_all().map(|raw| name_rows(raw, &names));
+                    let sample_start = snapshot_start();
+                    let snap = read_all().map(|raw| {
+                        sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+                        let pids: HashSet<_> = raw.iter().map(|row| row.pid).collect();
+                        let names = pids
+                            .into_iter()
+                            .filter_map(|pid| {
+                                let process = sys.process(sysinfo::Pid::from_u32(pid))?;
+                                Some((
+                                    pid,
+                                    Owner {
+                                        name: process.name().to_string_lossy().into_owned(),
+                                        exe: process.exe().map(|e| e.display().to_string()),
+                                        identity: sampled_identity(process, sample_start),
+                                    },
+                                ))
+                            })
+                            .collect();
+                        name_rows(raw, &names)
+                    });
                     if tx.send(snap).is_err() {
                         return;
                     }
@@ -571,7 +586,7 @@ impl Worker {
 enum Intent {
     Copy(String),
     Resolve(IpAddr),
-    AskEnd(u32),
+    AskEnd(ProcessIdentity),
     ConfirmEnd,
     CancelEnd,
 }
@@ -590,10 +605,10 @@ pub(super) struct Page {
     sort_key: SortKey,
     descending: bool,
     selected: Option<String>,
-    /// Pid waiting for the second click on End process.
-    confirm: Option<u32>,
+    /// Process identity waiting for the second click on End process.
+    confirm: Option<ProcessIdentity>,
     denied: HashSet<u32>,
-    end_job: Option<Receiver<(String, bool)>>,
+    end_job: Option<Receiver<(String, Option<u32>)>>,
     end_line: Option<String>,
     /// Looked-up names, kept in memory only.
     names: HashMap<IpAddr, Option<String>>,
@@ -643,10 +658,8 @@ impl Page {
         if let Some((line, denied_pid)) = done {
             self.end_job = None;
             self.end_line = Some(line);
-            if denied_pid {
-                if let Some(pid) = self.selected_pid() {
-                    self.denied.insert(pid);
-                }
+            if let Some(pid) = denied_pid {
+                self.denied.insert(pid);
             }
         }
         let name = self
@@ -657,11 +670,6 @@ impl Page {
             self.resolving = None;
             self.names.insert(ip, n);
         }
-    }
-
-    fn selected_pid(&self) -> Option<u32> {
-        let key = self.selected.as_ref()?;
-        self.live.iter().find(|c| &c.key() == key).map(|c| c.pid)
     }
 
     pub(super) fn ui(&mut self, ui: &mut egui::Ui) {
@@ -776,6 +784,7 @@ impl Page {
         });
         if paused != was_paused {
             self.frozen = paused.then(|| self.live.clone());
+            self.confirm = None;
         }
     }
 
@@ -907,13 +916,21 @@ impl Page {
         let own_pid = std::process::id();
         let protected = is_protected(c.pid, &c.name, own_pid, &self.denied);
         let busy = self.end_job.is_some();
-        if self.confirm.is_some_and(|p| p != c.pid) {
+        if self.confirm.is_some() && self.confirm != c.identity {
             self.confirm = None;
         }
         if protected {
             ui.add_enabled(false, egui::Button::new("End process"));
             ui.label(RichText::new(PROTECTED_NOTE).weak().small());
-        } else if self.confirm == Some(c.pid) {
+        } else if self.frozen.is_some() || c.identity.is_none() {
+            ui.add_enabled(false, egui::Button::new("End process"));
+            let note = if self.frozen.is_some() {
+                "Resume to change running processes."
+            } else {
+                "Windows could not verify the selected process."
+            };
+            ui.label(RichText::new(note).weak().small());
+        } else if self.confirm.is_some() {
             ui.label(RichText::new(confirm_text(&c.name, 1)).small());
             ui.horizontal(|ui| {
                 if ui
@@ -933,7 +950,7 @@ impl Page {
             .add_enabled(!busy, egui::Button::new("End process"))
             .clicked()
         {
-            intent = Some(Intent::AskEnd(c.pid));
+            intent = c.identity.map(Intent::AskEnd);
         }
         if busy {
             ui.label(RichText::new("Working...").weak().small());
@@ -952,11 +969,17 @@ impl Page {
     fn apply(&mut self, intent: Intent, ctx: &egui::Context, chosen: Option<&Conn>) {
         match intent {
             Intent::Copy(text) => ctx.copy_text(text),
-            Intent::AskEnd(pid) => self.confirm = Some(pid),
+            Intent::AskEnd(identity) if self.frozen.is_none() => self.confirm = Some(identity),
+            Intent::AskEnd(_) => {}
             Intent::CancelEnd => self.confirm = None,
             Intent::ConfirmEnd => {
-                self.confirm = None;
-                if let Some(c) = chosen {
+                let confirmed = self.confirm.take();
+                if let Some(c) = chosen.filter(|c| {
+                    self.frozen.is_none()
+                        && confirmed.is_some()
+                        && confirmed == c.identity
+                        && self.selected.as_ref().is_some_and(|key| *key == c.key())
+                }) {
                     self.start_end(ctx, c);
                 }
             }
@@ -982,6 +1005,9 @@ impl Page {
     }
 
     fn start_end(&mut self, ctx: &egui::Context, c: &Conn) {
+        let Some(identity) = c.identity else {
+            return;
+        };
         if self.end_job.is_some() {
             return;
         }
@@ -991,9 +1017,9 @@ impl Page {
         let spawned = std::thread::Builder::new()
             .name("connection-end".into())
             .spawn(move || {
-                let r = end_process(pid);
+                let r = end_process(identity, &name);
                 let line = result_line("Ended", &name, pid, r);
-                let _ = tx.send((line, r == Err(ActionError::AccessDenied)));
+                let _ = tx.send((line, (r == Err(ActionError::AccessDenied)).then_some(pid)));
                 ctx.request_repaint();
             });
         if spawned.is_ok() {
@@ -1016,6 +1042,7 @@ mod tests {
     fn conn(pid: u32, name: &str, local: (IpAddr, u16), remote: Option<(IpAddr, u16)>) -> Conn {
         Conn {
             pid,
+            identity: None,
             name: name.to_string(),
             exe: None,
             proto: Proto::Tcp,
@@ -1276,7 +1303,17 @@ mod tests {
             "dns.exe, pid 4, UDP, local 0.0.0.0:53, remote -"
         );
         let mut names = HashMap::new();
-        names.insert(7u32, ("x.exe".to_string(), Some("C:\\x.exe".to_string())));
+        names.insert(
+            7,
+            Owner {
+                name: "x.exe".into(),
+                exe: Some("C:\\x.exe".into()),
+                identity: Some(ProcessIdentity {
+                    pid: 7,
+                    created: 123,
+                }),
+            },
+        );
         let raw = vec![
             udp_raw(7, (v4(0, 0, 0, 0), 1)),
             udp_raw(0, (v4(0, 0, 0, 0), 2)),
@@ -1285,6 +1322,10 @@ mod tests {
         let named = name_rows(raw, &names);
         assert_eq!(named[0].name, "x.exe");
         assert_eq!(named[0].exe.as_deref(), Some("C:\\x.exe"));
+        assert_eq!(named[0].identity.unwrap().created, 123);
+        let mut replacement = named[0].clone();
+        replacement.identity.as_mut().unwrap().created += 1;
+        assert_ne!(named[0].key(), replacement.key());
         assert_eq!(named[1].name, "System");
         assert_eq!(named[2].name, "Unknown");
         assert_eq!(resolved_text(&None), "No name found");

@@ -1634,7 +1634,7 @@ fn service_switchable(state: &ServiceState) -> bool {
 /// The switch is on while the service still has its original (non-target) start type.
 fn service_on(def: &ServiceDef, state: &ServiceState) -> bool {
     match state {
-        ServiceState::Present { start, .. } => *start != def.target,
+        ServiceState::Present { start, .. } => !def.is_off(*start),
         _ => true,
     }
 }
@@ -2426,6 +2426,7 @@ mod tests {
         assert!(!service_on(&safe, &present(Disabled, false)));
         assert!(service_on(&careful, &present(Auto, false)));
         assert!(!service_on(&careful, &present(Manual, false)));
+        assert!(!service_on(&careful, &present(Disabled, false)));
         assert!(service_on(&safe, &ServiceState::NotPresent));
     }
 

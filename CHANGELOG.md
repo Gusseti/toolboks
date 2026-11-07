@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Resource Monitor verifies the selected process before ending it or changing its priority and pauses those actions while a list is frozen.
+- Debloater leaves already-disabled services disabled when the suggested off setting is Manual.
+
 - Disk Manager streams Windows drive optimization output in memory and safely parses localized progress.
 - Event Watch uses recent records of any severity before Windows started to estimate when a crash occurred. It shows an unknown stop time when the logs cannot support an estimate.
 - Debloater blocks per-user changes when an elevated instance cannot verify that it belongs to the signed-in account.

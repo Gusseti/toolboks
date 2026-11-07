@@ -13,11 +13,13 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Align, Layout, RichText, Sense, Vec2};
 use egui_extras::{Column, TableBuilder};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-use windows::core::HRESULT;
-use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
+use windows::core::{HRESULT, PWSTR};
+use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, FILETIME, HANDLE};
+use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
 use windows::Win32::System::Threading::{
-    GetPriorityClass, OpenProcess, SetPriorityClass, TerminateProcess, BELOW_NORMAL_PRIORITY_CLASS,
-    PROCESS_CREATION_FLAGS, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
+    GetPriorityClass, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, SetPriorityClass,
+    TerminateProcess, BELOW_NORMAL_PRIORITY_CLASS, PROCESS_ACCESS_RIGHTS, PROCESS_CREATION_FLAGS,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
     PROCESS_TERMINATE,
 };
 
@@ -67,6 +69,7 @@ const PROTECTED: &[&str] = &[
 #[derive(Clone, Debug, PartialEq)]
 struct Proc {
     pid: u32,
+    identity: Option<ProcessIdentity>,
     name: String,
     /// Percent of the whole machine.
     cpu: f32,
@@ -109,12 +112,12 @@ pub(super) fn is_protected(pid: u32, name: &str, own_pid: u32, denied: &HashSet<
         || PROTECTED.contains(&name.to_lowercase().as_str())
 }
 
-/// Stable key of a row: lowercase name when grouped, "pid:<n>" when not.
+/// Stable key of a row: lowercase name when grouped, process identity when not.
 fn row_key(grouped: bool, p: &Proc) -> String {
     if grouped {
         p.name.to_lowercase()
     } else {
-        format!("pid:{}", p.pid)
+        format!("pid:{}:{}", p.pid, p.identity.map_or(0, |id| id.created))
     }
 }
 
@@ -193,9 +196,17 @@ fn filter_rows(rows: Vec<Row>, filter: &str) -> Vec<Row> {
 
 /// Splits the selected processes into those that may be ended and those left alone.
 fn plan_end(selected: &[Proc], protected: &dyn Fn(&Proc) -> bool) -> (Vec<Proc>, Vec<Proc>) {
-    let (skipped, to_end): (Vec<Proc>, Vec<Proc>) =
-        selected.iter().cloned().partition(|p| protected(p));
+    let (skipped, to_end): (Vec<Proc>, Vec<Proc>) = selected
+        .iter()
+        .cloned()
+        .partition(|p| p.identity.is_none() || protected(p));
     (to_end, skipped)
+}
+
+fn action_identities(processes: &[Proc]) -> Vec<ProcessIdentity> {
+    let mut identities: Vec<_> = processes.iter().filter_map(|p| p.identity).collect();
+    identities.sort_unstable();
+    identities
 }
 
 /// The question asked before ending: `label` is an app name or a short description.
@@ -311,6 +322,9 @@ pub(super) fn result_line(
     match result {
         Ok(()) => format!("{done} {name} (pid {pid})"),
         Err(ActionError::AccessDenied) => format!("{name} (pid {pid}): Access denied"),
+        Err(ActionError::IdentityChanged) => {
+            format!("{name} (pid {pid}): Windows could not verify the selected process")
+        }
         Err(ActionError::Failed) => {
             format!("{name} (pid {pid}): Could not be changed, it may have closed already")
         }
@@ -324,6 +338,7 @@ pub(super) fn result_line(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActionError {
     AccessDenied,
+    IdentityChanged,
     Failed,
 }
 
@@ -335,27 +350,93 @@ fn classify(e: &windows::core::Error) -> ActionError {
     }
 }
 
-pub(super) fn end_process(pid: u32) -> Result<(), ActionError> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(super) struct ProcessIdentity {
+    pub(super) pid: u32,
+    pub(super) created: u64,
+}
+
+fn filetime(time: FILETIME) -> u64 {
+    (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+}
+
+pub(super) fn snapshot_start() -> u64 {
+    // SAFETY: this call reads the system time and takes no arguments.
+    filetime(unsafe { GetSystemTimePreciseAsFileTime() })
+}
+
+fn creation_time(handle: HANDLE) -> windows::core::Result<u64> {
+    let (mut created, mut exited, mut kernel, mut user) = Default::default();
+    // SAFETY: the handle has query access and all four outputs are valid FILETIME buffers.
+    unsafe { GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) }?;
+    Ok(filetime(created))
+}
+
+pub(super) fn sampled_identity(
+    process: &sysinfo::Process,
+    sample_start: u64,
+) -> Option<ProcessIdentity> {
+    let pid = process.pid().as_u32();
+    // SAFETY: Windows validates the PID. Only query access is requested.
+    let handle =
+        Handle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?);
+    let created = creation_time(handle.0).ok()?;
+    let unix_secs = (created / 10_000_000).checked_sub(11_644_473_600)?;
+    // Reject processes born during the sample, including a reused connection-owner PID.
+    (created < sample_start && unix_secs == process.start_time())
+        .then_some(ProcessIdentity { pid, created })
+}
+
+fn action_handle(
+    identity: ProcessIdentity,
+    expected_name: &str,
+    access: PROCESS_ACCESS_RIGHTS,
+) -> Result<Handle, ActionError> {
     // SAFETY: plain FFI call; the returned handle is wrapped for closing right away.
-    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }
-        .map(Handle)
-        .map_err(|e| classify(&e))?;
+    let handle = unsafe {
+        OpenProcess(
+            access | PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            identity.pid,
+        )
+    }
+    .map(Handle)
+    .map_err(|e| classify(&e))?;
+    if creation_time(handle.0).ok() != Some(identity.created) {
+        return Err(ActionError::IdentityChanged);
+    }
+
+    let mut image = vec![0u16; 32_768];
+    let mut len = image.len() as u32;
+    // SAFETY: the handle has query access and the output buffer holds `len` UTF-16 units.
+    unsafe {
+        QueryFullProcessImageNameW(
+            handle.0,
+            PROCESS_NAME_WIN32,
+            PWSTR(image.as_mut_ptr()),
+            &mut len,
+        )
+    }
+    .map_err(|_| ActionError::IdentityChanged)?;
+    let image = String::from_utf16_lossy(&image[..len as usize]);
+    let name = image.rsplit('\\').next().unwrap_or_default();
+    if !name.eq_ignore_ascii_case(expected_name)
+        || is_protected(identity.pid, name, std::process::id(), &HashSet::new())
+    {
+        return Err(ActionError::IdentityChanged);
+    }
+    Ok(handle)
+}
+
+pub(super) fn end_process(identity: ProcessIdentity, name: &str) -> Result<(), ActionError> {
+    let handle = action_handle(identity, name, PROCESS_TERMINATE)?;
     // SAFETY: the handle is valid and was opened with PROCESS_TERMINATE.
     unsafe { TerminateProcess(handle.0, 1) }.map_err(|e| classify(&e))
 }
 
 /// Sets the priority class and returns the previous one.
-fn set_priority(pid: u32, class: u32) -> Result<u32, ActionError> {
-    // SAFETY: plain FFI call; the returned handle is wrapped for closing right away.
-    let handle = unsafe {
-        OpenProcess(
-            PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION,
-            false,
-            pid,
-        )
-    }
-    .map(Handle)
-    .map_err(|e| classify(&e))?;
+fn set_priority(identity: ProcessIdentity, name: &str, class: u32) -> Result<u32, ActionError> {
+    let handle = action_handle(identity, name, PROCESS_SET_INFORMATION)?;
     // SAFETY: the handle is valid and was opened with the needed access.
     let previous = unsafe { GetPriorityClass(handle.0) };
     if previous == 0 {
@@ -389,9 +470,8 @@ struct Done {
     lines: Vec<String>,
     /// Pids that refused: treated as protected from now on.
     denied: Vec<u32>,
-    /// (pid, class before) for each process just lowered.
-    lowered: Vec<(u32, u32)>,
-    restored: Vec<u32>,
+    lowered: Vec<(ProcessIdentity, u32)>,
+    restored: Vec<ProcessIdentity>,
 }
 
 fn run_action(action: Action) -> Done {
@@ -405,15 +485,26 @@ fn run_action(action: Action) -> Done {
     match action {
         Action::End(list) => {
             for p in &list {
-                note(&mut done, p, "Ended", end_process(p.pid));
+                let result = p
+                    .identity
+                    .ok_or(ActionError::IdentityChanged)
+                    .and_then(|id| end_process(id, &p.name));
+                note(&mut done, p, "Ended", result);
             }
         }
         Action::Lower(list) => {
             for p in &list {
-                match set_priority(p.pid, BELOW_NORMAL_PRIORITY_CLASS.0) {
-                    Ok(prev) => {
+                let result = p
+                    .identity
+                    .ok_or(ActionError::IdentityChanged)
+                    .and_then(|id| {
+                        set_priority(id, &p.name, BELOW_NORMAL_PRIORITY_CLASS.0)
+                            .map(|prev| (id, prev))
+                    });
+                match result {
+                    Ok((id, prev)) => {
                         if prev != BELOW_NORMAL_PRIORITY_CLASS.0 {
-                            done.lowered.push((p.pid, prev));
+                            done.lowered.push((id, prev));
                         }
                         note(&mut done, p, "Lowered priority of", Ok(()));
                     }
@@ -423,10 +514,14 @@ fn run_action(action: Action) -> Done {
         }
         Action::Restore(list) => {
             for (p, prev) in &list {
-                let r = set_priority(p.pid, *prev).map(|_| ());
-                if r.is_ok() {
-                    done.restored.push(p.pid);
-                }
+                let r = p
+                    .identity
+                    .ok_or(ActionError::IdentityChanged)
+                    .and_then(|id| {
+                        set_priority(id, &p.name, *prev)?;
+                        done.restored.push(id);
+                        Ok(())
+                    });
                 note(&mut done, p, "Restored priority of", r);
             }
         }
@@ -487,6 +582,7 @@ impl Worker {
                     if last.is_some_and(|t| t.elapsed() < wait) {
                         continue;
                     }
+                    let sample_start = snapshot_start();
                     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
                     let was_primed = last.is_some();
                     last = Some(Instant::now());
@@ -495,6 +591,7 @@ impl Worker {
                         .values()
                         .map(|p| Proc {
                             pid: p.pid().as_u32(),
+                            identity: sampled_identity(p, sample_start),
                             name: p.name().to_string_lossy().into_owned(),
                             cpu: (p.cpu_usage() / logical).clamp(0.0, 100.0),
                             mem: p.memory(),
@@ -542,7 +639,7 @@ enum Click {
 
 /// What the inspector asked for this frame.
 enum Intent {
-    AskEnd(Vec<u32>),
+    AskEnd(Vec<ProcessIdentity>),
     ConfirmEnd,
     CancelEnd,
     Lower,
@@ -562,10 +659,10 @@ pub(super) struct Page {
     sort_key: SortKey,
     descending: bool,
     selection: Selection,
-    /// Pids waiting for the second click on End task.
-    confirm: Option<Vec<u32>>,
-    /// (pid, class before) for processes lowered in this session.
-    lowered: Vec<(u32, u32)>,
+    /// Process identities waiting for the second click on End task.
+    confirm: Option<Vec<ProcessIdentity>>,
+    /// Previous priority class keyed by process identity.
+    lowered: Vec<(ProcessIdentity, u32)>,
     denied: HashSet<u32>,
     job: Option<Receiver<Done>>,
     lines: Vec<String>,
@@ -600,9 +697,9 @@ impl Page {
                 self.cpu_ready = snap.cpu_ready;
             }
             // A lowered process that has exited needs no restore entry.
-            let pids: HashSet<u32> = self.live.iter().map(|p| p.pid).collect();
-            if !pids.is_empty() {
-                self.lowered.retain(|(pid, _)| pids.contains(pid));
+            let identities: HashSet<_> = self.live.iter().filter_map(|p| p.identity).collect();
+            if !identities.is_empty() {
+                self.lowered.retain(|(id, _)| identities.contains(id));
             }
         }
         let finished = self.job.as_ref().and_then(|rx| rx.try_recv().ok());
@@ -610,7 +707,7 @@ impl Page {
             self.job = None;
             self.denied.extend(done.denied);
             self.lowered.extend(done.lowered);
-            self.lowered.retain(|(pid, _)| !done.restored.contains(pid));
+            self.lowered.retain(|(id, _)| !done.restored.contains(id));
             self.lines = done.lines;
         }
     }
@@ -687,13 +784,26 @@ impl Page {
         rows: &[Row],
         protected: &dyn Fn(&Proc) -> bool,
     ) {
+        if self.frozen.is_some()
+            && matches!(
+                intent,
+                Intent::AskEnd(_) | Intent::ConfirmEnd | Intent::Lower | Intent::Restore
+            )
+        {
+            return;
+        }
         match intent {
             Intent::AskEnd(pids) => self.confirm = Some(pids),
             Intent::CancelEnd => self.confirm = None,
             Intent::ConfirmEnd => {
-                self.confirm = None;
                 let (to_end, _) = plan_end(&self.selected_procs(procs), protected);
-                self.start_job(ctx, Action::End(to_end));
+                if self
+                    .confirm
+                    .take()
+                    .is_some_and(|ids| ids == action_identities(&to_end))
+                {
+                    self.start_job(ctx, Action::End(to_end));
+                }
             }
             Intent::Lower => {
                 let (list, _) = plan_end(&self.selected_procs(procs), protected);
@@ -704,7 +814,8 @@ impl Page {
                     .selected_procs(procs)
                     .into_iter()
                     .filter_map(|p| {
-                        let prev = self.lowered.iter().find(|(pid, _)| *pid == p.pid)?.1;
+                        let identity = p.identity?;
+                        let prev = self.lowered.iter().find(|(id, _)| *id == identity)?.1;
                         Some((p, prev))
                     })
                     .collect();
@@ -764,6 +875,7 @@ impl Page {
         });
         if paused != was_paused {
             self.frozen = paused.then(|| self.live.clone());
+            self.confirm = None;
         }
         rows
     }
@@ -924,11 +1036,16 @@ impl Page {
         let chosen = self.selected_procs(procs);
         let (to_end, skipped) = plan_end(&chosen, protected);
         if to_end.is_empty() {
-            ui.label(RichText::new(PROTECTED_NOTE).weak().small());
+            let note = if chosen.iter().any(|p| p.identity.is_none() && !protected(p)) {
+                "Windows could not verify the selected processes."
+            } else {
+                PROTECTED_NOTE
+            };
+            ui.label(RichText::new(note).weak().small());
         } else if !skipped.is_empty() {
             ui.label(
                 RichText::new(format!(
-                    "{} of {} are protected and will be left alone.",
+                    "{} of {} are protected or could not be verified.",
                     skipped.len(),
                     chosen.len()
                 ))
@@ -938,13 +1055,17 @@ impl Page {
         }
         ui.separator();
 
-        let busy = self.job.is_some();
+        let paused = self.frozen.is_some();
+        if paused {
+            ui.label(
+                RichText::new("Resume to change running processes.")
+                    .weak()
+                    .small(),
+            );
+        }
+        let busy = self.job.is_some() || paused;
         let mut intent = None;
-        let end_pids: Vec<u32> = {
-            let mut v: Vec<u32> = to_end.iter().map(|p| p.pid).collect();
-            v.sort_unstable();
-            v
-        };
+        let end_pids = action_identities(&to_end);
         if self.confirm.as_ref().is_some_and(|c| *c != end_pids) {
             self.confirm = None;
         }
@@ -981,7 +1102,7 @@ impl Page {
 
         let can_restore = chosen
             .iter()
-            .any(|p| self.lowered.iter().any(|(pid, _)| *pid == p.pid));
+            .any(|p| self.lowered.iter().any(|(id, _)| Some(*id) == p.identity));
         if can_restore {
             if ui
                 .add_enabled(!busy, egui::Button::new("Restore priority"))
@@ -1009,7 +1130,7 @@ impl Page {
                 }
             }
         }
-        if busy {
+        if self.job.is_some() {
             ui.label(RichText::new("Working...").weak().small());
         }
         ui.add_space(GAP - 2.0);
@@ -1046,6 +1167,10 @@ mod tests {
     fn p(pid: u32, name: &str, cpu: f32, mem: u64) -> Proc {
         Proc {
             pid,
+            identity: Some(ProcessIdentity {
+                pid,
+                created: u64::from(pid),
+            }),
             name: name.to_string(),
             cpu,
             mem,
@@ -1131,6 +1256,69 @@ mod tests {
         assert_eq!(shown(&live, None).len(), 1);
         assert_eq!(shown(&live, Some(&frozen)).len(), 2);
         assert!((shown(&live, Some(&frozen))[0].cpu - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reused_pid_changes_selection_and_confirmation_keys() {
+        let original = p(10, "app.exe", 0.0, 0);
+        let mut replacement = original.clone();
+        replacement.identity.as_mut().unwrap().created += 1;
+        assert_ne!(row_key(false, &original), row_key(false, &replacement));
+        assert_ne!(
+            action_identities(&[original]),
+            action_identities(&[replacement])
+        );
+    }
+
+    #[test]
+    fn process_actions_verify_identity_on_the_handle_they_modify() {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let cmd = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32/cmd.exe");
+        let mut child = Command::new(cmd)
+            .args(["/d", "/q"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .unwrap();
+        let sample_start = snapshot_start();
+        let pid = sysinfo::Pid::from_u32(child.id());
+        let mut system = System::new().unwrap();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let process = system.process(pid).unwrap();
+        let identity = sampled_identity(process, sample_start).unwrap();
+        let name = process.name().to_string_lossy();
+        let stale = ProcessIdentity {
+            created: identity.created - 1,
+            ..identity
+        };
+
+        assert_eq!(end_process(stale, &name), Err(ActionError::IdentityChanged));
+        assert_eq!(
+            end_process(identity, "other.exe"),
+            Err(ActionError::IdentityChanged)
+        );
+        assert_eq!(
+            set_priority(stale, &name, BELOW_NORMAL_PRIORITY_CLASS.0),
+            Err(ActionError::IdentityChanged)
+        );
+        assert!(child.try_wait().unwrap().is_none());
+
+        let previous = set_priority(identity, &name, BELOW_NORMAL_PRIORITY_CLASS.0).unwrap();
+        assert_eq!(
+            set_priority(identity, &name, previous),
+            Ok(BELOW_NORMAL_PRIORITY_CLASS.0)
+        );
+        end_process(identity, &name).unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(1));
     }
 
     #[test]
