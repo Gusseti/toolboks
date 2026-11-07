@@ -782,8 +782,13 @@ impl Memory {
         let right = total - gap - left;
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
-            card(ui, left, BOTTOM_CARD, |ui| self.last_run_card(ui));
-            card(ui, right, BOTTOM_CARD, |ui| self.auto_card(ui));
+            // The cards sit in a horizontal row, so each one stacks its own content.
+            card(ui, left, BOTTOM_CARD, |ui| {
+                ui.vertical(|ui| self.last_run_card(ui));
+            });
+            card(ui, right, BOTTOM_CARD, |ui| {
+                ui.vertical(|ui| self.auto_card(ui));
+            });
         });
     }
 
@@ -940,12 +945,8 @@ impl Memory {
         ui.label(RichText::new(AUTO_DESCRIPTION).weak().small());
         ui.label(
             RichText::new(format!("Status: {}", self.scheduler.status(self.now_ms()))).small(),
-        );
-        ui.label(
-            RichText::new(scheduler::legacy_threshold_note())
-                .weak()
-                .small(),
-        );
+        )
+        .on_hover_text(scheduler::legacy_threshold_note());
         if !self.elevated {
             ui.label(
                 RichText::new("The cache purge under Advanced options needs permission.")
