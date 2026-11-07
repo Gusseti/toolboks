@@ -182,6 +182,7 @@ impl Gaming {
         }
         self.status = None;
         self.message = None;
+        self.preview = None;
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         let thread = std::thread::Builder::new()
@@ -254,19 +255,28 @@ impl Gaming {
         if changed {
             self.preview = None;
         }
+        let review_label = if recovery {
+            "Review registry edits"
+        } else {
+            "Review current values"
+        };
         if ui
             .add_enabled(
-                !busy && !recovery && !self.selected.is_empty(),
-                egui::Button::new("Review current values"),
+                !busy && (recovery || !self.selected.is_empty()),
+                egui::Button::new(review_label),
             )
             .clicked()
         {
-            let selected: Vec<_> = CHOICES
-                .iter()
-                .filter(|choice| self.selected.contains(choice.id))
-                .map(|choice| choice.id)
-                .collect();
-            self.preview = Some(engine::preview(&selected));
+            self.preview = Some(if recovery {
+                engine::review_backup().unwrap_or_else(|error| vec![error])
+            } else {
+                let selected: Vec<_> = CHOICES
+                    .iter()
+                    .filter(|choice| self.selected.contains(choice.id))
+                    .map(|choice| choice.id)
+                    .collect();
+                engine::preview(&selected)
+            });
         }
         if let Some(lines) = &self.preview {
             for line in lines {

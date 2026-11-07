@@ -211,13 +211,16 @@ pub(super) fn has_backup() -> bool {
     root().join(JOURNAL).exists()
 }
 
-pub(super) fn preview(selected: &[&str]) -> Vec<String> {
-    let env = backend::detect_env();
-    let display = |value| match value {
-        None => "Windows default".into(),
+fn display_value(value: Option<RegValue>) -> String {
+    match value {
+        None => "Value absent".into(),
         Some(RegValue::Dword(value)) => format!("{value} (0x{value:x})"),
         Some(RegValue::Sz(value)) => value,
-    };
+    }
+}
+
+pub(super) fn preview(selected: &[&str]) -> Vec<String> {
+    let env = backend::detect_env();
     let mut lines = Vec::new();
     for choice in CHOICES
         .iter()
@@ -230,13 +233,13 @@ pub(super) fn preview(selected: &[&str]) -> Vec<String> {
         for target in targets(choice.id) {
             let line = match target.read(&WinRegistry) {
                 Ok(current) if target.matches(current.as_ref()) => {
-                    format!("{} • {} (keep)", target.name, display(current))
+                    format!("{} • {} (keep)", target.name, display_value(current))
                 }
                 Ok(current) => format!(
                     "{} • {} → {}",
                     target.name,
-                    display(current),
-                    display(Some(target.desired))
+                    display_value(current),
+                    display_value(Some(target.desired))
                 ),
                 Err(error) => format!("{} • {error}", target.name),
             };
@@ -247,6 +250,37 @@ pub(super) fn preview(selected: &[&str]) -> Vec<String> {
         lines.push("Active power plan → Ultimate Performance".into());
     }
     lines
+}
+
+pub(super) fn review_backup() -> Result<Vec<String>, String> {
+    crate::elevation::require_user_profile()?;
+    let journal = load_journal(&root().join(JOURNAL))?;
+    review_registry(&journal, &WinRegistry)
+}
+
+fn review_registry(journal: &Journal, registry: &impl Registry) -> Result<Vec<String>, String> {
+    let mut lines = Vec::new();
+    for change in journal.changes.iter().filter(|change| change.attempted) {
+        let target = change.target()?;
+        let before = display_value(change.original.clone());
+        let current = match target.read(registry) {
+            Ok(value) => display_value(value),
+            Err(error) => format!("Unavailable ({error})"),
+        };
+        lines.push(format!(
+            "{} · Before {before} · Current {current}",
+            target.name
+        ));
+    }
+    if lines.is_empty() {
+        lines.push("There are no registry edits pending restore.".into());
+    }
+    Ok(lines)
+}
+
+fn load_journal(path: &Path) -> Result<Journal, String> {
+    let bytes = fs::read(path).map_err(|e| format!("Open recovery data: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("Read recovery data: {e}"))
 }
 
 fn save(root: &Path, journal: &Journal) -> Result<(), String> {
@@ -533,9 +567,7 @@ fn restore_value(change: &Change, registry: &mut impl Registry) -> Result<(), St
 
 fn restore(root: &Path, log: &mut impl FnMut(&str)) -> Result<(), String> {
     let path = root.join(JOURNAL);
-    let bytes = fs::read(&path).map_err(|e| format!("Open recovery data: {e}"))?;
-    let mut journal: Journal =
-        serde_json::from_slice(&bytes).map_err(|e| format!("Read recovery data: {e}"))?;
+    let mut journal = load_journal(&path)?;
     let mut registry = WinRegistry;
     let mut errors = 0;
     if let Some(plan) = journal.power.as_mut().filter(|plan| plan.attempted) {
@@ -662,6 +694,30 @@ mod tests {
         value.0 = Some(RegValue::Dword(0));
         assert!(restore_value(&change, &mut value).is_err());
         assert_eq!(value.0, Some(RegValue::Dword(0)));
+    }
+
+    #[test]
+    fn review_shows_saved_and_live_values_only_for_attempted_edits() {
+        let saved = change(
+            "scheduler",
+            "Win32PrioritySeparation",
+            Some(RegValue::Dword(2)),
+        );
+        let mut unattempted = change(
+            "scheduler",
+            "SystemResponsiveness",
+            Some(RegValue::Dword(20)),
+        );
+        unattempted.attempted = false;
+        let journal = Journal {
+            changes: vec![saved, unattempted],
+            power: None,
+        };
+        let live = Value(Some(RegValue::Dword(0x26)));
+        assert_eq!(
+            review_registry(&journal, &live).unwrap(),
+            ["Win32PrioritySeparation · Before 2 (0x2) · Current 38 (0x26)"]
+        );
     }
 
     #[test]
