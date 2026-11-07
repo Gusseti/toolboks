@@ -22,12 +22,15 @@ use windows::Win32::System::Threading::{
 };
 
 use crate::format::{friendly_name, size_plain, uptime};
-use crate::ui::{CARD_PAD, GAP, RED};
+use crate::ui::{
+    toggle_switch, BAR_DIVIDER, BORDER, CARD_PAD, GAP, MUTED, PANEL_BG, RED, SELECTED_BG, SPACE_M,
+    TEXT, TEXT_SECTION,
+};
 use crate::win::Handle;
 
-pub(super) const ROW_HEIGHT: f32 = 22.0;
-pub(super) const INSPECTOR_WIDTH: f32 = 190.0;
-pub(super) const INSPECTOR_PAD: f32 = 8.0;
+pub(super) const ROW_HEIGHT: f32 = 28.0;
+pub(super) const INSPECTOR_WIDTH: f32 = 240.0;
+const INSPECTOR_PAD: f32 = SPACE_M;
 /// Time between two process refreshes while the page is visible.
 pub(super) const REFRESH: Duration = Duration::from_secs(2);
 /// Wait before the second refresh that makes CPU percentages meaningful.
@@ -631,9 +634,7 @@ impl Page {
         let existing: HashSet<String> = all_rows.iter().map(|r| r.key.clone()).collect();
         self.selection.prune(&existing);
 
-        let inspector = egui::Frame::NONE
-            .fill(ui.visuals().extreme_bg_color)
-            .inner_margin(INSPECTOR_PAD);
+        let inspector = inspector_frame();
         let mut intent: Option<Intent> = None;
         let panel = egui::Panel::right("processes_inspector")
             .resizable(false)
@@ -648,11 +649,7 @@ impl Page {
             });
         let rect = panel.response.rect;
         toolboks_addon_sdk::tutorial::mark(ui, "inspector", rect);
-        ui.painter().vline(
-            rect.left(),
-            rect.y_range(),
-            Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        );
+        inspector_edge(ui, rect);
 
         let side = egui::Frame::NONE.inner_margin(CARD_PAD);
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
@@ -662,7 +659,12 @@ impl Page {
                 self.toolbar(ui, all_rows.clone())
             });
             ui.add_space(2.0);
-            toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.table(ui, rows));
+            toolboks_addon_sdk::tutorial::region(ui, "table", |ui| {
+                ui.scope(|ui| {
+                    table_style(ui);
+                    self.table(ui, rows);
+                });
+            });
         });
 
         if let Some(intent) = intent {
@@ -743,12 +745,13 @@ impl Page {
         let mut rows = filter_rows(rows, &self.filter);
         sort_rows(&mut rows, self.sort_key, self.descending);
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_M;
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
                     .hint_text("Filter by name or pid")
-                    .desired_width(150.0),
+                    .desired_width(170.0),
             );
-            ui.checkbox(&mut self.grouped, "Group by name");
+            switch_row(ui, &mut self.grouped, "Group by name");
             ui.toggle_value(&mut paused, if was_paused { "Paused" } else { "Pause" })
                 .on_hover_text("Freeze the list so rows stop moving. Sampling carries on.");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -775,7 +778,8 @@ impl Page {
         let modifiers = ui.input(|i| i.modifiers);
 
         let mut table = TableBuilder::new(ui)
-            .striped(true)
+            .cell_layout(Layout::left_to_right(Align::Center))
+            .striped(false)
             .sense(Sense::click())
             .auto_shrink([false, false])
             .column(Column::exact(22.0))
@@ -788,36 +792,32 @@ impl Page {
             .column(Column::exact(84.0))
             .header(ROW_HEIGHT, |mut header| {
                 header.col(|_| {});
-                let sortable = |ui: &mut egui::Ui, label: &str, key: SortKey| {
+                let sortable = |ui: &mut egui::Ui, label: &str, key: SortKey, right: bool| {
                     let arrow = sort_arrow(sort_key == key, descending);
-                    ui.add(
-                        egui::Button::new(
-                            RichText::new(format!("{label}{arrow}")).small().strong(),
-                        )
-                        .frame(false),
-                    )
-                    .clicked()
-                    .then_some(key)
+                    header_cell(ui, label, arrow, sort_key == key, right).then_some(key)
                 };
-                header.col(|ui| sort_click = sortable(ui, "Name", SortKey::Name).or(sort_click));
+                header.col(|ui| {
+                    sort_click = sortable(ui, "Name", SortKey::Name, false).or(sort_click)
+                });
                 if !grouped {
-                    header.col(|ui| sort_click = sortable(ui, "PID", SortKey::Pid).or(sort_click));
+                    header.col(|ui| {
+                        sort_click = sortable(ui, "PID", SortKey::Pid, true).or(sort_click)
+                    });
                 }
-                header.col(|ui| sort_click = sortable(ui, "CPU", SortKey::Cpu).or(sort_click));
                 header
-                    .col(|ui| sort_click = sortable(ui, "Memory", SortKey::Memory).or(sort_click));
+                    .col(|ui| sort_click = sortable(ui, "CPU", SortKey::Cpu, true).or(sort_click));
+                header.col(|ui| {
+                    sort_click = sortable(ui, "Memory", SortKey::Memory, true).or(sort_click)
+                });
             })
-            .body(|body| {
+            .body(|mut body| {
+                let rule = body.ui_mut().painter().clone();
                 body.rows(ROW_HEIGHT, rows.len(), |mut row| {
                     let r = &rows[row.index()];
                     let is_selected = selection.keys.contains(&r.key);
                     row.set_selected(is_selected);
                     let cell = |ui: &mut egui::Ui, text: String| {
-                        let mut t = RichText::new(text);
-                        if r.protected {
-                            t = t.weak();
-                        }
-                        let l = ui.add(egui::Label::new(t).selectable(false));
+                        let l = body_cell(ui, text, true, r.protected);
                         if r.protected {
                             l.on_hover_text(PROTECTED_NOTE);
                         }
@@ -829,11 +829,7 @@ impl Page {
                         }
                     });
                     row.col(|ui| {
-                        let mut t = RichText::new(display_name(r));
-                        if r.protected {
-                            t = t.weak();
-                        }
-                        let l = ui.add(egui::Label::new(t).selectable(false).truncate());
+                        let l = body_cell(ui, display_name(r), false, r.protected);
                         if r.protected {
                             l.on_hover_text(PROTECTED_NOTE);
                         }
@@ -843,7 +839,9 @@ impl Page {
                     }
                     row.col(|ui| cell(ui, cpu_text(r.cpu, ready)));
                     row.col(|ui| cell(ui, size_plain(r.mem)));
-                    if row.response().clicked() && click.is_none() {
+                    let response = row.response();
+                    row_rule(&rule, response.rect);
+                    if response.clicked() && click.is_none() {
                         click = Some(Click::Row(r.key.clone(), modifiers));
                     }
                 });
@@ -901,7 +899,7 @@ impl Page {
             [one] => display_name(one),
             many => format!("{} selected", many.len()),
         };
-        ui.label(RichText::new(&title).strong());
+        ui.label(RichText::new(&title).size(TEXT_SECTION).strong());
         let proc_count: usize = selected.iter().map(|r| r.pids.len()).sum();
         let cpu: f32 = selected.iter().map(|r| r.cpu).sum();
         let mem: u64 = selected.iter().map(|r| r.mem).sum();
@@ -963,7 +961,10 @@ impl Page {
             ui.label(RichText::new(confirm_text(&label, end_pids.len())).small());
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!busy, egui::Button::new(RichText::new("End").color(RED)))
+                    .add_enabled(
+                        !busy,
+                        egui::Button::new(RichText::new("End task").color(RED)),
+                    )
                     .clicked()
                 {
                     intent = Some(Intent::ConfirmEnd);
@@ -1029,6 +1030,104 @@ impl Page {
             );
         }
     }
+}
+
+/// The inspector panel's frame: a card-coloured side panel.
+pub(super) fn inspector_frame() -> egui::Frame {
+    egui::Frame::NONE.fill(PANEL_BG).inner_margin(INSPECTOR_PAD)
+}
+
+/// The hairline between the table and the inspector.
+pub(super) fn inspector_edge(ui: &egui::Ui, rect: egui::Rect) {
+    ui.painter()
+        .vline(rect.left(), rect.y_range(), Stroke::new(1.0, BORDER));
+}
+
+/// Table look for the scope it is called in: a soft selection fill and a quiet hover fill.
+pub(super) fn table_style(ui: &mut egui::Ui) {
+    let v = ui.visuals_mut();
+    v.selection.bg_fill = SELECTED_BG;
+    v.widgets.hovered.bg_fill = BAR_DIVIDER;
+}
+
+/// Hairline under a table row, drawn across the whole row.
+pub(super) fn row_rule(painter: &egui::Painter, rect: egui::Rect) {
+    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BAR_DIVIDER));
+}
+
+/// A sortable column header: muted caption, full-strength text on the sorted column.
+pub(super) fn header_cell(
+    ui: &mut egui::Ui,
+    label: &str,
+    arrow: &str,
+    active: bool,
+    right: bool,
+) -> bool {
+    let color = if active { TEXT } else { MUTED };
+    let button = |ui: &mut egui::Ui| {
+        ui.add(
+            egui::Button::new(
+                RichText::new(format!("{label}{arrow}"))
+                    .small()
+                    .color(color),
+            )
+            .frame(false),
+        )
+        .clicked()
+    };
+    if right {
+        ui.with_layout(Layout::right_to_left(Align::Center), button)
+            .inner
+    } else {
+        button(ui)
+    }
+}
+
+/// A table cell; numbers are right-aligned and muted when `weak`.
+pub(super) fn body_cell(
+    ui: &mut egui::Ui,
+    text: String,
+    right: bool,
+    weak: bool,
+) -> egui::Response {
+    let mut t = RichText::new(text);
+    if weak {
+        t = t.weak();
+    }
+    let label = egui::Label::new(t).selectable(false).truncate();
+    if right {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| ui.add(label))
+            .inner
+    } else {
+        ui.add(label)
+    }
+}
+
+/// A switch followed by its label, for on/off filters.
+pub(super) fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        toggle_switch(ui, on);
+        ui.label(label);
+    });
+}
+
+/// A one-line, muted, dismissible note. Returns true when dismissed.
+pub(super) fn banner(ui: &mut egui::Ui, text: &str) -> bool {
+    let mut dismissed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = GAP;
+        let w = (ui.available_width() - 70.0).max(0.0);
+        ui.add_sized(
+            [w, 16.0],
+            egui::Label::new(RichText::new(text).small().weak()).truncate(),
+        )
+        .on_hover_text(text);
+        dismissed = ui
+            .add(egui::Button::new(RichText::new("Dismiss").small().color(MUTED)).frame(false))
+            .clicked();
+    });
+    dismissed
 }
 
 /// A small caption over a value.

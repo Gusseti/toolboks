@@ -22,10 +22,11 @@ use windows::Win32::Networking::WinSock::{
 };
 
 use super::processes::{
-    confirm_text, end_process, is_protected, kv, result_line, sort_arrow, visible, ActionError,
-    INSPECTOR_PAD, INSPECTOR_WIDTH, PROTECTED_NOTE, REFRESH, ROW_HEIGHT,
+    banner, body_cell, confirm_text, end_process, header_cell, inspector_edge, inspector_frame,
+    is_protected, kv, result_line, row_rule, sort_arrow, switch_row, table_style, visible,
+    ActionError, INSPECTOR_WIDTH, PROTECTED_NOTE, REFRESH, ROW_HEIGHT,
 };
-use crate::ui::{CARD_PAD, GAP, RED};
+use crate::ui::{CARD_PAD, GAP, RED, SPACE_M, TEXT_SECTION};
 
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 const NO_ERROR: u32 = 0;
@@ -256,10 +257,22 @@ fn sort_conns(rows: &mut [Conn], key: SortKey, descending: bool) {
     });
 }
 
-/// Applies the two quick filters.
-fn quick_filter(rows: &[Conn], connected_only: bool, hide_own: bool) -> Vec<Conn> {
+/// Applies the quick filters. "Connected only" keeps established TCP connections; UDP sockets
+/// have no peer, so they only stay when `include_udp` is on.
+fn quick_filter(
+    rows: &[Conn],
+    connected_only: bool,
+    include_udp: bool,
+    hide_own: bool,
+) -> Vec<Conn> {
     rows.iter()
-        .filter(|c| !connected_only || c.state.is_none_or(|s| s.0 == 5))
+        .filter(|c| {
+            !connected_only
+                || match c.proto {
+                    Proto::Udp => include_udp,
+                    Proto::Tcp => c.state.is_some_and(|s| s.0 == 5),
+                }
+        })
         .filter(|c| !hide_own || !is_own(c))
         .cloned()
         .collect()
@@ -569,6 +582,7 @@ pub(super) struct Page {
     got_data: bool,
     filter: String,
     connected_only: bool,
+    include_udp: bool,
     hide_own: bool,
     banner_open: bool,
     sort_key: SortKey,
@@ -594,6 +608,7 @@ impl Page {
             got_data: false,
             filter: String::new(),
             connected_only: true,
+            include_udp: false,
             hide_own: true,
             banner_open: true,
             sort_key: SortKey::Process,
@@ -652,7 +667,7 @@ impl Page {
         worker.ping();
 
         let shown: &[Conn] = self.frozen.as_deref().unwrap_or(&self.live);
-        let base = quick_filter(shown, self.connected_only, self.hide_own);
+        let base = quick_filter(shown, self.connected_only, self.include_udp, self.hide_own);
         let top = top_processes(&base, 5);
         let mut rows = filter_conns(base, &self.filter);
         sort_conns(&mut rows, self.sort_key, self.descending);
@@ -669,9 +684,7 @@ impl Page {
             .cloned();
 
         let mut intent: Option<Intent> = None;
-        let inspector = egui::Frame::NONE
-            .fill(ui.visuals().extreme_bg_color)
-            .inner_margin(INSPECTOR_PAD);
+        let inspector = inspector_frame();
         let panel = egui::Panel::right("connections_inspector")
             .resizable(false)
             .exact_size(INSPECTOR_WIDTH)
@@ -685,11 +698,7 @@ impl Page {
             });
         let rect = panel.response.rect;
         toolboks_addon_sdk::tutorial::mark(ui, "inspector", rect);
-        ui.painter().vline(
-            rect.left(),
-            rect.y_range(),
-            Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        );
+        inspector_edge(ui, rect);
 
         let side = egui::Frame::NONE.inner_margin(CARD_PAD);
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
@@ -709,7 +718,12 @@ impl Page {
                 ui.label(RichText::new(e).color(RED).small());
             }
             ui.add_space(2.0);
-            toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.table(ui, &rows));
+            toolboks_addon_sdk::tutorial::region(ui, "table", |ui| {
+                ui.scope(|ui| {
+                    table_style(ui);
+                    self.table(ui, &rows);
+                });
+            });
         });
 
         if let Some(intent) = intent {
@@ -721,25 +735,30 @@ impl Page {
         if !self.banner_open {
             return;
         }
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(BANNER).small().weak());
-            if ui.small_button("Dismiss").clicked() {
-                self.banner_open = false;
-            }
-        });
+        if banner(ui, BANNER) {
+            self.banner_open = false;
+        }
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui, count: usize) {
         let mut paused = self.frozen.is_some();
         let was_paused = paused;
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_M;
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
                     .hint_text("Filter by process, address or port")
                     .desired_width(190.0),
             );
-            ui.checkbox(&mut self.connected_only, "Connected only");
-            ui.checkbox(&mut self.hide_own, "Hide this PC's own (127.0.0.1 / ::1)");
+            switch_row(ui, &mut self.connected_only, "Connected only");
+            if self.connected_only {
+                switch_row(ui, &mut self.include_udp, "Include UDP");
+            }
+            switch_row(
+                ui,
+                &mut self.hide_own,
+                "Hide this PC's own (127.0.0.1 / ::1)",
+            );
             ui.toggle_value(&mut paused, if was_paused { "Paused" } else { "Pause" })
                 .on_hover_text("Freeze the list so rows stop moving. Reading carries on.");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -765,7 +784,8 @@ impl Page {
         let selected = self.selected.clone();
 
         TableBuilder::new(ui)
-            .striped(true)
+            .cell_layout(Layout::left_to_right(Align::Center))
+            .striped(false)
             .sense(Sense::click())
             .auto_shrink([false, false])
             .column(Column::remainder().at_least(90.0).clip(true))
@@ -775,40 +795,39 @@ impl Page {
             .column(Column::exact(150.0).clip(true))
             .column(Column::exact(72.0))
             .header(ROW_HEIGHT, |mut header| {
-                let mut sortable = |label: &str, key: SortKey| {
+                let mut sortable = |label: &str, key: SortKey, right: bool| {
                     header.col(|ui| {
                         let arrow = sort_arrow(sort_key == key, descending);
-                        let b = egui::Button::new(
-                            RichText::new(format!("{label}{arrow}")).small().strong(),
-                        )
-                        .frame(false);
-                        if ui.add(b).clicked() {
+                        if header_cell(ui, label, arrow, sort_key == key, right) {
                             sort_click = Some(key);
                         }
                     });
                 };
-                sortable("Process", SortKey::Process);
-                sortable("PID", SortKey::Pid);
-                sortable("Proto", SortKey::Proto);
-                sortable("Local", SortKey::Local);
-                sortable("Remote", SortKey::Remote);
-                sortable("State", SortKey::State);
+                sortable("Process", SortKey::Process, false);
+                sortable("PID", SortKey::Pid, true);
+                sortable("Proto", SortKey::Proto, false);
+                sortable("Local", SortKey::Local, false);
+                sortable("Remote", SortKey::Remote, false);
+                sortable("State", SortKey::State, false);
             })
-            .body(|body| {
+            .body(|mut body| {
+                let rule = body.ui_mut().painter().clone();
                 body.rows(ROW_HEIGHT, rows.len(), |mut row| {
                     let c = &rows[row.index()];
                     let key = c.key();
                     row.set_selected(selected.as_deref() == Some(key.as_str()));
-                    let cell = |ui: &mut egui::Ui, text: String| {
-                        ui.add(egui::Label::new(text).selectable(false).truncate());
+                    let cell = |ui: &mut egui::Ui, text: String, right: bool| {
+                        body_cell(ui, text, right, false);
                     };
-                    row.col(|ui| cell(ui, c.name.clone()));
-                    row.col(|ui| cell(ui, c.pid.to_string()));
-                    row.col(|ui| cell(ui, c.proto.text().to_string()));
-                    row.col(|ui| cell(ui, addr_text(c.local)));
-                    row.col(|ui| cell(ui, remote_text(c)));
-                    row.col(|ui| cell(ui, c.state_label().to_string()));
-                    if row.response().clicked() {
+                    row.col(|ui| cell(ui, c.name.clone(), false));
+                    row.col(|ui| cell(ui, c.pid.to_string(), true));
+                    row.col(|ui| cell(ui, c.proto.text().to_string(), false));
+                    row.col(|ui| cell(ui, addr_text(c.local), false));
+                    row.col(|ui| cell(ui, remote_text(c), false));
+                    row.col(|ui| cell(ui, c.state_label().to_string(), false));
+                    let response = row.response();
+                    row_rule(&rule, response.rect);
+                    if response.clicked() {
                         click = Some(key);
                     }
                 });
@@ -837,7 +856,7 @@ impl Page {
             return None;
         };
         let mut intent = None;
-        ui.label(RichText::new(&c.name).strong());
+        ui.label(RichText::new(&c.name).size(TEXT_SECTION).strong());
         kv(ui, "PID", &c.pid.to_string());
         if let Some(path) = &c.exe {
             kv(ui, "Path", path);
@@ -896,7 +915,10 @@ impl Page {
             ui.label(RichText::new(confirm_text(&c.name, 1)).small());
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!busy, egui::Button::new(RichText::new("End").color(RED)))
+                    .add_enabled(
+                        !busy,
+                        egui::Button::new(RichText::new("End process").color(RED)),
+                    )
                     .clicked()
                 {
                     intent = Some(Intent::ConfirmEnd);
@@ -1189,11 +1211,13 @@ mod tests {
     #[test]
     fn quick_filters() {
         let rows = sample();
-        assert_eq!(quick_filter(&rows, false, false).len(), 6);
-        // Connected only drops the listener but keeps UDP (no state).
-        assert_eq!(quick_filter(&rows, true, false).len(), 5);
-        assert_eq!(quick_filter(&rows, false, true).len(), 5);
-        assert_eq!(quick_filter(&rows, true, true).len(), 4);
+        assert_eq!(quick_filter(&rows, false, false, false).len(), 6);
+        // Connected only drops the listener and the UDP socket (no peer) ...
+        assert_eq!(quick_filter(&rows, true, false, false).len(), 4);
+        // ... unless UDP is included.
+        assert_eq!(quick_filter(&rows, true, true, false).len(), 5);
+        assert_eq!(quick_filter(&rows, false, false, true).len(), 5);
+        assert_eq!(quick_filter(&rows, true, false, true).len(), 3);
     }
 
     #[test]
