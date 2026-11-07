@@ -2,21 +2,20 @@
 
 use std::sync::mpsc;
 
-use eframe::egui::{self, Color32, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Color32, RichText};
 
 use super::apps::{self, AppRow, AppRun};
 use super::model::{Applicable, Edition, Group, Hive, Item, RegValue, Risk, State, Status};
 use super::restore::{self, RestoreStatus};
 use super::services::{self, ServiceDef, ServiceState};
 use super::startup::{self, Class, Entry, Source};
+use super::style::{self, Chip};
 use super::tasks::{self, TaskDef, TaskState};
 use super::{backend, catalog, plan, Debloater, ServiceJob, TaskJob};
 use crate::elevation;
-use crate::ui::{self, AMBER, CARD_PAD, GAP, GREEN};
+use crate::ui::{self, AMBER, GAP, GREEN, MUTED, SPACE_M};
 
-const INSPECTOR_WIDTH: f32 = 190.0;
-const INSPECTOR_PAD: f32 = 8.0;
-const ROW_HEIGHT: f32 = 22.0;
+const INSPECTOR_WIDTH: f32 = 256.0;
 
 /// Text for the state column of a row.
 fn state_text(status: Status) -> &'static str {
@@ -72,8 +71,29 @@ fn reversibility(item: &Item) -> &'static str {
 
 fn risk_color(risk: Risk) -> Color32 {
     match risk {
-        Risk::Safe => GREEN.gamma_multiply(0.8),
+        Risk::Safe => GREEN,
         Risk::Careful => AMBER,
+    }
+}
+
+/// The Safe / Careful chip of a row; muted when the row cannot be changed.
+fn risk_chip(risk: Risk, active: bool) -> Chip {
+    Chip::new(
+        risk_text(risk),
+        if active { risk_color(risk) } else { MUTED },
+    )
+}
+
+/// Colour of the state chip of a privacy row; the word says the same thing.
+fn state_color(status: Status) -> Color32 {
+    if status.applicable == Applicable::EditionNotSupported {
+        return MUTED;
+    }
+    match (status.state, status.applicable) {
+        (State::Off, _) => GREEN,
+        (State::Unknown, _) => MUTED,
+        (State::Active, Applicable::NeedsAdmin) => AMBER,
+        (State::Active, _) => MUTED,
     }
 }
 
@@ -109,9 +129,9 @@ impl Debloater {
             ui.label("Create a restore point first");
         });
         if !elevated {
-            ui.label(RichText::new("Needs admin").small().weak());
+            style::note(ui, "Needs admin");
         }
-        ui.label(RichText::new(RESTORE_NOTE).small().weak());
+        style::note(ui, RESTORE_NOTE);
     }
 
     /// Starts an apply: with the switch on, a restore point is made on a worker first.
@@ -216,13 +236,10 @@ impl Debloater {
             }
         }
 
-        let inspector = egui::Frame::NONE
-            .fill(ui.visuals().extreme_bg_color)
-            .inner_margin(INSPECTOR_PAD);
         let panel = egui::Panel::right("debloat_inspector")
             .resizable(false)
             .exact_size(INSPECTOR_WIDTH)
-            .frame(inspector)
+            .frame(style::review_frame())
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -234,77 +251,80 @@ impl Debloater {
                         _ => self.services_inspector(ui),
                     });
             });
-        let rect = panel.response.rect;
-        toolboks_addon_sdk::tutorial::mark(ui, "inspector", rect);
-        ui.painter().vline(
-            rect.left(),
-            rect.y_range(),
-            Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        );
+        toolboks_addon_sdk::tutorial::mark(ui, "inspector", panel.response.rect);
 
-        let side = egui::Frame::NONE.inner_margin(CARD_PAD);
-        egui::CentralPanel::default().frame(side).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            match page {
-                0 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.privacy_page(ui)),
-                1 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.apps_page(ui)),
-                2 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.startup_page(ui)),
-                3 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.tasks_page(ui)),
-                _ => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.services_page(ui)),
-            }
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                match page {
+                    0 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| {
+                        self.privacy_page(ui)
+                    }),
+                    1 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.apps_page(ui)),
+                    2 => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| {
+                        self.startup_page(ui)
+                    }),
+                    3 => {
+                        toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.tasks_page(ui))
+                    }
+                    _ => toolboks_addon_sdk::tutorial::region(ui, "table", |ui| {
+                        self.services_page(ui)
+                    }),
+                }
+            });
     }
 
     fn privacy_page(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let admin = if self.env.elevated {
-                "Running as administrator"
-            } else {
-                "Not running as administrator"
-            };
-            ui.label(
-                RichText::new(format!(
-                    "{} \u{b7} {admin}",
-                    edition_label(self.env.edition)
-                ))
-                .small()
-                .weak(),
-            );
-            if ui.link(RichText::new("Refresh").small()).clicked() {
-                self.refresh();
-            }
-        });
+        let admin = if self.env.elevated {
+            "Running as administrator"
+        } else {
+            "Not running as administrator"
+        };
+        let status = format!("{} \u{b7} {admin}", edition_label(self.env.edition));
+        if style::page_head(ui, &status, true) {
+            self.refresh();
+        }
         if let Some(message) = &self.message {
-            ui.label(RichText::new(message).small().weak());
+            style::note(ui, message);
         }
         if self.restore.creating.is_some() {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Creating restore point...");
-            });
+            style::note(ui, "Creating restore point...");
         } else if let Some(line) = &self.restore.status {
-            ui.label(RichText::new(line).small().weak());
+            style::note(ui, line);
         }
-        ui.add_space(GAP - 2.0);
+        ui.add_space(GAP);
 
         let (safe, careful) = group_by_risk(catalog::items());
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if safe.is_empty() && careful.is_empty() {
-                    ui.weak("No items to show.");
+                    ui.label(RichText::new("No items to show.").color(MUTED));
                     return;
                 }
-                for (title, list) in [("Safe", safe), ("Careful", careful)] {
+                for (title, note, list) in [
+                    (
+                        "Safe",
+                        "Little or no visible effect when switched off.",
+                        safe,
+                    ),
+                    (
+                        "Careful",
+                        "Can change how some Windows features behave. Read what could break first.",
+                        careful,
+                    ),
+                ] {
                     if list.is_empty() {
                         continue;
                     }
-                    ui.add_space(2.0);
-                    ui.label(RichText::new(title).strong());
-                    for item in list {
-                        self.item_row(ui, item);
-                    }
-                    ui.add_space(GAP);
+                    style::section(ui, title, Some(note));
+                    style::group_card(ui, |ui| {
+                        for item in list {
+                            self.item_row(ui, item);
+                        }
+                    });
+                    ui.add_space(SPACE_M);
                 }
                 self.about_item(ui);
             });
@@ -319,51 +339,24 @@ impl Debloater {
         let can_tick = tickable(status);
         let focused = self.focus == Some(item.id);
 
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
-        if focused || response.hovered() {
-            let fill = if focused {
-                ui.visuals().widgets.active.weak_bg_fill
-            } else {
-                ui.visuals().widgets.hovered.weak_bg_fill
-            };
-            ui.painter().rect_filled(rect, 3.0, fill);
-        }
+        let chips = [
+            Chip::new(state_text(status), state_color(status)),
+            risk_chip(item.risk, can_tick),
+        ];
+        let (response, body) = style::row(ui, focused, &chips);
         if response.clicked() {
             self.focus = Some(item.id);
         }
 
         let mut ticked = self.selected.contains(item.id);
-        let dim = if can_tick {
-            ui.visuals().text_color()
-        } else {
-            ui.visuals().weak_text_color()
-        };
-        let state_color = ui.visuals().weak_text_color();
+        let dim = if can_tick { ui::TEXT } else { MUTED };
         let mut checkbox_clicked = false;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add_enabled_ui(can_tick, |ui| {
-                    checkbox_clicked = ui.add(egui::Checkbox::without_text(&mut ticked)).changed();
-                });
-                ui.add(egui::Label::new(RichText::new(item.title).color(dim)).selectable(false));
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(risk_text(item.risk))
-                            .small()
-                            .color(risk_color(item.risk)),
-                    )
-                    .selectable(false),
-                );
+        style::row_body(ui, body, |ui| {
+            ui.add_enabled_ui(can_tick, |ui| {
+                checkbox_clicked = ui.add(egui::Checkbox::without_text(&mut ticked)).changed();
             });
+            style::row_title(ui, item.title, dim);
         });
-        ui.painter().text(
-            rect.right_center() - Vec2::new(4.0, 0.0),
-            egui::Align2::RIGHT_CENTER,
-            state_text(status),
-            egui::TextStyle::Small.resolve(ui.style()),
-            state_color,
-        );
         if checkbox_clicked {
             self.focus = Some(item.id);
             if ticked {
@@ -375,40 +368,39 @@ impl Debloater {
     }
 
     fn about_item(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("About this item").strong());
+        style::panel_heading(ui, "About this item");
         let item = self
             .focus
             .and_then(|id| catalog::items().iter().find(|i| i.id == id));
         let Some(item) = item else {
-            ui.weak("Click an item to see what it changes.");
+            style::note(ui, "Click an item to see what it changes.");
             return;
         };
         ui.label(RichText::new(item.title).strong());
         ui.label(item.what_changes);
-        ui.label(RichText::new("What could break").small().weak());
+        style::field_label(ui, "What could break");
         ui.label(item.could_break);
-        ui.label(RichText::new(reversibility(item)).small().weak());
+        style::note(ui, reversibility(item));
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui.spacing_mut().item_spacing.y = 4.0;
-        ui.label(RichText::new("Review").strong());
+        style::panel_heading(ui, "Review");
 
         let ids: Vec<&'static str> = self.selected.iter().copied().collect();
         let review = plan::review(catalog::items(), &self.statuses, &ids);
         if review.changes == 0 {
-            ui.label("No changes");
+            ui.label("No changes selected");
         } else {
-            ui.label(plural(review.changes, "change", "changes"));
-            ui.label(
-                RichText::new(format!("{} safe, {} careful", review.safe, review.careful))
-                    .small()
-                    .weak(),
+            ui.label(RichText::new(plural(review.changes, "change", "changes")).strong());
+            style::note(
+                ui,
+                &format!("{} safe, {} careful", review.safe, review.careful),
             );
         }
         if review.needs_admin > 0 {
-            ui.add_space(2.0);
+            ui.add_space(GAP);
             ui.label(format!("{} need administrator rights", review.needs_admin));
             if ui.button("Restart as admin").clicked() {
                 if elevation::relaunch_elevated_with_args(&["--open", "Debloater/Privacy and ads"])
@@ -418,14 +410,10 @@ impl Debloater {
                     self.message = Some("Elevation was cancelled.".to_string());
                 }
             }
-            ui.label(
-                RichText::new("Undo history is lost when restarting")
-                    .small()
-                    .weak(),
-            );
+            style::note(ui, "Undo history is lost when restarting");
         }
 
-        ui.add_space(GAP);
+        style::divider(ui);
         let applicable = review.changes - review.needs_admin;
         if applicable == 0 {
             self.confirming = false;
@@ -433,19 +421,16 @@ impl Debloater {
         let apply_label = format!("Apply {}", plural(applicable, "change", "changes"));
         let creating = self.restore.creating.is_some();
         self.restore_switch(ui, creating);
-        ui.add_space(2.0);
+        ui.add_space(GAP);
         if creating {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Creating restore point...");
-            });
+            style::note(ui, "Creating restore point...");
         } else if self.confirming {
             ui.label(format!(
                 "Apply {}? You can undo them until you close toolboks.",
                 plural(applicable, "change", "changes")
             ));
             ui.horizontal(|ui| {
-                if ui.button("Apply").clicked() {
+                if ui.add(style::primary_button("Apply")).clicked() {
                     self.start_apply(&ctx, &ids);
                 }
                 if ui.button("Cancel").clicked() {
@@ -453,27 +438,24 @@ impl Debloater {
                 }
             });
         } else if ui
-            .add_enabled(applicable > 0, egui::Button::new(apply_label))
+            .add_enabled(applicable > 0, style::primary_button(&apply_label))
             .clicked()
         {
             self.confirming = true;
         }
         if review.needs_admin > 0 && !self.confirming {
-            ui.label(
-                RichText::new(format!(
-                    "{} need admin and will be skipped",
-                    review.needs_admin
-                ))
-                .small()
-                .weak(),
+            style::note(
+                ui,
+                &format!("{} need admin and will be skipped", review.needs_admin),
             );
         }
 
         for note in &self.run_notes {
-            ui.label(RichText::new(note).small().color(AMBER));
+            ui.add(egui::Label::new(RichText::new(note).small().color(AMBER)).wrap());
         }
 
-        ui.add_space(GAP);
+        style::divider(ui);
+        style::panel_heading(ui, "Undo");
         let can_undo = self.last_run.is_some();
         if ui
             .add_enabled(can_undo, egui::Button::new("Undo last run"))
@@ -486,13 +468,10 @@ impl Debloater {
                 ctx.copy_text(undo_text(run));
             }
         }
-        ui.label(
-            RichText::new(
-                "Undo works until you close toolboks. Removed apps come back from the \
-                 Microsoft Store.",
-            )
-            .small()
-            .weak(),
+        style::note(
+            ui,
+            "Undo works until you close toolboks. Removed apps come back from the \
+             Microsoft Store.",
         );
     }
 
@@ -719,17 +698,11 @@ impl Debloater {
     }
 
     fn apps_page(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Apps for your account").small().weak());
-            let busy = self.apps.loading.is_some() || self.apps.removing.is_some();
-            if ui
-                .add_enabled(!busy, egui::Link::new(RichText::new("Refresh").small()))
-                .clicked()
-            {
-                self.apps_refresh(ui.ctx());
-            }
-        });
-        ui.add_space(GAP - 2.0);
+        let busy = self.apps.loading.is_some() || self.apps.removing.is_some();
+        if style::page_head(ui, "Apps for your account", !busy) {
+            self.apps_refresh(ui.ctx());
+        }
+        ui.add_space(GAP);
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -737,21 +710,21 @@ impl Debloater {
                 if let Some(error) = &self.apps.error {
                     ui.label(error.as_str());
                 } else if self.apps.loading.is_some() && self.apps.rows.is_empty() {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.weak("Loading apps...");
-                    });
+                    style::note(ui, "Collecting apps...");
                 } else if self.apps.rows.is_empty() {
-                    ui.weak("No apps to show.");
+                    style::note(ui, "No apps to show.");
                 }
                 let rows = self.apps.rows.clone();
-                for row in &rows {
-                    self.app_row(ui, row);
+                if !rows.is_empty() {
+                    style::group_card(ui, |ui| {
+                        for row in &rows {
+                            self.app_row(ui, row);
+                        }
+                    });
                 }
-                ui.add_space(GAP);
-                ui.label(RichText::new("Protected by toolboks").small().weak());
-                ui.label(RichText::new(PROTECTED_NOTE).small().weak());
-                ui.add_space(GAP);
+                ui.add_space(SPACE_M);
+                style::section(ui, "Protected by toolboks", Some(PROTECTED_NOTE));
+                ui.add_space(SPACE_M);
                 self.about_app(ui);
             });
     }
@@ -761,46 +734,21 @@ impl Debloater {
         let installed = row.installed.is_some();
         let focused = self.apps.focus == Some(id);
 
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
-        if focused || response.hovered() {
-            let fill = if focused {
-                ui.visuals().widgets.active.weak_bg_fill
-            } else {
-                ui.visuals().widgets.hovered.weak_bg_fill
-            };
-            ui.painter().rect_filled(rect, 3.0, fill);
-        }
+        let chip = Chip::new(app_state_text(installed), MUTED);
+        let (response, body) = style::row(ui, focused, &[chip]);
         if response.clicked() {
             self.apps.focus = Some(id);
         }
 
         let mut ticked = self.apps.selected.contains(id);
-        let text_color = if installed {
-            ui.visuals().text_color()
-        } else {
-            ui.visuals().weak_text_color()
-        };
-        let state_color = ui.visuals().weak_text_color();
+        let text_color = if installed { ui::TEXT } else { MUTED };
         let mut checkbox_clicked = false;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add_enabled_ui(installed, |ui| {
-                    checkbox_clicked = ui.add(egui::Checkbox::without_text(&mut ticked)).changed();
-                });
-                ui.add(
-                    egui::Label::new(RichText::new(row.entry.title).color(text_color))
-                        .selectable(false),
-                );
+        style::row_body(ui, body, |ui| {
+            ui.add_enabled_ui(installed, |ui| {
+                checkbox_clicked = ui.add(egui::Checkbox::without_text(&mut ticked)).changed();
             });
+            style::row_title(ui, row.entry.title, text_color);
         });
-        ui.painter().text(
-            rect.right_center() - Vec2::new(4.0, 0.0),
-            egui::Align2::RIGHT_CENTER,
-            app_state_text(installed),
-            egui::TextStyle::Small.resolve(ui.style()),
-            state_color,
-        );
         if checkbox_clicked {
             self.apps.focus = Some(id);
             if ticked {
@@ -812,29 +760,29 @@ impl Debloater {
     }
 
     fn about_app(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("About this app").strong());
+        style::panel_heading(ui, "About this app");
         let entry = self
             .apps
             .focus
             .and_then(|id| self.apps.rows.iter().find(|r| r.entry.id == id))
             .map(|r| r.entry);
         let Some(entry) = entry else {
-            ui.weak("Click an app to see what removing it changes.");
+            style::note(ui, "Click an app to see what removing it changes.");
             return;
         };
         ui.label(RichText::new(entry.title).strong());
         ui.label(entry.what_changes);
-        ui.label(RichText::new("What could break").small().weak());
+        style::field_label(ui, "What could break");
         ui.label(entry.could_break);
     }
 
     fn apps_inspector(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui.spacing_mut().item_spacing.y = 4.0;
-        ui.label(RichText::new("Review").strong());
+        style::panel_heading(ui, "Review");
 
         let count = self.apps.selected.len();
-        ui.label(plural(count, "app selected", "apps selected"));
+        ui.label(RichText::new(plural(count, "app selected", "apps selected")).strong());
 
         ui.add_space(GAP);
         let removing = self.apps.removing.is_some();
@@ -848,7 +796,7 @@ impl Debloater {
                 plural(count, "app", "apps")
             ));
             ui.horizontal(|ui| {
-                if ui.button("Remove").clicked() {
+                if ui.add(style::primary_button("Remove")).clicked() {
                     self.apps_start_remove(&ctx);
                 }
                 if ui.button("Cancel").clicked() {
@@ -858,30 +806,27 @@ impl Debloater {
         } else if ui
             .add_enabled(
                 count > 0 && !removing,
-                egui::Button::new(format!("Remove {}", plural(count, "app", "apps"))),
+                style::primary_button(&format!("Remove {}", plural(count, "app", "apps"))),
             )
             .clicked()
         {
             self.apps.confirming = true;
         }
         if removing {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Removing...");
-            });
+            style::note(ui, "Removing...");
         }
         if let Some(message) = &self.apps.message {
-            ui.label(RichText::new(message).small().weak());
+            style::note(ui, message);
         }
 
-        ui.add_space(GAP);
+        style::divider(ui);
         if ui
             .link(RichText::new("Open Microsoft Store").small())
             .clicked()
         {
             open_store();
         }
-        ui.label(RichText::new(REINSTALL_NOTE).small().weak());
+        style::note(ui, REINSTALL_NOTE);
     }
 }
 
@@ -927,9 +872,9 @@ fn class_text(class: Class) -> &'static str {
 
 fn class_color(class: Class) -> Color32 {
     match class {
-        Class::Suggest => GREEN.gamma_multiply(0.8),
+        Class::Suggest => GREEN,
         Class::Careful => AMBER,
-        Class::Never => Color32::GRAY,
+        Class::Never => MUTED,
     }
 }
 
@@ -1067,32 +1012,20 @@ impl Debloater {
     }
 
     fn startup_page(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let admin = if self.env.elevated {
-                "Running as administrator"
-            } else {
-                "Not running as administrator"
-            };
-            ui.label(
-                RichText::new(format!(
-                    "{} \u{b7} {admin}",
-                    edition_label(self.env.edition)
-                ))
-                .small()
-                .weak(),
-            );
-            let busy = self.startup.loading.is_some();
-            if ui
-                .add_enabled(!busy, egui::Link::new(RichText::new("Refresh").small()))
-                .clicked()
-            {
-                self.startup_refresh(ui.ctx());
-            }
-        });
-        if let Some(message) = &self.startup.message {
-            ui.label(RichText::new(message).small().weak());
+        let admin = if self.env.elevated {
+            "Running as administrator"
+        } else {
+            "Not running as administrator"
+        };
+        let status = format!("{} \u{b7} {admin}", edition_label(self.env.edition));
+        let busy = self.startup.loading.is_some();
+        if style::page_head(ui, &status, !busy) {
+            self.startup_refresh(ui.ctx());
         }
-        ui.add_space(GAP - 2.0);
+        if let Some(message) = &self.startup.message {
+            style::note(ui, message);
+        }
+        ui.add_space(GAP);
 
         let mut action: Option<(Entry, bool)> = None;
         egui::ScrollArea::vertical()
@@ -1101,40 +1034,45 @@ impl Debloater {
                 if let Some(error) = &self.startup.error {
                     ui.label(error.as_str());
                 } else if self.startup.loading.is_some() && self.startup.entries.is_empty() {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.weak("Loading...");
-                    });
+                    style::note(ui, "Collecting startup items...");
                 } else if self.startup.entries.is_empty() {
-                    ui.weak("No startup items found.");
+                    style::note(ui, "No startup items found.");
                 }
                 let entries = self.startup.entries.clone();
                 let [safe, advanced, protected] = group_startup(&entries);
                 if !safe.is_empty() {
-                    ui.label(RichText::new("Safe to switch off").strong());
-                    for e in &safe {
-                        action = action.take().or(self.startup_row(ui, e));
-                    }
-                    ui.add_space(GAP);
-                }
-                if !advanced.is_empty() {
-                    egui::CollapsingHeader::new(
-                        RichText::new("Advanced: may affect your hardware or apps").strong(),
-                    )
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        for e in &advanced {
+                    style::section(ui, "Safe to switch off", None);
+                    style::group_card(ui, |ui| {
+                        for e in &safe {
                             action = action.take().or(self.startup_row(ui, e));
                         }
                     });
-                    ui.add_space(GAP);
+                    ui.add_space(SPACE_M);
+                }
+                if !advanced.is_empty() {
+                    egui::CollapsingHeader::new(
+                        RichText::new("Advanced: may affect your hardware or apps")
+                            .size(ui::TEXT_SECTION)
+                            .strong(),
+                    )
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        style::group_card(ui, |ui| {
+                            for e in &advanced {
+                                action = action.take().or(self.startup_row(ui, e));
+                            }
+                        });
+                    });
+                    ui.add_space(SPACE_M);
                 }
                 if !protected.is_empty() {
-                    ui.label(RichText::new("Protected").strong());
-                    for e in &protected {
-                        action = action.take().or(self.startup_row(ui, e));
-                    }
-                    ui.add_space(GAP);
+                    style::section(ui, "Protected", Some(NEVER_TIP));
+                    style::group_card(ui, |ui| {
+                        for e in &protected {
+                            action = action.take().or(self.startup_row(ui, e));
+                        }
+                    });
+                    ui.add_space(SPACE_M);
                 }
             });
 
@@ -1155,62 +1093,33 @@ impl Debloater {
         let blocked = needs_admin_now(entry, self.env.elevated);
         let locked = entry.class == Class::Never;
 
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
-        if focused || response.hovered() {
-            let fill = if focused {
-                ui.visuals().widgets.active.weak_bg_fill
-            } else {
-                ui.visuals().widgets.hovered.weak_bg_fill
-            };
-            ui.painter().rect_filled(rect, 3.0, fill);
+        let mut chips = Vec::new();
+        if blocked {
+            chips.push(Chip::new("Needs admin", AMBER));
         }
+        chips.push(Chip::new(class_text(entry.class), class_color(entry.class)));
+        let (response, body) = style::row(ui, focused, &chips);
         if response.clicked() {
             self.startup.focus = Some(key);
         }
 
-        let weak = ui.visuals().weak_text_color();
-        let text_color = if locked || blocked {
-            weak
-        } else {
-            ui.visuals().text_color()
-        };
+        let text_color = if locked || blocked { MUTED } else { ui::TEXT };
         let mut on = entry.enabled;
         let mut changed = false;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add_enabled_ui(!locked && !blocked, |ui| {
-                    let r = ui::toggle_switch(ui, &mut on);
-                    changed = r.changed();
-                    if locked {
-                        r.on_disabled_hover_text(NEVER_TIP);
-                    }
-                });
-                ui.add(
-                    egui::Label::new(RichText::new(&entry.name).color(text_color))
-                        .selectable(false),
-                );
-                ui.add(
-                    egui::Label::new(RichText::new(publisher_text(entry)).small().color(weak))
-                        .selectable(false),
-                );
-                let source = if blocked {
-                    "Needs admin"
-                } else {
-                    entry.source.label()
-                };
-                ui.add(
-                    egui::Label::new(RichText::new(source).small().color(weak)).selectable(false),
-                );
+        style::row_body(ui, body, |ui| {
+            ui.add_enabled_ui(!locked && !blocked, |ui| {
+                let r = ui::toggle_switch(ui, &mut on);
+                changed = r.changed();
+                if locked {
+                    r.on_disabled_hover_text(NEVER_TIP);
+                }
             });
+            style::row_title(ui, &entry.name, text_color);
+            style::row_detail(ui, publisher_text(entry));
+            if !blocked {
+                style::row_detail(ui, entry.source.label());
+            }
         });
-        ui.painter().text(
-            rect.right_center() - Vec2::new(4.0, 0.0),
-            egui::Align2::RIGHT_CENTER,
-            class_text(entry.class),
-            egui::TextStyle::Small.resolve(ui.style()),
-            class_color(entry.class),
-        );
         changed.then(|| (entry.clone(), on))
     }
 
@@ -1222,23 +1131,23 @@ impl Debloater {
         if let Some(key) = self.startup.pending.clone() {
             match self.startup_find(&key).cloned() {
                 Some(entry) => {
-                    ui.label(RichText::new("Switch off?").strong());
+                    style::panel_heading(ui, "Switch off?");
                     ui.label(confirm_off_text(&entry));
                     ui.horizontal(|ui| {
-                        if ui.button("Switch off").clicked() {
+                        if ui.add(style::primary_button("Switch off")).clicked() {
                             self.startup_set(&entry, false);
                         }
                         if ui.button("Cancel").clicked() {
                             self.startup.pending = None;
                         }
                     });
-                    ui.add_space(GAP);
+                    style::divider(ui);
                 }
                 None => self.startup.pending = None,
             }
         }
 
-        ui.label(RichText::new("About this item").strong());
+        style::panel_heading(ui, "About this item");
         let focus = self
             .startup
             .focus
@@ -1246,15 +1155,16 @@ impl Debloater {
             .and_then(|k| self.startup_find(&k).cloned());
         match focus {
             None => {
-                ui.weak("Click an item to see what it is.");
+                style::note(ui, "Click an item to see what it is.");
             }
             Some(e) => {
                 ui.label(RichText::new(&e.name).strong());
-                ui.label(RichText::new(&e.command).small());
-                ui.label(RichText::new("Publisher").small().weak());
+                ui.add(egui::Label::new(RichText::new(&e.command).small()).wrap());
+                style::field_label(ui, "Publisher");
                 ui.label(publisher_text(&e));
-                ui.label(RichText::new("Source").small().weak());
+                style::field_label(ui, "Source");
                 ui.label(e.source.label());
+                ui.add_space(4.0);
                 ui.label(class_sentence(e.class));
             }
         }
@@ -1265,7 +1175,7 @@ impl Debloater {
             .iter()
             .any(|e| needs_admin_now(e, self.env.elevated))
         {
-            ui.add_space(GAP);
+            style::divider(ui);
             ui.label("Some items need administrator rights.");
             if ui.button("Restart as admin").clicked() {
                 if elevation::relaunch_elevated_with_args(&["--open", "Debloater/Startup"]) {
@@ -1274,31 +1184,29 @@ impl Debloater {
                     self.startup.message = Some("Elevation was cancelled.".to_string());
                 }
             }
-            ui.label(
-                RichText::new("Undo history is lost when restarting")
-                    .small()
-                    .weak(),
-            );
+            style::note(ui, "Undo history is lost when restarting");
         }
 
-        ui.add_space(GAP);
-        ui.label(RichText::new("Undo").strong());
+        style::divider(ui);
+        style::panel_heading(ui, "Undo");
         let count = self.startup.steps.len();
         ui.label(plural(count, "change this session", "changes this session"));
         let has = count > 0;
-        if ui
-            .add_enabled(has, egui::Button::new("Undo last change"))
-            .clicked()
-        {
-            self.startup_undo(false);
-        }
-        if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
-            self.startup_undo(true);
-        }
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(has, egui::Button::new("Undo last change"))
+                .clicked()
+            {
+                self.startup_undo(false);
+            }
+            if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
+                self.startup_undo(true);
+            }
+        });
         if has && ui.link(RichText::new("Copy undo steps").small()).clicked() {
             ctx.copy_text(startup::undo_text(&self.startup.steps));
         }
-        ui.label(RichText::new(STARTUP_NOTE).small().weak());
+        style::note(ui, STARTUP_NOTE);
     }
 }
 
@@ -1478,30 +1386,21 @@ impl Debloater {
     }
 
     fn tasks_page(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let admin = if self.env.elevated {
-                "Running as administrator"
-            } else {
-                "Not running as administrator"
-            };
-            ui.label(RichText::new(admin).small().weak());
-            if ui
-                .add_enabled(
-                    !self.tasks_busy(),
-                    egui::Link::new(RichText::new("Refresh").small()),
-                )
-                .clicked()
-            {
-                self.tasks_refresh(ui.ctx());
-            }
-        });
+        let admin = if self.env.elevated {
+            "Running as administrator"
+        } else {
+            "Not running as administrator"
+        };
+        if style::page_head(ui, admin, !self.tasks_busy()) {
+            self.tasks_refresh(ui.ctx());
+        }
         if let Some(message) = &self.tasks.message {
-            ui.label(RichText::new(message).small().weak());
+            style::note(ui, message);
         }
         if let Some(line) = &self.restore.status {
-            ui.label(RichText::new(line).small().weak());
+            style::note(ui, line);
         }
-        ui.add_space(GAP - 2.0);
+        ui.add_space(GAP);
 
         let mut action: Option<(TaskDef, bool)> = None;
         egui::ScrollArea::vertical()
@@ -1509,34 +1408,37 @@ impl Debloater {
             .show(ui, |ui| {
                 let rows = join_tasks(tasks::catalog(), &self.tasks.statuses);
                 if self.tasks.loading.is_some() && self.tasks.statuses.is_empty() {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.weak("Loading...");
-                    });
+                    style::note(ui, "Collecting tasks...");
                 } else if rows.is_empty() {
-                    ui.weak("No tasks to show.");
+                    style::note(ui, "No tasks to show.");
                 }
                 let [safe, advanced] = group_tasks(&rows);
                 if !safe.is_empty() {
-                    ui.label(RichText::new("Safe to switch off").strong());
-                    for (def, state) in safe {
-                        action = action.take().or(self.task_row(ui, def, state));
-                    }
-                    ui.add_space(GAP);
-                }
-                if !advanced.is_empty() {
-                    egui::CollapsingHeader::new(
-                        RichText::new("Advanced: may affect your hardware or apps").strong(),
-                    )
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        for (def, state) in advanced {
+                    style::section(ui, "Safe to switch off", None);
+                    style::group_card(ui, |ui| {
+                        for (def, state) in safe {
                             action = action.take().or(self.task_row(ui, def, state));
                         }
                     });
-                    ui.add_space(GAP);
+                    ui.add_space(SPACE_M);
                 }
-                ui.label(RichText::new(TASKS_NEVER_NOTE).small().weak());
+                if !advanced.is_empty() {
+                    egui::CollapsingHeader::new(
+                        RichText::new("Advanced: may affect your hardware or apps")
+                            .size(ui::TEXT_SECTION)
+                            .strong(),
+                    )
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        style::group_card(ui, |ui| {
+                            for (def, state) in advanced {
+                                action = action.take().or(self.task_row(ui, def, state));
+                            }
+                        });
+                    });
+                    ui.add_space(SPACE_M);
+                }
+                style::note(ui, TASKS_NEVER_NOTE);
             });
 
         if let Some((def, enable)) = action {
@@ -1560,65 +1462,32 @@ impl Debloater {
         let switchable = task_switchable(state);
         let usable = switchable && self.env.elevated && !self.tasks_busy();
 
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
-        if focused || response.hovered() {
-            let fill = if focused {
-                ui.visuals().widgets.active.weak_bg_fill
+        let needs_admin = switchable && !self.env.elevated;
+        let state_chip = if needs_admin {
+            Chip::new("Needs admin", AMBER)
+        } else {
+            let color = if *state == TaskState::Disabled {
+                GREEN
             } else {
-                ui.visuals().widgets.hovered.weak_bg_fill
+                MUTED
             };
-            ui.painter().rect_filled(rect, 3.0, fill);
-        }
+            Chip::new(task_state_text(state), color)
+        };
+        let chips = [state_chip, risk_chip(def.risk, switchable)];
+        let (response, body) = style::row(ui, focused, &chips);
         if response.clicked() {
             self.tasks.focus = Some(def.id);
         }
 
-        let weak = ui.visuals().weak_text_color();
-        let text_color = if switchable {
-            ui.visuals().text_color()
-        } else {
-            weak
-        };
+        let text_color = if switchable { ui::TEXT } else { MUTED };
         let mut on = *state == TaskState::Enabled;
         let mut changed = false;
-        let small = if switchable && !self.env.elevated {
-            "Needs admin"
-        } else {
-            task_state_text(state)
-        };
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add_enabled_ui(usable, |ui| {
-                    changed = ui::toggle_switch(ui, &mut on).changed();
-                });
-                ui.add(
-                    egui::Label::new(RichText::new(def.title).color(text_color)).selectable(false),
-                );
-                ui.add(
-                    egui::Label::new(RichText::new(small).small().color(weak)).selectable(false),
-                );
+        style::row_body(ui, body, |ui| {
+            ui.add_enabled_ui(usable, |ui| {
+                changed = ui::toggle_switch(ui, &mut on).changed();
             });
+            style::row_title(ui, def.title, text_color);
         });
-        // Risk pill, right aligned.
-        let color = if switchable {
-            risk_color(def.risk)
-        } else {
-            weak
-        };
-        let galley = ui.painter().layout_no_wrap(
-            risk_text(def.risk).to_string(),
-            egui::TextStyle::Small.resolve(ui.style()),
-            color,
-        );
-        let pill = egui::Rect::from_center_size(
-            rect.right_center() - Vec2::new(4.0 + galley.size().x / 2.0 + 5.0, 0.0),
-            galley.size() + Vec2::new(10.0, 2.0),
-        );
-        ui.painter()
-            .rect_filled(pill, 8.0, color.gamma_multiply(0.15));
-        ui.painter()
-            .galley(pill.center() - galley.size() / 2.0, galley, color);
         changed.then_some((*def, on))
     }
 
@@ -1630,43 +1499,43 @@ impl Debloater {
         if let Some(id) = self.tasks.pending {
             match tasks::catalog().iter().find(|d| d.id == id) {
                 Some(def) => {
-                    ui.label(RichText::new("Switch off?").strong());
+                    style::panel_heading(ui, "Switch off?");
                     ui.label(confirm_task_text(def));
                     ui.horizontal(|ui| {
-                        if ui.button("Switch off").clicked() {
+                        if ui.add(style::primary_button("Switch off")).clicked() {
                             self.tasks_set(&ctx, *def, false);
                         }
                         if ui.button("Cancel").clicked() {
                             self.tasks.pending = None;
                         }
                     });
-                    ui.add_space(GAP);
+                    style::divider(ui);
                 }
                 None => self.tasks.pending = None,
             }
         }
 
-        ui.label(RichText::new("About this item").strong());
+        style::panel_heading(ui, "About this item");
         let def = self
             .tasks
             .focus
             .and_then(|id| tasks::catalog().iter().find(|d| d.id == id));
         match def {
             None => {
-                ui.weak("Click an item to see what it changes.");
+                style::note(ui, "Click an item to see what it changes.");
             }
             Some(def) => {
                 ui.label(RichText::new(def.title).strong());
                 ui.label(def.what_changes);
-                ui.label(RichText::new("What could break").small().weak());
+                style::field_label(ui, "What could break");
                 ui.label(def.could_break);
-                ui.label(RichText::new("Task").small().weak());
+                style::field_label(ui, "Task");
                 ui.add(egui::Label::new(RichText::new(def.path).small()).wrap());
             }
         }
 
         if !self.env.elevated {
-            ui.add_space(GAP);
+            style::divider(ui);
             ui.label("Changing a task needs administrator rights.");
             if ui.button("Restart as admin").clicked() {
                 if elevation::relaunch_elevated_with_args(&["--open", "Debloater/Tasks"]) {
@@ -1675,49 +1544,40 @@ impl Debloater {
                     self.tasks.message = Some("Elevation was cancelled.".to_string());
                 }
             }
-            ui.label(
-                RichText::new("Undo history is lost when restarting")
-                    .small()
-                    .weak(),
-            );
+            style::note(ui, "Undo history is lost when restarting");
         }
 
-        ui.add_space(GAP);
+        style::divider(ui);
         let busy = self.tasks_busy();
         self.restore_switch(ui, busy);
         if self.restore.on && self.env.elevated && self.restore.tasks_done {
-            ui.label(
-                RichText::new("A restore point was already made this session.")
-                    .small()
-                    .weak(),
-            );
+            style::note(ui, "A restore point was already made this session.");
         }
 
-        ui.add_space(GAP);
-        ui.label(RichText::new("Undo").strong());
+        style::divider(ui);
+        style::panel_heading(ui, "Undo");
         let working = self.tasks.working.is_some();
         if working {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Working...");
-            });
+            style::note(ui, "Working...");
         }
         let count = self.tasks.steps.len();
         ui.label(plural(count, "change this session", "changes this session"));
         let has = count > 0 && !working;
-        if ui
-            .add_enabled(has, egui::Button::new("Undo last change"))
-            .clicked()
-        {
-            self.tasks_undo(&ctx, false);
-        }
-        if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
-            self.tasks_undo(&ctx, true);
-        }
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(has, egui::Button::new("Undo last change"))
+                .clicked()
+            {
+                self.tasks_undo(&ctx, false);
+            }
+            if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
+                self.tasks_undo(&ctx, true);
+            }
+        });
         if count > 0 && ui.link(RichText::new("Copy undo steps").small()).clicked() {
             ctx.copy_text(tasks::undo_text(&self.tasks.steps));
         }
-        ui.label(RichText::new(TASKS_NOTE).small().weak());
+        style::note(ui, TASKS_NOTE);
     }
 }
 
@@ -1942,30 +1802,21 @@ impl Debloater {
     }
 
     fn services_page(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let admin = if self.env.elevated {
-                "Running as administrator"
-            } else {
-                "Not running as administrator"
-            };
-            ui.label(RichText::new(admin).small().weak());
-            if ui
-                .add_enabled(
-                    !self.services_busy(),
-                    egui::Link::new(RichText::new("Refresh").small()),
-                )
-                .clicked()
-            {
-                self.services_refresh(ui.ctx());
-            }
-        });
+        let admin = if self.env.elevated {
+            "Running as administrator"
+        } else {
+            "Not running as administrator"
+        };
+        if style::page_head(ui, admin, !self.services_busy()) {
+            self.services_refresh(ui.ctx());
+        }
         if let Some(message) = &self.services.message {
-            ui.label(RichText::new(message).small().weak());
+            style::note(ui, message);
         }
         if let Some(line) = &self.restore.status {
-            ui.label(RichText::new(line).small().weak());
+            style::note(ui, line);
         }
-        ui.add_space(GAP - 2.0);
+        ui.add_space(GAP);
 
         let mut action: Option<(ServiceDef, bool)> = None;
         egui::ScrollArea::vertical()
@@ -1973,35 +1824,38 @@ impl Debloater {
             .show(ui, |ui| {
                 let rows = join_services(services::catalog(), &self.services.statuses);
                 if self.services.loading.is_some() && self.services.statuses.is_empty() {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.weak("Loading...");
-                    });
+                    style::note(ui, "Collecting services...");
                 } else if rows.is_empty() {
-                    ui.weak("No services to show.");
+                    style::note(ui, "No services to show.");
                 }
                 let [safe, advanced] = group_services(&rows);
                 if !safe.is_empty() {
-                    ui.label(RichText::new("Safe to switch off").strong());
-                    for (def, state) in safe {
-                        action = action.take().or(self.service_row(ui, def, state));
-                    }
-                    ui.add_space(GAP);
-                }
-                if !advanced.is_empty() {
-                    egui::CollapsingHeader::new(
-                        RichText::new("Advanced: may affect your hardware or apps").strong(),
-                    )
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(SERVICES_CAREFUL_NOTE).small().weak());
-                        for (def, state) in advanced {
+                    style::section(ui, "Safe to switch off", None);
+                    style::group_card(ui, |ui| {
+                        for (def, state) in safe {
                             action = action.take().or(self.service_row(ui, def, state));
                         }
                     });
-                    ui.add_space(GAP);
+                    ui.add_space(SPACE_M);
                 }
-                ui.label(RichText::new(SERVICES_NEVER_NOTE).small().weak());
+                if !advanced.is_empty() {
+                    egui::CollapsingHeader::new(
+                        RichText::new("Advanced: may affect your hardware or apps")
+                            .size(ui::TEXT_SECTION)
+                            .strong(),
+                    )
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        style::note(ui, SERVICES_CAREFUL_NOTE);
+                        style::group_card(ui, |ui| {
+                            for (def, state) in advanced {
+                                action = action.take().or(self.service_row(ui, def, state));
+                            }
+                        });
+                    });
+                    ui.add_space(SPACE_M);
+                }
+                style::note(ui, SERVICES_NEVER_NOTE);
             });
 
         if let Some((def, enable)) = action {
@@ -2028,26 +1882,16 @@ impl Debloater {
         let can_revert = on || has_step;
         let usable = switchable && self.env.elevated && !self.services_busy() && can_revert;
 
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
-        if focused || response.hovered() {
-            let fill = if focused {
-                ui.visuals().widgets.active.weak_bg_fill
-            } else {
-                ui.visuals().widgets.hovered.weak_bg_fill
-            };
-            ui.painter().rect_filled(rect, 3.0, fill);
-        }
+        let chips = [
+            Chip::new(service_state_text(state), MUTED),
+            risk_chip(def.risk, switchable),
+        ];
+        let (response, body) = style::row(ui, focused, &chips);
         if response.clicked() {
             self.services.focus = Some(def.id);
         }
 
-        let weak = ui.visuals().weak_text_color();
-        let text_color = if switchable {
-            ui.visuals().text_color()
-        } else {
-            weak
-        };
+        let text_color = if switchable { ui::TEXT } else { MUTED };
         let tip = if !switchable {
             None
         } else if !self.env.elevated {
@@ -2059,43 +1903,16 @@ impl Debloater {
         };
         let mut on_now = on;
         let mut changed = false;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add_enabled_ui(usable, |ui| {
-                    let r = ui::toggle_switch(ui, &mut on_now);
-                    changed = r.changed();
-                    if let Some(tip) = tip {
-                        r.on_disabled_hover_text(tip);
-                    }
-                });
-                ui.add(
-                    egui::Label::new(RichText::new(def.title).color(text_color)).selectable(false),
-                );
-                ui.add(
-                    egui::Label::new(RichText::new(service_state_text(state)).small().color(weak))
-                        .selectable(false),
-                );
+        style::row_body(ui, body, |ui| {
+            ui.add_enabled_ui(usable, |ui| {
+                let r = ui::toggle_switch(ui, &mut on_now);
+                changed = r.changed();
+                if let Some(tip) = tip {
+                    r.on_disabled_hover_text(tip);
+                }
             });
+            style::row_title(ui, def.title, text_color);
         });
-        // Risk pill, right aligned.
-        let color = if switchable {
-            risk_color(def.risk)
-        } else {
-            weak
-        };
-        let galley = ui.painter().layout_no_wrap(
-            risk_text(def.risk).to_string(),
-            egui::TextStyle::Small.resolve(ui.style()),
-            color,
-        );
-        let pill = egui::Rect::from_center_size(
-            rect.right_center() - Vec2::new(4.0 + galley.size().x / 2.0 + 5.0, 0.0),
-            galley.size() + Vec2::new(10.0, 2.0),
-        );
-        ui.painter()
-            .rect_filled(pill, 8.0, color.gamma_multiply(0.15));
-        ui.painter()
-            .galley(pill.center() - galley.size() / 2.0, galley, color);
         changed.then_some((*def, on_now))
     }
 
@@ -2107,44 +1924,44 @@ impl Debloater {
         if let Some(id) = self.services.pending {
             match services::catalog().iter().find(|d| d.id == id) {
                 Some(def) => {
-                    ui.label(RichText::new("Switch off?").strong());
+                    style::panel_heading(ui, "Switch off?");
                     ui.label(format!("Switch off {}? {}", def.title, def.could_break));
-                    ui.label(RichText::new(SERVICES_TAKES_EFFECT).small().weak());
+                    style::note(ui, SERVICES_TAKES_EFFECT);
                     ui.horizontal(|ui| {
-                        if ui.button("Switch off").clicked() {
+                        if ui.add(style::primary_button("Switch off")).clicked() {
                             self.services_set_off(&ctx, *def);
                         }
                         if ui.button("Cancel").clicked() {
                             self.services.pending = None;
                         }
                     });
-                    ui.add_space(GAP);
+                    style::divider(ui);
                 }
                 None => self.services.pending = None,
             }
         }
 
-        ui.label(RichText::new("About this item").strong());
+        style::panel_heading(ui, "About this item");
         let def = self
             .services
             .focus
             .and_then(|id| services::catalog().iter().find(|d| d.id == id));
         match def {
             None => {
-                ui.weak("Click an item to see what it changes.");
+                style::note(ui, "Click an item to see what it changes.");
             }
             Some(def) => {
                 ui.label(RichText::new(def.title).strong());
                 ui.label(def.what_changes);
-                ui.label(RichText::new("What could break").small().weak());
+                style::field_label(ui, "What could break");
                 ui.label(def.could_break);
-                ui.label(RichText::new("Service name").small().weak());
+                style::field_label(ui, "Service name");
                 ui.add(egui::Label::new(RichText::new(def.name).small()).wrap());
             }
         }
 
         if !self.env.elevated {
-            ui.add_space(GAP);
+            style::divider(ui);
             ui.label("Needs admin: changing a service needs administrator rights.");
             if ui.button("Restart as admin").clicked() {
                 if elevation::relaunch_elevated_with_args(&["--open", "Debloater/Services"]) {
@@ -2153,49 +1970,40 @@ impl Debloater {
                     self.services.message = Some("Elevation was cancelled.".to_string());
                 }
             }
-            ui.label(
-                RichText::new("Undo history is lost when restarting")
-                    .small()
-                    .weak(),
-            );
+            style::note(ui, "Undo history is lost when restarting");
         }
 
-        ui.add_space(GAP);
+        style::divider(ui);
         let busy = self.services_busy();
         self.restore_switch(ui, busy);
         if self.restore.on && self.env.elevated && self.restore.services_done {
-            ui.label(
-                RichText::new("A restore point was already made this session.")
-                    .small()
-                    .weak(),
-            );
+            style::note(ui, "A restore point was already made this session.");
         }
 
-        ui.add_space(GAP);
-        ui.label(RichText::new("Undo").strong());
+        style::divider(ui);
+        style::panel_heading(ui, "Undo");
         let working = self.services.working.is_some();
         if working {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Working...");
-            });
+            style::note(ui, "Working...");
         }
         let count = self.services.steps.len();
         ui.label(plural(count, "change this session", "changes this session"));
         let has = count > 0 && !working;
-        if ui
-            .add_enabled(has, egui::Button::new("Undo last change"))
-            .clicked()
-        {
-            self.services_undo(&ctx, false, None);
-        }
-        if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
-            self.services_undo(&ctx, true, None);
-        }
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(has, egui::Button::new("Undo last change"))
+                .clicked()
+            {
+                self.services_undo(&ctx, false, None);
+            }
+            if ui.add_enabled(has, egui::Button::new("Undo all")).clicked() {
+                self.services_undo(&ctx, true, None);
+            }
+        });
         if count > 0 && ui.link(RichText::new("Copy undo steps").small()).clicked() {
             ctx.copy_text(services::undo_text(&self.services.steps));
         }
-        ui.label(RichText::new(SERVICES_NOTE).small().weak());
+        style::note(ui, SERVICES_NOTE);
     }
 }
 
