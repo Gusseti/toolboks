@@ -4,18 +4,23 @@ use eframe::egui::{self, Align, Layout, RichText, Vec2};
 
 use super::history::{History, Range};
 use super::overview::{
-    cores_label, fmt_percent, fmt_rate, gpu_memory_label, nice_ceiling, DISK_FLOOR, GREY,
-    NET_FLOOR, NONE, SCROLL_GUTTER, SKY,
+    cores_label, fmt_percent, fmt_rate, gpu_memory_label, nice_ceiling, DISK_FLOOR, NET_FLOOR,
+    NONE, SCROLL_GUTTER,
 };
 use super::Resources;
 use crate::format::{clock, rate, size_plain, uptime};
-use crate::ui::{graph_card, GraphCard, Line, ACCENT, AMBER, GREEN};
+use crate::ui::{
+    graph_card, GraphCard, Line, DATA_CPU, DATA_DISK, DATA_GPU, DATA_NETWORK, DATA_SECOND, GAP,
+    TEXT_SECTION,
+};
 
 const COLS: usize = 4;
 const MINI_HEIGHT: f32 = 92.0;
 const IO_HEIGHT: f32 = 120.0;
 /// Gap between graph cards on this page.
 const TIGHT: f32 = 4.0;
+/// Space above each section, more than below it.
+const SECTION_GAP: f32 = 12.0;
 /// Engine types that always get a graph when the GPU reports them.
 const MAIN_ENGINES: [&str; 5] = ["3D", "Copy", "Video Decode", "Video Encode", "Compute"];
 
@@ -101,8 +106,8 @@ fn mini_card(ui: &mut egui::Ui, name: &str, h: &History, range: Range, color: eg
 /// A one-line section header: the title, the key numbers inline and the detail at the right.
 fn section(ui: &mut egui::Ui, title: &str, detail: &str, stats: &[(String, &str)]) {
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 14.0;
-        ui.label(RichText::new(title).strong());
+        ui.spacing_mut().item_spacing.x = GAP + 6.0;
+        ui.label(RichText::new(title).size(TEXT_SECTION).strong());
         for (value, label) in stats {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -122,13 +127,13 @@ impl Resources {
         ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::LEFT), |ui| {
             ui.spacing_mut().item_spacing = Vec2::splat(TIGHT);
             toolboks_addon_sdk::tutorial::region(ui, "details-cpu", |ui| self.cpu_details(ui));
-            ui.add_space(6.0);
+            ui.add_space(SECTION_GAP);
             toolboks_addon_sdk::tutorial::region(ui, "details-gpu", |ui| self.gpu_details(ui));
-            ui.add_space(6.0);
+            ui.add_space(SECTION_GAP);
             self.power_card(ui, ui.available_width(), IO_HEIGHT);
-            ui.add_space(6.0);
+            ui.add_space(SECTION_GAP);
             toolboks_addon_sdk::tutorial::region(ui, "details-disk", |ui| self.disk_details(ui));
-            ui.add_space(6.0);
+            ui.add_space(SECTION_GAP);
             toolboks_addon_sdk::tutorial::region(ui, "details-network", |ui| self.net_details(ui));
         });
     }
@@ -163,7 +168,7 @@ impl Resources {
 
         let items: Vec<(usize, &History)> = self.cores.iter().enumerate().collect();
         grid(ui, &items, |ui, (i, h)| {
-            mini_card(ui, &format!("Core {i}"), h, range, ACCENT);
+            mini_card(ui, &format!("Core {i}"), h, range, DATA_CPU);
         });
     }
 
@@ -212,7 +217,7 @@ impl Resources {
         };
         engines.sort_by_key(|(n, _)| rank(n));
         grid(ui, &engines, |ui, (n, h)| {
-            mini_card(ui, n, h, range, GREEN);
+            mini_card(ui, n, h, range, DATA_GPU);
         });
     }
 
@@ -242,14 +247,14 @@ impl Resources {
                 let lines = [
                     Line {
                         values: r.view(range),
-                        color: AMBER,
+                        color: DATA_DISK,
                         fill: true,
                         label: "Read",
                         fmt: fmt_rate,
                     },
                     Line {
                         values: w.view(range),
-                        color: GREY,
+                        color: DATA_SECOND,
                         fill: false,
                         label: "Write",
                         fmt: fmt_rate,
@@ -295,14 +300,14 @@ impl Resources {
                 let lines = [
                     Line {
                         values: d.view(range),
-                        color: SKY,
+                        color: DATA_NETWORK,
                         fill: true,
                         label: "Down",
                         fmt: fmt_rate,
                     },
                     Line {
                         values: u.view(range),
-                        color: GREY,
+                        color: DATA_SECOND,
                         fill: false,
                         label: "Up",
                         fmt: fmt_rate,
