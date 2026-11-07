@@ -11,7 +11,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Align, Layout, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align, Layout, RichText, Sense, Vec2};
 use egui_extras::{Column, TableBuilder};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use windows::Win32::NetworkManagement::IpHelper::{

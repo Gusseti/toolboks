@@ -7,7 +7,7 @@ use super::power;
 use super::Resources;
 use crate::format::{rate, size_plain};
 use crate::ui::{
-    graph_card, GraphCard, Line, DATA_MEMORY, DATA_NETWORK, DATA_SECOND, GAP, GREEN, SPACE_L,
+    graph_card, GraphCard, Line, DATA_MEMORY, DATA_NETWORK, DATA_SECOND, GREEN, SPACE_L,
 };
 
 /// Width of the resource list.
