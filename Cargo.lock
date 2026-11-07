@@ -3029,7 +3029,7 @@ dependencies = [
 
 [[package]]
 name = "toolboks"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "cpal",
  "eframe",

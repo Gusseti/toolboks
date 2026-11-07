@@ -2,10 +2,21 @@
 
 ## [Unreleased]
 
-### Changed
+## [0.12.1] - 2026-11-07
 
-- Toolboks loads add-on workspaces on demand and releases their page data when you switch away. Audio Gainer keeps active routes running without collecting offscreen meter history.
-- Resource Monitor and Memory Cleaner pause sampling when you leave them. Leaving Disk Manager cancels its scan and releases scan results.
+### Added
+
+- **System Profiles → Gaming** is a verified add-on in the Add-on Browser. Choose which settings to apply, including Game Mode, Game DVR, Windows privacy and cleanup policies, PowerShell 7 telemetry, scheduler values, and the Ultimate Performance power plan. Windows policy options depend on your edition.
+- Review current and proposed values before applying. Toolboks can enable System Protection, confirms a new Windows restore point before tuning, and saves an importable `.reg` export of the selected values it will change.
+- The live **Activity log** records backup, apply, verification, and restore steps. **Restore** reverses the registry and power-plan changes made by Toolboks. **Open backup location** opens the folder containing the export and log.
+- The Gaming walkthrough explains the workflow. Guided steps cover Windows graphics settings, NVIDIA Control Panel, Memory Integrity, Disk Cleanup, and other settings you change in Windows or the relevant app.
+
+### Fixed
+
+- Reduced RAM use by loading add-on workspaces on demand and releasing their page data when you switch away. Resource Monitor and Memory Cleaner stop sampling while inactive.
+- Leaving Disk Manager cancels an active scan and releases its results from memory. Report exports and Windows drive optimizations already in progress can finish in the background.
+- Audio Gainer keeps active audio routes running when you switch away and stops collecting offscreen meter history.
+- **Review registry edits** stays available after applying the Gaming profile. It compares saved registry values with what Windows currently reports.
 
 ## [0.12.0] - 2026-11-07
 
