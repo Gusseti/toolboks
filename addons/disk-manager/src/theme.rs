@@ -102,3 +102,130 @@ pub fn banner(ui: &mut egui::Ui, text: &str) -> bool {
 pub fn header_cell(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).size(11.0).color(MUTED));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HOST_UI: &str = include_str!("../../../src/ui.rs");
+    const SDK_THEME: &str = include_str!("../../../sdk/theme.json");
+
+    fn parse_num(s: &str) -> u8 {
+        let s = s.trim();
+        match s.strip_prefix("0x") {
+            Some(h) => u8::from_str_radix(h, 16).expect("hex channel"),
+            None => s.parse().expect("decimal channel"),
+        }
+    }
+
+    /// Resolve a host `pub const NAME: Color32 = ...;` to RGB, following aliases.
+    fn host_rgb(name: &str) -> [u8; 3] {
+        let needle = format!("pub const {name}: Color32 =");
+        let start = HOST_UI
+            .find(&needle)
+            .unwrap_or_else(|| panic!("{name} not found in src/ui.rs"));
+        let rest = &HOST_UI[start + needle.len()..];
+        let expr = rest[..rest.find(';').expect("const ends")].trim();
+        match expr.strip_prefix("Color32::from_rgb(") {
+            Some(args) => {
+                let ch: Vec<u8> = args
+                    .trim_end_matches(')')
+                    .split(',')
+                    .map(parse_num)
+                    .collect();
+                assert_eq!(ch.len(), 3, "{name}");
+                [ch[0], ch[1], ch[2]]
+            }
+            None => host_rgb(expr),
+        }
+    }
+
+    fn rgb(c: Color32) -> [u8; 3] {
+        [c.r(), c.g(), c.b()]
+    }
+
+    fn hex(s: &str) -> [u8; 3] {
+        let s = s.trim_start_matches('#');
+        assert!(s.len() >= 6, "bad hex {s}");
+        let p = |i: usize| u8::from_str_radix(&s[i..i + 2], 16).expect("hex");
+        [p(0), p(2), p(4)]
+    }
+
+    /// Value of the first `"key": "#hex"` in sdk/theme.json (keys used here are unique).
+    fn json_rgb(key: &str) -> [u8; 3] {
+        let needle = format!("\"{key}\"");
+        let start = SDK_THEME
+            .find(&needle)
+            .unwrap_or_else(|| panic!("{key} not found in sdk/theme.json"));
+        let rest = &SDK_THEME[start + needle.len()..];
+        let q1 = rest.find('"').expect("value open") + 1;
+        let q2 = q1 + rest[q1..].find('"').expect("value close");
+        hex(&rest[q1..q2])
+    }
+
+    #[test]
+    fn addon_tokens_match_host() {
+        let pairs: [(&str, Color32); 6] = [
+            ("WINDOW_BG", WINDOW),
+            ("PANEL_BG", CARD),
+            ("BORDER", HAIRLINE),
+            ("TEXT", TEXT),
+            ("MUTED", MUTED),
+            ("ACCENT", ACCENT),
+        ];
+        for (host, ours) in pairs {
+            assert_eq!(
+                rgb(ours),
+                host_rgb(host),
+                "theme.rs drifted from ui::{host}"
+            );
+        }
+        let data = [
+            "DATA_CPU",
+            "DATA_MEMORY",
+            "DATA_GPU",
+            "DATA_DISK",
+            "DATA_NETWORK",
+            "DATA_SECOND",
+        ];
+        for (i, host) in data.iter().enumerate() {
+            assert_eq!(
+                rgb(DATA[i]),
+                host_rgb(host),
+                "DATA[{i}] drifted from ui::{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn sdk_theme_json_matches_host() {
+        let pairs = [
+            ("background", "WINDOW_BG"),
+            ("sidebar", "SIDEBAR_BG"),
+            ("panel", "PANEL_BG"),
+            ("status", "STATUS_BG"),
+            ("border", "BORDER"),
+            ("text", "TEXT"),
+            ("muted", "MUTED"),
+            ("host_accent", "HOST_ACCENT"),
+            ("selected_row", "SELECTED_BG"),
+            ("bar_divider", "BAR_DIVIDER"),
+            ("cpu", "DATA_CPU"),
+            ("memory", "DATA_MEMORY"),
+            ("gpu", "DATA_GPU"),
+            ("disk", "DATA_DISK"),
+            ("network", "DATA_NETWORK"),
+            ("second_line", "DATA_SECOND"),
+            ("ok", "GREEN"),
+            ("watch", "AMBER"),
+            ("problem", "RED"),
+        ];
+        for (key, host) in pairs {
+            assert_eq!(
+                json_rgb(key),
+                host_rgb(host),
+                "sdk/theme.json {key} drifted from ui::{host}"
+            );
+        }
+    }
+}
