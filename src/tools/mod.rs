@@ -1,6 +1,6 @@
 use eframe::egui;
 
-mod debloat;
+pub(crate) mod debloat;
 mod events;
 mod memory;
 mod resources;

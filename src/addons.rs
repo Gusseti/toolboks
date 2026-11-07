@@ -36,7 +36,8 @@ pub fn official_disk_package() -> Package {
     serde_json::from_str(toolboks_disk_manager::PACKAGE).expect("bundled disk package")
 }
 pub const AURAL_ID: &str = "toolboks.aural";
-pub const OFFICIAL_ADDONS: [&str; 2] = [toolboks_disk_manager::ID, AURAL_ID];
+pub const PROFILES_ID: &str = "toolboks.system-profiles";
+pub const OFFICIAL_ADDONS: [&str; 3] = [toolboks_disk_manager::ID, AURAL_ID, PROFILES_ID];
 
 pub fn official_package(id: &str) -> Option<Package> {
     match id {
@@ -44,6 +45,10 @@ pub fn official_package(id: &str) -> Option<Package> {
         AURAL_ID => Some(
             serde_json::from_str(include_str!("../assets/aural.tbaddon"))
                 .expect("bundled Aural package"),
+        ),
+        PROFILES_ID => Some(
+            serde_json::from_str(include_str!("../assets/system-profiles.tbaddon"))
+                .expect("bundled System Profiles package"),
         ),
         _ => None,
     }
@@ -363,6 +368,20 @@ mod tests {
         spoof.manifest.native_provider = None;
         assert!(validate_provider(&spoof).is_err());
     }
+    #[test]
+    fn system_profiles_requires_the_exact_official_package() {
+        let package = official_package(PROFILES_ID).unwrap();
+        package.validate(env!("CARGO_PKG_VERSION")).unwrap();
+        assert!(validate_provider(&package).is_ok());
+        assert_eq!(
+            package.manifest.capabilities,
+            [toolboks_addon_sdk::Capability::SystemTuning]
+        );
+        let mut spoof = package;
+        spoof.manifest.native_provider = None;
+        assert!(validate_provider(&spoof).is_err());
+    }
+
     #[test]
     fn legacy_disk_package_keeps_read_only_permissions_until_update() {
         let legacy: Package = serde_json::from_str(toolboks_disk_manager::LEGACY_PACKAGE).unwrap();

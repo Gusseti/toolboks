@@ -117,7 +117,8 @@
               "filesystem_read",
               "user_exports",
               "drive_optimize",
-              "live_audio"
+              "live_audio",
+              "system_tuning"
             ]
           }
         },

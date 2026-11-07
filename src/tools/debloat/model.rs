@@ -22,7 +22,7 @@ pub enum Hive {
     LocalMachine,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RegValue {
     Dword(u32),
     Sz(String),

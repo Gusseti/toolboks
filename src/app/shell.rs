@@ -1433,6 +1433,7 @@ impl App {
                             toolboks_addon_sdk::Capability::UserExports => "Save reports to a destination you choose",
                             toolboks_addon_sdk::Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
                             toolboks_addon_sdk::Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
+                            toolboks_addon_sdk::Capability::SystemTuning => "Back up and change the Windows settings and power plan you select",
                         });
                     }
                     ui.add_space(look::SPACE_L);

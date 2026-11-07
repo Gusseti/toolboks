@@ -3,6 +3,7 @@ use crate::addons::Registry;
 use std::collections::BTreeMap;
 use toolboks_addon_sdk::NativeAddon;
 mod aural;
+mod profiles;
 
 #[derive(Default)]
 pub struct NativeHost {
@@ -39,6 +40,7 @@ impl NativeHost {
                 || Box::new(toolboks_disk_manager::DiskManager::default())
             }
             crate::addons::AURAL_ID => || Box::new(aural::Aural::default()),
+            crate::addons::PROFILES_ID => || Box::new(profiles::Gaming::default()),
             _ => return None,
         };
         Some(self.active.entry(provider.into()).or_insert_with(create))
