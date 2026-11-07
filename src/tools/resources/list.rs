@@ -80,8 +80,8 @@ impl Resources {
 
         let gpu_detail = match g {
             Some(g) => match g.temp_c {
-                Some(t) => format!("{}, {t:.0} °C", g.name),
-                None => g.name.clone(),
+                Some(t) => format!("{}, {t:.0} °C", short_gpu_name(&g.name)),
+                None => short_gpu_name(&g.name),
             },
             None if self.gpu_missing >= GPU_MISSING_AFTER => "No GPU found".to_string(),
             None => "Reading GPU...".to_string(),
@@ -147,7 +147,7 @@ impl Resources {
         let (detail, value, values) = match gpu_w {
             Some(w) => (
                 format!(
-                    "GPU measured, CPU about {} (estimate)",
+                    "CPU estimate {}",
                     cpu_now.map_or(NONE.to_string(), power::fmt_watts)
                 ),
                 power::fmt_watts(w),
@@ -199,6 +199,19 @@ impl Resources {
 }
 
 /// "i7-9700K" out of "Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz"; the full name when unsure.
+/// "NVIDIA GeForce RTX 3080" becomes "RTX 3080" so it fits a list row.
+fn short_gpu_name(name: &str) -> String {
+    let cleaned: Vec<&str> = name
+        .split_whitespace()
+        .filter(|w| !matches!(*w, "NVIDIA" | "GeForce" | "AMD" | "Radeon" | "(R)" | "(TM)"))
+        .collect();
+    if cleaned.is_empty() {
+        name.trim().to_string()
+    } else {
+        cleaned.join(" ")
+    }
+}
+
 fn short_cpu_name(name: &str) -> String {
     let before_at = name.split('@').next().unwrap_or(name);
     let cleaned: Vec<&str> = before_at
@@ -323,6 +336,13 @@ mod tests {
             "i7-9700K"
         );
         assert_eq!(short_cpu_name("CPU"), "CPU");
+    }
+
+    #[test]
+    fn short_gpu_name_keeps_the_model() {
+        assert_eq!(short_gpu_name("NVIDIA GeForce RTX 3080"), "RTX 3080");
+        assert_eq!(short_gpu_name("AMD Radeon RX 7800 XT"), "RX 7800 XT");
+        assert_eq!(short_gpu_name("NVIDIA"), "NVIDIA");
     }
 
     #[test]
