@@ -15,16 +15,19 @@ use super::model::{
     Category, ChannelStatus, Crash, CrashKind, DigestLine, Event, Group, Info, Severity,
 };
 use super::source::{self, DumpHeader, EventSource, Query, WinEvents};
-use crate::ui::{self as look, AMBER, GAP, MUTED, RED};
+use crate::ui::{self as look, AMBER, BORDER, GAP, GREEN, MUTED, RED, TEXT_CAPTION, TEXT_SECTION};
 
 const DAY_MS: i64 = 86_400_000;
 const LOOKBACK_MS: i64 = 30 * DAY_MS;
 const POLL_EVERY: Duration = Duration::from_secs(2);
-const ROW_H: f32 = 22.0;
-const INSPECTOR_W: f32 = 210.0;
-const INSPECTOR_PAD: f32 = 8.0;
+const ROW_H: f32 = 28.0;
+const INSPECTOR_W: f32 = 232.0;
+const INSPECTOR_PAD: f32 = look::SPACE_M;
 const PILL_W: f32 = 104.0;
-const HARMLESS: Color32 = Color32::from_rgb(0x6f, 0xa8, 0x85);
+/// `YYYY-MM-DD HH:MM:SS` in the 11 px monospace face, with room to spare.
+const TIME_W: f32 = 140.0;
+const SOURCE_W: f32 = 200.0;
+const CATEGORY_W: f32 = 64.0;
 
 type Key = (String, u64);
 
@@ -87,7 +90,7 @@ fn sev_color(s: Severity) -> Color32 {
     match s {
         Severity::NeedsAttention => RED,
         Severity::WorthWatching => AMBER,
-        Severity::Harmless => HARMLESS,
+        Severity::Harmless => GREEN,
         Severity::Info => MUTED,
     }
 }
@@ -846,7 +849,7 @@ impl Page {
 
         if page < 2 {
             let frame = egui::Frame::NONE
-                .fill(ui.visuals().extreme_bg_color)
+                .fill(look::PANEL_BG)
                 .inner_margin(INSPECTOR_PAD);
             let panel = egui::Panel::right("events_inspector")
                 .resizable(false)
@@ -883,18 +886,18 @@ impl Page {
     fn header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             if self.loading {
-                ui.spinner();
-                ui.label("Reading Windows event logs...");
-            } else if ui.button("Refresh").clicked() {
+                ui.label(muted("Reading Windows event logs..."));
+            } else if outline_button(ui, "Refresh").clicked() {
                 self.refresh(ctx);
             }
             if let Some(line) = coverage_line(&self.statuses, self.since_ms) {
-                ui.label(RichText::new(line).small().weak());
+                ui.label(muted(line));
             }
         });
         for w in unreadable_warnings(&self.statuses) {
-            ui.label(RichText::new(w).small().color(AMBER));
+            ui.label(RichText::new(w).size(TEXT_CAPTION).color(AMBER));
         }
+        ui.add_space(GAP);
     }
 
     fn live_page(&mut self, ui: &mut egui::Ui) {
@@ -916,13 +919,10 @@ impl Page {
                         Sel::Event(..) => 1,
                     })
                     .sum();
-                ui.label(
-                    RichText::new(count_text(self.rows.len(), events, self.grouped))
-                        .small()
-                        .weak(),
-                );
+                ui.label(muted(count_text(self.rows.len(), events, self.grouped)));
             });
         });
+        ui.add_space(look::SPACE_XS);
         ui.horizontal_wrapped(|ui| {
             for (i, s) in [
                 Severity::NeedsAttention,
@@ -933,11 +933,14 @@ impl Page {
             .into_iter()
             .enumerate()
             {
-                changed |= ui.checkbox(&mut self.show[i], sev_label(s)).changed();
+                if look::pill(ui, sev_label(s), self.show[i]).clicked() {
+                    self.show[i] = !self.show[i];
+                    changed = true;
+                }
             }
-            changed |= ui
-                .checkbox(&mut self.grouped, "Group repeated events")
-                .changed();
+            ui.add_space(GAP);
+            changed |= look::toggle_switch(ui, &mut self.grouped).changed();
+            ui.label("Group repeated events");
             ui.add_space(GAP);
             if look::toggle_switch(ui, &mut self.paused).changed() && !self.paused {
                 changed = true;
@@ -947,15 +950,13 @@ impl Page {
         if changed {
             self.rows_dirty = true;
         }
-        ui.add_space(2.0);
+        ui.add_space(GAP);
 
         if self.rows.is_empty() {
             if self.loaded && !self.loading {
-                ui.label(
-                    RichText::new("Nothing to show with these filters.")
-                        .small()
-                        .weak(),
-                );
+                ui.label(muted(
+                    "Nothing to show with these filters. Turn on more severities or clear the filter.",
+                ));
             }
             return;
         }
@@ -966,65 +967,93 @@ impl Page {
         let mut clicked: Option<usize> = None;
         let selected = self.sel.as_ref().map(Sel::key);
         let rows = &self.rows;
-        TableBuilder::new(ui)
-            .striped(true)
-            .sense(Sense::click())
-            .auto_shrink([false, false])
-            .column(Column::exact(144.0))
-            .column(Column::exact(PILL_W + 8.0))
-            .column(Column::exact(64.0))
-            .column(Column::remainder().at_least(120.0).clip(true))
-            .column(Column::exact(190.0).clip(true))
-            .header(ROW_H, |mut header| {
-                for title in [
-                    "Time (UTC)",
-                    "Severity",
-                    "Category",
-                    "What happened",
-                    "Source",
-                ] {
-                    header.col(|ui| {
-                        ui.label(RichText::new(title).small().strong());
-                    });
-                }
-            })
-            .body(|body| {
-                body.rows(ROW_H, rows.len(), |mut row| {
-                    let r = &rows[row.index()];
-                    row.set_selected(selected == Some(r.sel.key()));
-                    row.col(|ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(ms_to_text(r.time_ms)).monospace())
-                                .selectable(false),
-                        );
-                    });
-                    row.col(|ui| sev_pill(ui, r.severity, PILL_W));
-                    row.col(|ui| {
-                        ui.add(
-                            egui::Label::new(category_text(r.category))
-                                .selectable(false)
-                                .truncate(),
-                        );
-                    });
-                    row.col(|ui| {
-                        ui.add(egui::Label::new(&r.headline).selectable(false).truncate());
-                    });
-                    row.col(|ui| {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(format!("{} {}", r.provider, r.id))
-                                    .small()
-                                    .weak(),
-                            )
-                            .selectable(false)
-                            .truncate(),
-                        );
-                    });
-                    if row.response().clicked() {
-                        clicked = Some(row.index());
+        ui.scope(|ui| {
+            // Selected row = a lighter fill, not the accent wash used for text selection.
+            ui.visuals_mut().selection.bg_fill = look::SELECTED_BG;
+            ui.spacing_mut().item_spacing = Vec2::new(GAP, 0.0);
+            TableBuilder::new(ui)
+                .striped(false)
+                .sense(Sense::click())
+                .auto_shrink([false, false])
+                .column(Column::exact(TIME_W))
+                .column(Column::exact(PILL_W))
+                .column(Column::exact(CATEGORY_W).clip(true))
+                .column(Column::remainder().at_least(140.0).clip(true))
+                .column(Column::exact(SOURCE_W).clip(true))
+                .header(ROW_H, |mut header| {
+                    for (i, title) in [
+                        "Time (UTC)",
+                        "Severity",
+                        "Category",
+                        "What happened",
+                        "Source",
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        header.col(|ui| {
+                            let text = RichText::new(title).size(TEXT_CAPTION).color(MUTED);
+                            if i == 0 {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(text);
+                                });
+                            } else {
+                                ui.label(text);
+                            }
+                            hairline(ui);
+                        });
                     }
+                })
+                .body(|body| {
+                    body.rows(ROW_H, rows.len(), |mut row| {
+                        let r = &rows[row.index()];
+                        row.set_selected(selected == Some(r.sel.key()));
+                        row.col(|ui| {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(ms_to_text(r.time_ms))
+                                            .monospace()
+                                            .size(TEXT_CAPTION),
+                                    )
+                                    .selectable(false),
+                                );
+                            });
+                            hairline(ui);
+                        });
+                        row.col(|ui| {
+                            sev_pill(ui, r.severity, PILL_W);
+                            hairline(ui);
+                        });
+                        row.col(|ui| {
+                            ui.add(
+                                egui::Label::new(muted(category_text(r.category)))
+                                    .selectable(false)
+                                    .truncate(),
+                            );
+                            hairline(ui);
+                        });
+                        row.col(|ui| {
+                            ui.add(egui::Label::new(&r.headline).selectable(false).truncate())
+                                .on_hover_text(&r.headline);
+                            hairline(ui);
+                        });
+                        row.col(|ui| {
+                            let source = format!("{} {}", r.provider, r.id);
+                            ui.add(
+                                egui::Label::new(muted(source.clone()))
+                                    .selectable(false)
+                                    .truncate(),
+                            )
+                            .on_hover_text(source);
+                            hairline(ui);
+                        });
+                        if row.response().clicked() {
+                            clicked = Some(row.index());
+                        }
+                    });
                 });
-            });
+        });
         if let Some(i) = clicked {
             self.sel = Some(self.rows[i].sel.clone());
         }
@@ -1035,7 +1064,7 @@ impl Page {
             return;
         }
         if self.analysis.crashes.is_empty() {
-            ui.label(no_crashes_text(&self.statuses));
+            ui.label(muted(no_crashes_text(&self.statuses)));
             return;
         }
         let crashes = std::mem::take(&mut self.analysis.crashes);
@@ -1056,46 +1085,40 @@ impl Page {
                     let exists = self.dump_exists.get(&id).copied().unwrap_or(false);
                     let header = self.dump_headers.get(&id);
                     look::card(ui, ui.available_width(), 0.0, |ui| {
-                        ui.label(RichText::new(crash_title(&crash.kind)).strong().size(13.0));
                         ui.label(
-                            RichText::new(format!(
-                                "Stopped around {} UTC",
-                                ms_to_text(crash.stopped_ms)
-                            ))
-                            .small()
-                            .weak(),
+                            RichText::new(crash_title(&crash.kind))
+                                .strong()
+                                .size(TEXT_SECTION),
                         );
+                        ui.label(muted(format!(
+                            "Stopped around {} UTC",
+                            ms_to_text(crash.stopped_ms)
+                        )));
                         if let Some(d) = crash_detail(&crash.kind) {
                             ui.label(d);
                         }
                         if let Some(d) = dump_line(&crash.kind, crash.dump_path.as_deref(), exists)
                         {
-                            ui.label(RichText::new(d).small().weak());
+                            ui.label(muted(d));
                         }
                         match header {
                             Some(Ok(h)) => {
-                                ui.label(RichText::new(dump_header_text(h, &crash.kind)).small());
+                                ui.label(
+                                    RichText::new(dump_header_text(h, &crash.kind))
+                                        .size(TEXT_CAPTION),
+                                );
                             }
                             Some(Err(e)) => {
                                 ui.label(
                                     RichText::new(format!("Could not read the dump header: {e}"))
-                                        .small()
+                                        .size(TEXT_CAPTION)
                                         .color(AMBER),
                                 );
                             }
                             None => {}
                         }
                         ui.horizontal(|ui| {
-                            if let (true, Some(p)) = (exists, &crash.dump_path) {
-                                let busy = self.dump_pending.contains(&id);
-                                if ui
-                                    .add_enabled(!busy, egui::Button::new("Read dump header"))
-                                    .clicked()
-                                {
-                                    actions.push(CrashAction::ReadDump(id, p.clone()));
-                                }
-                            }
-                            if ui.button("Copy crash report").clicked() {
+                            if primary_button(ui, "Copy crash report").clicked() {
                                 actions.push(CrashAction::Copy(crash_report(
                                     version,
                                     crash,
@@ -1104,19 +1127,25 @@ impl Page {
                                     self.keep_names,
                                 )));
                             }
+                            if let (true, Some(p)) = (exists, &crash.dump_path) {
+                                let busy = self.dump_pending.contains(&id);
+                                ui.add_enabled_ui(!busy, |ui| {
+                                    if outline_button(ui, "Read dump header").clicked() {
+                                        actions.push(CrashAction::ReadDump(id, p.clone()));
+                                    }
+                                });
+                            }
+                            ui.add_space(GAP);
+                            ui.checkbox(&mut self.keep_names, "Keep names and paths");
                         });
-                        ui.add_space(2.0);
+                        ui.add_space(look::SPACE_XS);
                         ui.label(
                             RichText::new("What happened in the 10 minutes before")
-                                .small()
-                                .strong(),
+                                .strong()
+                                .size(TEXT_SECTION),
                         );
                         if crash.before.is_empty() {
-                            ui.label(
-                                RichText::new("No warnings or errors were logged in that time.")
-                                    .small()
-                                    .weak(),
-                            );
+                            ui.label(muted("No warnings or errors were logged in that time."));
                         }
                         for e in &crash.before {
                             let info = catalog::classify(e);
@@ -1125,20 +1154,31 @@ impl Page {
                                     && s.event().channel == e.channel
                                     && s.event().record_id == e.record_id
                             });
+                            ui.add(egui::Separator::default().spacing(0.0));
                             ui.horizontal(|ui| {
-                                ui.add_sized(
-                                    Vec2::new(78.0, 18.0),
-                                    egui::Label::new(
-                                        RichText::new(minutes_before(crash.stopped_ms, e.time_ms))
+                                ui.set_min_height(ROW_H);
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(84.0, ROW_H),
+                                    Layout::right_to_left(Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(minutes_before(
+                                                crash.stopped_ms,
+                                                e.time_ms,
+                                            ))
                                             .monospace()
-                                            .small()
-                                            .weak(),
-                                    ),
+                                            .size(TEXT_CAPTION)
+                                            .color(MUTED),
+                                        );
+                                    },
                                 );
                                 sev_pill(ui, info.severity, PILL_W);
-                                if ui.selectable_label(is_sel, info.headline).clicked() {
-                                    actions.push(CrashAction::Select(e.clone()));
-                                }
+                                ui.scope(|ui| {
+                                    ui.visuals_mut().selection.bg_fill = look::SELECTED_BG;
+                                    if ui.selectable_label(is_sel, info.headline).clicked() {
+                                        actions.push(CrashAction::Select(e.clone()));
+                                    }
+                                });
                             });
                         }
                     });
@@ -1168,44 +1208,56 @@ impl Page {
             } else {
                 "Nothing notable was found in the last 30 days."
             };
-            ui.label(text);
+            ui.label(muted(text));
+            return;
         }
-        for line in &self.analysis.digest {
-            ui.horizontal_top(|ui| {
-                sev_pill(ui, line.severity, PILL_W);
-                ui.add(egui::Label::new(&line.text).wrap());
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if !self.analysis.digest.is_empty() {
+                    look::card(ui, ui.available_width(), 0.0, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for (i, line) in self.analysis.digest.iter().enumerate() {
+                            if i > 0 {
+                                ui.add(egui::Separator::default().spacing(GAP));
+                            } else {
+                                ui.add_space(look::SPACE_XS);
+                            }
+                            ui.horizontal_top(|ui| {
+                                sev_pill(ui, line.severity, PILL_W);
+                                ui.add(egui::Label::new(&line.text).wrap());
+                            });
+                        }
+                        ui.add_space(look::SPACE_XS);
+                    });
+                }
+                ui.add_space(look::SPACE_L);
+                ui.label(
+                    RichText::new("What this can and cannot tell you")
+                        .strong()
+                        .size(TEXT_SECTION),
+                );
+                ui.label(muted(
+                    "Hints, not diagnoses. Crashes can have causes that leave no trace in the log.",
+                ));
             });
-        }
-        ui.add_space(GAP);
-        ui.label(
-            RichText::new("What this can and cannot tell you")
-                .small()
-                .strong(),
-        );
-        ui.label(
-            RichText::new(
-                "Hints, not diagnoses. Crashes can have causes that leave no trace in the log.",
-            )
-            .small()
-            .weak(),
-        );
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.spacing_mut().item_spacing.y = look::SPACE_XS;
         let Some(sel) = self.sel.clone() else {
-            ui.label(
-                RichText::new("Select an event to see its details.")
-                    .small()
-                    .weak(),
-            );
+            ui.label(muted("Select an event to see its details."));
             return;
         };
         let (e, info) = (sel.event(), sel.info());
-        ui.label(RichText::new(info.headline).strong());
+        ui.add(egui::Label::new(RichText::new(info.headline).strong().size(TEXT_SECTION)).wrap());
         sev_pill(ui, info.severity, 0.0);
+        ui.add_space(look::SPACE_XS);
+        // A muted caption over the value: the panel is too narrow for two columns.
         let kv = |ui: &mut egui::Ui, k: &str, v: &str| {
-            ui.add(egui::Label::new(RichText::new(format!("{k}: {v}")).small()).wrap());
+            ui.add_space(look::SPACE_XS);
+            ui.label(muted(k));
+            ui.add(egui::Label::new(v).wrap());
         };
         if let Sel::Group(g) = &sel {
             kv(ui, "Repeated", &format!("{} times", g.count));
@@ -1221,45 +1273,41 @@ impl Page {
         kv(ui, "Channel", &e.channel);
         kv(ui, "Time (UTC)", &ms_to_text(e.time_ms));
         if !info.hint.is_empty() {
-            ui.add_space(2.0);
-            ui.add(egui::Label::new(RichText::new(info.hint).small().weak()).wrap());
+            ui.add_space(GAP);
+            ui.add(egui::Label::new(muted(info.hint)).wrap());
         }
         if !e.data.is_empty() {
-            ui.add_space(2.0);
-            ui.label(RichText::new("Event data").small().strong());
+            ui.add_space(GAP);
+            ui.label(RichText::new("Event data").strong());
             for (k, v) in e.data.iter().take(40) {
                 kv(ui, k, &shorten(v, 300));
             }
         }
 
-        ui.add_space(4.0);
+        ui.add_space(GAP);
         let key = (e.channel.clone(), e.record_id);
         let message = self.messages.get(&key).cloned();
         match &message {
             Some(Some(m)) => {
-                ui.label(RichText::new("Windows' own message").small().strong());
-                ui.add(egui::Label::new(RichText::new(shorten(m, 1500)).small()).wrap());
+                ui.label(RichText::new("Windows' own message").strong());
+                ui.add(egui::Label::new(shorten(m, 1500)).wrap());
             }
             Some(None) => {
-                ui.label(
-                    RichText::new("Windows has no message text for this event.")
-                        .small()
-                        .weak(),
-                );
+                ui.label(muted("Windows has no message text for this event."));
             }
             None if self.message_pending.contains(&key) => {
-                ui.label(RichText::new("Asking Windows...").small().weak());
+                ui.label(muted("Asking Windows..."));
             }
             None => {
-                if ui.button("Show Windows' own message").clicked() {
+                if outline_button(ui, "Show Windows' own message").clicked() {
                     self.ask_message(e, ctx);
                 }
             }
         }
 
-        ui.add_space(4.0);
+        ui.add_space(GAP);
         ui.checkbox(&mut self.keep_names, "Keep names and paths");
-        if ui.button("Copy report").clicked() {
+        if primary_button(ui, "Copy report").clicked() {
             let text = event_report(
                 env!("CARGO_PKG_VERSION"),
                 &sel,
@@ -1271,10 +1319,44 @@ impl Page {
     }
 }
 
+/// Muted caption text (11 px).
+fn muted(text: impl Into<String>) -> RichText {
+    RichText::new(text.into()).size(TEXT_CAPTION).color(MUTED)
+}
+
+/// A 1 px divider along the bottom of a table cell, a little wider than the cell to bridge the gap
+/// between columns.
+fn hairline(ui: &egui::Ui) {
+    let r = ui.max_rect();
+    ui.painter().hline(
+        (r.left() - 4.0)..=(r.right() + 4.0),
+        r.bottom(),
+        egui::Stroke::new(1.0, BORDER),
+    );
+}
+
+/// The one primary action of a view: accent fill.
+fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(text).color(Color32::WHITE))
+            .fill(look::HOST_ACCENT_FILL)
+            .stroke(egui::Stroke::NONE),
+    )
+}
+
+/// A secondary action: outlined, no fill.
+fn outline_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(text)
+            .fill(Color32::TRANSPARENT)
+            .stroke(egui::Stroke::new(1.0, BORDER)),
+    )
+}
+
 /// A small rounded label tinted with the severity color; `width` 0 means as wide as the text.
 fn sev_pill(ui: &mut egui::Ui, s: Severity, width: f32) {
     let color = sev_color(s);
-    let font = egui::FontId::proportional(10.5);
+    let font = egui::FontId::proportional(TEXT_CAPTION);
     let galley = ui
         .painter()
         .layout_no_wrap(sev_label(s).to_owned(), font, color);
@@ -1283,10 +1365,10 @@ fn sev_pill(ui: &mut egui::Ui, s: Severity, width: f32) {
     } else {
         galley.size().x + 14.0
     };
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 16.0), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 18.0), Sense::hover());
     if ui.is_rect_visible(rect) {
         ui.painter()
-            .rect_filled(rect, 8.0, color.gamma_multiply(0.18));
+            .rect_filled(rect, 9.0, color.gamma_multiply(0.16));
         ui.painter()
             .galley(rect.center() - galley.size() / 2.0, galley, color);
     }
