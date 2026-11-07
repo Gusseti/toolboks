@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.12.0] - 2026-11-07
 
 ### Added
 
@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Memory Cleaner has a new page: a list of memory measures on the left and, on the right, a plain verdict (healthy, busy or under pressure), the memory graph with the 90 percent pressure line, where your memory goes, the biggest apps with a hint and growth per hour, the last run report and the automatic switch. "Trim idle apps" no longer usually ends with "no app was a good candidate".
 - Memory Cleaner reports honestly: it measures what moved to cache and what came back after 30 seconds and two minutes, and never says memory was freed. Optimize memory now lowers the memory priority of idle background apps and trims only the biggest idle ones, one by one, never the app in front. Clean automatically is off by default, waits for real memory pressure and runs at most once an hour. Trim-all, the full cache purge and the modified-list flush are gone; the low-priority cache purge is under Advanced (admin only, with a warning). The apps list shows growth per hour.
 
 ### Fixed
