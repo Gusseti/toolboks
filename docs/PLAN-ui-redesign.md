@@ -1,6 +1,8 @@
 # Plan: UI redesign, direction H (master and detail)
 
-Chosen by the owner on 2026-11-07 from nine directions on the design canvas. Plan only; nothing is built yet. Tracked in the GitHub issues labelled `area: ui`.
+Chosen by the owner on 2026-11-07 from nine directions on the design canvas. Plan only; nothing is built yet. Tracked in the GitHub issues labelled `area: ui` (epic #24).
+
+**Scope: the whole app.** The shell, every built-in tool (Memory Cleaner, Resource Monitor, Debloater, Event Watch), Home, the add-on browser, Settings, the tray and update windows, and the add-ons (Disk Manager and the SDK templates). The visual system is recorded once in [DESIGN.md](../DESIGN.md) at the repo root; that file is the reference every later add-on follows.
 
 ## The design
 
@@ -41,4 +43,4 @@ Surfaces `#0e0f11`, bars `#0a0b0c`, card `#15161a`, selected row `#1b1c21`, hair
 
 ## Slices
 
-See the issues labelled `area: ui`. The order is: tokens, sidebar and header, Resource Monitor Overview, the other resource details, then the remaining pages and tools, then a quality pass.
+See the issues labelled `area: ui`. The order is: tokens, sidebar and header, Resource Monitor Overview, the other resource details, the remaining Resource Monitor pages, Memory Cleaner, Debloater, Event Watch, Home, add-on browser and Settings, the add-ons and SDK, then a quality pass.
