@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.0] - 2026-11-07
+
+### Changed
+
+- A new look for the whole app and every add-on: darker graphite surfaces, one purple accent, a compact layout, and a Windows system font. The design is written down in `DESIGN.md` so later add-ons follow it.
+- A hamburger button opens the sidebar to show names; closed, it is a slim icon rail. The pages of the open tool are listed under it, and the header shows where you are.
+- Resource Monitor Overview is now a list of resources (CPU, Memory, GPU, Disk, Network, Power) with a large detail view for the one you pick. The Resource Monitor guided tour covers all six.
+- Memory Cleaner, Debloater, Event Watch, Home, the add-on browser, Settings, the update window and Disk Manager use the new look. Event Watch time and source columns are wider.
+- The crash dialog now says in plain words what happened and that nothing was sent or saved.
+- "Connected only" on the Connections page no longer lists UDP sockets (there is an "Include UDP" switch).
+- Add-on authors: `DESIGN.md`, a new design checklist (`docs/ADDON-DESIGN-CHECKLIST.md`) and `tbaddon checklist`. The SDK examples and theme follow the new tokens.
+
+### Notes
+
+- The window can still be too narrow for tools with four pages; this is tracked for a later release.
+
 ## [0.10.0] - 2026-11-07
 
 ### Changed
