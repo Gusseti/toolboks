@@ -6,9 +6,10 @@ and boundaries are documented in [ADDON-ARCHITECTURE.md](ADDON-ARCHITECTURE.md).
 - Toolboks is the frame for installable add-ons. Each workspace stays in the same
   window, and installed/enabled add-ons appear in a collapsible sidebar.
 - The four original tools are packaged as separate preinstalled add-ons.
-- Add-ons can style their content while sharing the host's standard background colors.
-  The approved host direction uses graphite backgrounds, a dark purple accent and the
-  original Toolboks app icon. Text should be clear and comfortable to read.
+- Add-ons share the host's design system ([DESIGN.md](../DESIGN.md)): graphite
+  backgrounds, one purple accent, the Toolboks icon style and plain wording. They choose
+  their content and pages, not their palette, font or icons. Text should be clear and
+  comfortable to read. The checklist is in [ADDON-DESIGN-CHECKLIST.md](ADDON-DESIGN-CHECKLIST.md).
 - The standalone Stratum remains separate. Its condensed Toolboks workspace is
   Disk Manager, with subdued "by stratum" attribution.
 - A standard downloadable SDK provides integration metadata, compatibility rules,

@@ -3,8 +3,9 @@ mod folder_picker;
 mod map;
 mod optimization;
 mod scanner;
+mod theme;
 mod tutorial;
-use egui::{Color32, RichText, Vec2};
+use egui::RichText;
 use scanner::{Node, Progress, Query, State};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -23,10 +24,7 @@ pub const PROVIDER: &str = "stratum.disk-manager";
 pub const PACKAGE: &str = include_str!("../disk-manager.tbaddon");
 pub const LEGACY_PACKAGE: &str = include_str!("../legacy-0.1.tbaddon");
 pub const ID: &str = "toolboks.disk-manager";
-const ACCENT: Color32 = Color32::from_rgb(164, 138, 202);
-const MUTED: Color32 = Color32::from_rgb(164, 168, 178);
-const PANEL: Color32 = Color32::from_rgb(25, 29, 34);
-const BORDER: Color32 = Color32::from_rgb(42, 45, 51);
+use theme::{card, weak, ACCENT, MUTED};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -112,23 +110,8 @@ impl Drop for DiskManager {
     }
 }
 
-fn card() -> egui::Frame {
-    egui::Frame::new()
-        .fill(PANEL)
-        .stroke(egui::Stroke::new(1.0, BORDER))
-        .corner_radius(9)
-        .inner_margin(14)
-}
-fn weak(ui: &mut egui::Ui, text: impl Into<String>) {
-    ui.label(RichText::new(text.into()).color(MUTED));
-}
 fn button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(label).color(Color32::WHITE))
-            .fill(Color32::from_rgb(105, 68, 158))
-            .corner_radius(6)
-            .min_size(Vec2::new(75.0, 30.0)),
-    )
+    theme::primary(ui, label)
 }
 pub fn size(bytes: u64) -> String {
     let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
@@ -282,35 +265,24 @@ impl DiskManager {
         });
     }
     fn stats(&self, ui: &mut egui::Ui, p: &Progress) {
-        ui.columns(4, |cols| {
-            for (col, (label, value, foot)) in cols.iter_mut().zip([
-                ("ANALYZED SPACE", size(p.bytes), "Logical file sizes"),
-                ("FILES FOUND", p.files.to_string(), "Across this scan"),
-                (
-                    "FOLDERS EXPLORED",
-                    p.folders.to_string(),
-                    "Readable locations",
-                ),
-                (
-                    "SCAN TIME",
-                    elapsed(p.elapsed),
+        card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                theme::stat(ui, size(p.bytes), "analyzed, logical file sizes");
+                theme::stat(ui, p.files.to_string(), "files found");
+                theme::stat(ui, p.folders.to_string(), "folders read");
+                theme::stat(ui, elapsed(p.elapsed), "scan time");
+                weak(
+                    ui,
                     if p.running {
-                        "Scanning in background"
+                        "Scanning in the background"
                     } else if p.cancelled {
                         "Partial results"
                     } else {
                         "Scan complete"
                     },
-                ),
-            ]) {
-                card().show(col, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(RichText::new(label).size(11.0).color(MUTED));
-                    ui.add_space(7.0);
-                    ui.label(RichText::new(value).size(24.0));
-                    ui.label(RichText::new(foot).size(12.0).color(MUTED));
-                });
-            }
+                );
+            });
         });
     }
     fn list(&mut self, ui: &mut egui::Ui, nodes: &[Node], p: &Progress) {
@@ -319,7 +291,7 @@ impl DiskManager {
             changed |= ui
                 .add(
                     egui::TextEdit::singleline(&mut self.search)
-                        .hint_text("Search scanned paths…")
+                        .hint_text("Search scanned paths")
                         .desired_width(210.0),
                 )
                 .changed();
@@ -345,16 +317,16 @@ impl DiskManager {
             egui::ComboBox::from_id_salt("disk-age")
                 .selected_text(match self.settings.older_days {
                     0 => "Any age",
-                    180 => "6+ months",
-                    365 => "1+ year",
-                    _ => "3+ years",
+                    180 => "Over 6 months",
+                    365 => "Over 1 year",
+                    _ => "Over 3 years",
                 })
                 .show_ui(ui, |ui| {
                     for (v, l) in [
                         (0, "Any age"),
-                        (180, "6+ months"),
-                        (365, "1+ year"),
-                        (1095, "3+ years"),
+                        (180, "Over 6 months"),
+                        (365, "Over 1 year"),
+                        (1095, "Over 3 years"),
                     ] {
                         changed |= ui
                             .selectable_value(&mut self.settings.older_days, v, l)
@@ -363,7 +335,7 @@ impl DiskManager {
                 });
             egui::ComboBox::from_id_salt("disk-sort")
                 .selected_text(match self.settings.sort.as_str() {
-                    "name" => "Name A–Z",
+                    "name" => "Name A to Z",
                     "files" => "Most files",
                     "modified" => "Recently modified",
                     _ => "Largest first",
@@ -371,7 +343,7 @@ impl DiskManager {
                 .show_ui(ui, |ui| {
                     for (v, l) in [
                         ("size", "Largest first"),
-                        ("name", "Name A–Z"),
+                        ("name", "Name A to Z"),
                         ("files", "Most files"),
                         ("modified", "Recently modified"),
                     ] {
@@ -443,9 +415,9 @@ impl DiskManager {
             .max_scroll_height(340.0);
         table
             .header(24.0, |mut h| {
-                for label in ["NAME", "SIZE", "OF SCAN", "FILES"] {
+                for label in ["Name", "Size", "Of scan", "Files"] {
                     h.col(|ui| {
-                        ui.label(RichText::new(label).size(10.0).color(MUTED));
+                        theme::header_cell(ui, label);
                     });
                 }
             })
@@ -454,7 +426,7 @@ impl DiskManager {
                     let n = &listing.rows[row.index()];
                     row.col(|ui| {
                         let label = if n.dir {
-                            format!("+ {}", n.name)
+                            format!("{} (folder)", n.name)
                         } else {
                             n.name.clone()
                         };
@@ -508,7 +480,7 @@ impl DiskManager {
             weak(
                 ui,
                 format!(
-                    "{}–{} of {} entries · right-click for file actions",
+                    "{}-{} of {} entries. Right-click for file actions.",
                     self.offset + 1,
                     self.offset + listing.rows.len(),
                     listing.total
@@ -518,14 +490,14 @@ impl DiskManager {
                 if ui
                     .add_enabled(
                         self.offset + listing.rows.len() < listing.total,
-                        egui::Button::new("Next >"),
+                        theme::outlined("Next"),
                     )
                     .clicked()
                 {
                     self.offset += 100;
                 }
                 if ui
-                    .add_enabled(self.offset > 0, egui::Button::new("< Previous"))
+                    .add_enabled(self.offset > 0, theme::outlined("Previous"))
                     .clicked()
                 {
                     self.offset = self.offset.saturating_sub(100);
@@ -634,22 +606,19 @@ impl NativeAddon for DiskManager {
             (p, nodes)
         };
         if sample {
-            ui.label(
-                RichText::new("TUTORIAL SAMPLE · Illustrative data, not a scan of your files")
-                    .color(ACCENT),
+            weak(
+                ui,
+                "Tutorial sample. Illustrative data, not a scan of your files.",
             );
+            ui.add_space(theme::SPACE_M);
         }
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Disk Manager").size(28.0));
-            ui.label(
-                RichText::new("by stratum")
-                    .size(13.0)
-                    .color(Color32::from_rgb(112, 108, 121)),
-            );
+            theme::title(ui, "Disk Manager");
+            theme::caption(ui, "by stratum");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let export = ui.add_enabled(
                     !p.running && !nodes.is_empty() && self.export_job.is_none(),
-                    egui::Button::new("Export report"),
+                    theme::outlined("Export report"),
                 );
                 guide::mark(ui, "disk-export", export.rect);
                 if export.clicked() {
@@ -665,16 +634,16 @@ impl NativeAddon for DiskManager {
                 }
             });
         });
-        weak(ui, "Find the weight. Keep what matters.");
-        ui.add_space(16.0);
+        weak(
+            ui,
+            "See what is using your storage. Scanning only reads; nothing is changed.",
+        );
+        ui.add_space(theme::SPACE_L);
         if let Some(message) = self.message.clone() {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(message).color(ACCENT));
-                if ui.small_button("Dismiss").clicked() {
-                    self.message = None;
-                }
-            });
-            ui.add_space(8.0);
+            if theme::banner(ui, &message) {
+                self.message = None;
+            }
+            ui.add_space(theme::SPACE_M);
         }
         ui.horizontal(|ui| {
             let drive = egui::ComboBox::from_id_salt("disk-drive")
@@ -706,8 +675,8 @@ impl NativeAddon for DiskManager {
                 && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let browse = ui.add_enabled(
                 !p.running && self.picker.is_none(),
-                egui::Button::new(if self.picker.is_some() {
-                    "Choosing…"
+                theme::outlined(if self.picker.is_some() {
+                    "Choosing..."
                 } else {
                     "Browse to folder"
                 }),
@@ -734,51 +703,237 @@ impl NativeAddon for DiskManager {
                     self.start();
                 }
             }
-            if ui.button("Options").clicked() {
+            if ui.add(theme::outlined("Options")).clicked() {
                 self.options = !self.options;
             }
         });
         if self.options {
-            ui.add_space(8.0);
+            ui.add_space(theme::SPACE_M);
             let options = card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label("Exclude folder names (separate with semicolons)");
+                theme::section(ui, "Skip folders by name");
+                weak(ui, "Separate names with semicolons.");
                 ui.add_enabled(
                     !p.running,
                     egui::TextEdit::singleline(&mut self.settings.exclude)
-                        .hint_text("e.g. node_modules; .git; target")
+                        .hint_text("For example: node_modules; .git; target")
                         .desired_width(ui.available_width()),
                 );
                 weak(
                     ui,
-                    "Names match exactly, ignoring case. Leave empty for the most complete scan.",
+                    "Names match exactly, ignoring case. Leave empty to scan everything you can read.",
                 );
             });
             guide::mark(ui, "disk-options", options.response.rect);
         }
-        ui.add_space(15.0);
+        ui.add_space(theme::SPACE_XL);
         let mut optimization_changed = false;
-        egui::ScrollArea::vertical().id_salt("disk-workspace").show(ui,|ui|{
-            let tabs=ui.horizontal(|ui|{for(i,label)in["Overview","Largest files","File types","Scan details","Optimization"].iter().enumerate(){if ui.selectable_label(self.page==i,*label).clicked(){self.page=i;self.offset=0;}}});guide::mark(ui,"disk-tabs",tabs.response.rect);ui.add_space(14.0);
-            if self.page==4{optimization_changed=self.optimization.ui(ui,prefs);return;}
-            if p.generation==0{card().show(ui,|ui|{ui.set_width(ui.available_width());ui.set_min_height(190.0);ui.add_space(16.0);ui.label(RichText::new("Your storage, in perspective.").size(28.0));ui.add_space(10.0);weak(ui,"Choose a drive or enter any folder path, then analyze its space.\nExplore the biggest folders and files without leaving Toolboks.");ui.add_space(20.0);weak(ui,"Read-only scanning. Your files are never modified.");});return;}
-            guide::region(ui,"disk-stats",|ui|self.stats(ui,&p));ui.add_space(16.0);
-            if p.running{card().show(ui,|ui|{ui.set_width(ui.available_width());ui.horizontal(|ui|{ui.spinner();ui.label("Mapping your space…");});ui.add(egui::Label::new(RichText::new(display_path(&p.current)).small().color(MUTED)).truncate());weak(ui,format!("{} entries skipped. Stop at any time to explore partial results.",p.skipped));});return;}
-            if p.cancelled{ui.label(RichText::new("Partial scan · totals cover only entries found before cancellation.").color(Color32::from_rgb(213,180,127)));ui.add_space(8.0);}
-            match self.page {
-                2=>{let types=card().show(ui,|ui|{ui.set_width(ui.available_width());for(i,e)in p.extensions.iter().enumerate(){ui.horizontal(|ui|{ui.label(RichText::new(&e.name).color(map::COLORS[i%map::COLORS.len()]));ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{ui.label(size(e.bytes));weak(ui,format!("{} files",e.files));});});ui.add(egui::ProgressBar::new(e.bytes as f32/p.bytes.max(1)as f32).fill(map::COLORS[i%map::COLORS.len()]).desired_width(ui.available_width()));ui.add_space(9.0);}});guide::mark(ui,"disk-types",types.response.rect);},
-                3=>{let details=card().show(ui,|ui|{ui.set_width(ui.available_width());ui.label(RichText::new("Scan coverage").size(18.0));weak(ui,format!("{} entries skipped (links, junctions, exclusions or access errors).",p.skipped));weak(ui,"Sizes are logical file lengths. Hard links count per directory entry; sparse or cloud-placeholder files can differ from allocated space. Files may change during scanning.");ui.add_space(14.0);ui.label("Access and read errors (first 100)");if p.errors.is_empty(){weak(ui,"No errors recorded.");}for error in &p.errors{ui.label(RichText::new(error).small().color(MUTED));}});guide::mark(ui,"disk-details",details.response.rect);},
-                _=>{
-                    if self.page==0{let map=card().show(ui,|ui|{ui.set_width(ui.available_width());ui.horizontal(|ui|{ui.label(RichText::new("Space map").size(15.0));weak(ui,"Click a folder to explore");if self.parent!=0&&ui.small_button("Back to root").clicked(){self.drill(0);}});let entries=self.map_entries(&nodes,&p);if let Some(id)=map::show(ui,&entries){if let Some(n)=nodes.get(id){if n.dir{self.drill(id)}else{self.message=Some(format!("{} · {}",display_path(&n.path),size(n.bytes)))}}}});guide::mark(ui,"disk-map",map.response.rect);ui.add_space(16.0);}
-                    guide::region(ui,"disk-list",|ui|self.list(ui,&nodes,&p));
+        egui::ScrollArea::vertical()
+            .id_salt("disk-workspace")
+            .show(ui, |ui| {
+                let tabs = ui.horizontal(|ui| {
+                    for (i, label) in [
+                        "Overview",
+                        "Largest files",
+                        "File types",
+                        "Scan details",
+                        "Optimization",
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        if ui.selectable_label(self.page == i, *label).clicked() {
+                            self.page = i;
+                            self.offset = 0;
+                        }
+                    }
+                });
+                guide::mark(ui, "disk-tabs", tabs.response.rect);
+                ui.add_space(theme::SPACE_L);
+                if self.page == 4 {
+                    optimization_changed = self.optimization.ui(ui, prefs);
+                    return;
                 }
-            }
-            ui.add_space(10.0);ui.label(RichText::new("Logical sizes · Links and junctions excluded · Read-only analysis").size(10.0).color(MUTED));
-        });
+                if p.generation == 0 {
+                    card().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.set_min_height(120.0);
+                        theme::section(ui, "No scan yet");
+                        weak(
+                            ui,
+                            "Choose a drive or enter a folder path, then select Analyze space.\nYou can then explore the biggest folders and files without leaving Toolboks.",
+                        );
+                        ui.add_space(theme::SPACE_M);
+                        theme::caption(ui, "Scanning only reads. Your files are never changed.");
+                    });
+                    return;
+                }
+                guide::region(ui, "disk-stats", |ui| self.stats(ui, &p));
+                ui.add_space(theme::SPACE_L);
+                if p.running {
+                    card().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Reading your folders...");
+                        });
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(display_path(&p.current))
+                                    .size(11.0)
+                                    .color(MUTED),
+                            )
+                            .truncate(),
+                        );
+                        weak(
+                            ui,
+                            format!(
+                                "{} entries skipped. Stop at any time to explore partial results.",
+                                p.skipped
+                            ),
+                        );
+                    });
+                    return;
+                }
+                if p.cancelled {
+                    weak(
+                        ui,
+                        "Partial scan. Totals cover only what was found before you stopped.",
+                    );
+                    ui.add_space(theme::SPACE_M);
+                }
+                match self.page {
+                    2 => {
+                        let types = card().show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            theme::section(ui, "File types");
+                            weak(ui, "Share of all file bytes found, by extension.");
+                            ui.add_space(theme::SPACE_M);
+                            for (i, e) in p.extensions.iter().enumerate() {
+                                let color = theme::DATA[i % theme::DATA.len()];
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(&e.name).color(color));
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(size(e.bytes));
+                                            weak(ui, format!("{} files", e.files));
+                                        },
+                                    );
+                                });
+                                ui.add(
+                                    egui::ProgressBar::new(e.bytes as f32 / p.bytes.max(1) as f32)
+                                        .fill(color)
+                                        .desired_width(ui.available_width()),
+                                );
+                                ui.add_space(theme::SPACE_M);
+                            }
+                        });
+                        guide::mark(ui, "disk-types", types.response.rect);
+                    }
+                    3 => {
+                        let details = card().show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            theme::section(ui, "Scan coverage");
+                            weak(
+                                ui,
+                                format!(
+                                    "{} entries skipped (links, junctions, exclusions or access errors).",
+                                    p.skipped
+                                ),
+                            );
+                            weak(ui, "Sizes are logical file lengths. Hard links count once per directory entry. Sparse or cloud placeholder files can differ from the space they use on disk. Files may change while scanning.");
+                            ui.add_space(theme::SPACE_L);
+                            theme::section(ui, "Access and read errors (first 100)");
+                            if p.errors.is_empty() {
+                                weak(ui, "No errors recorded.");
+                            }
+                            for error in &p.errors {
+                                theme::caption(ui, error.as_str());
+                            }
+                        });
+                        guide::mark(ui, "disk-details", details.response.rect);
+                    }
+                    _ => {
+                        if self.page == 0 {
+                            let map = card().show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    theme::section(ui, "Space map");
+                                    weak(ui, "Click a folder to open it");
+                                    if self.parent != 0
+                                        && ui.add(theme::outlined("Back to root")).clicked()
+                                    {
+                                        self.drill(0);
+                                    }
+                                });
+                                let entries = self.map_entries(&nodes, &p);
+                                if let Some(id) = map::show(ui, &entries) {
+                                    if let Some(n) = nodes.get(id) {
+                                        if n.dir {
+                                            self.drill(id)
+                                        } else {
+                                            self.message = Some(format!(
+                                                "{} - {}",
+                                                display_path(&n.path),
+                                                size(n.bytes)
+                                            ))
+                                        }
+                                    }
+                                }
+                            });
+                            guide::mark(ui, "disk-map", map.response.rect);
+                            ui.add_space(theme::SPACE_L);
+                        }
+                        guide::region(ui, "disk-list", |ui| self.list(ui, &nodes, &p));
+                    }
+                }
+                ui.add_space(theme::SPACE_M);
+                theme::caption(
+                    ui,
+                    "Logical sizes. Links and junctions are left out. Read-only analysis.",
+                );
+            });
         if let Some(mut json) = self.export_kind {
-            let response=egui::Modal::new(egui::Id::unique("disk-export")).frame(card()).show(ui.ctx(),|ui|{ui.set_width(450.0);ui.label(RichText::new("Take the insight with you.").size(23.0));ui.add_space(8.0);weak(ui,"Export every discovered folder and file. Existing files are not overwritten.");ui.horizontal(|ui|{if ui.selectable_value(&mut json,false,"CSV").changed(){self.export_path=PathBuf::from(&self.export_path).with_extension("csv").display().to_string();}
-if ui.selectable_value(&mut json,true,"JSON").changed(){self.export_path=PathBuf::from(&self.export_path).with_extension("json").display().to_string();}});ui.add(egui::TextEdit::singleline(&mut self.export_path).desired_width(ui.available_width()));ui.add_space(15.0);ui.horizontal(|ui|{if button(ui,"Save report").clicked(){self.export(nodes.clone(),p.clone(),json);}
-if ui.button("Cancel").clicked(){self.export_kind=None;}});});
+            let response = egui::Modal::new(egui::Id::unique("disk-export"))
+                .frame(card().inner_margin(16))
+                .show(ui.ctx(), |ui| {
+                    ui.set_width(450.0);
+                    theme::title(ui, "Export report");
+                    ui.add_space(theme::SPACE_S);
+                    weak(
+                        ui,
+                        "Saves every folder and file found. Existing files are not overwritten.",
+                    );
+                    ui.add_space(theme::SPACE_M);
+                    ui.horizontal(|ui| {
+                        if ui.selectable_value(&mut json, false, "CSV").changed() {
+                            self.export_path = PathBuf::from(&self.export_path)
+                                .with_extension("csv")
+                                .display()
+                                .to_string();
+                        }
+                        if ui.selectable_value(&mut json, true, "JSON").changed() {
+                            self.export_path = PathBuf::from(&self.export_path)
+                                .with_extension("json")
+                                .display()
+                                .to_string();
+                        }
+                    });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.export_path)
+                            .desired_width(ui.available_width()),
+                    );
+                    ui.add_space(theme::SPACE_XL);
+                    ui.horizontal(|ui| {
+                        if button(ui, "Save report").clicked() {
+                            self.export(nodes.clone(), p.clone(), json);
+                        }
+                        if ui.add(theme::outlined("Cancel")).clicked() {
+                            self.export_kind = None;
+                        }
+                    });
+                });
             if response.should_close() {
                 self.export_kind = None;
             } else if self.export_kind.is_some() {

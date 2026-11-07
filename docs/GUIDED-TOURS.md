@@ -3,7 +3,7 @@
 Help is available beside the verification badge in every add-on workspace. Nothing
 opens automatically. Choose the full add-on tour or the current tab only.
 
-The guide dims the workspace and outlines the current component in purple. Next
+The guide dims the workspace and outlines the current component in the accent colour (see [DESIGN.md](../DESIGN.md)). Next
 and Back navigate pages and supported inner tabs. Left/right arrow keys also move
 between steps; Cancel or Escape exits at any point. Jump to lets users choose a
 particular explanation. Completing or cancelling restores prior page selections.
@@ -23,6 +23,9 @@ is ready, its tour uses a labeled, in-memory sample; it does not scan or export.
 The sample disappears on exit, and actual results and preferences remain intact.
 If a component is waiting for data, the guide highlights its empty-state message.
 
+Anchors come from actual rendered rectangles, so they follow the layout when it changes
+(Disk Manager's totals are now one inline bar, still marked as `disk-stats`). Tour text
+follows the writing rules in DESIGN.md: plain words, sentence case.
 Anchors come from actual rendered rectangles. Scroll containers reveal targets
 when a step changes. The overlay uses the visible clipped rectangle, avoiding
 fixed screen coordinates. Tests render all first-party steps and verify each has

@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use egui::Vec2;
 use toolboks_addon_sdk::TutorialStep as S;
 pub(super) fn steps() -> Vec<S> {
     [
@@ -7,9 +9,9 @@ pub(super) fn steps() -> Vec<S> {
         ("0", "disk-browse", "Browse to a folder", "Browse to folder opens the Windows folder picker. Select a folder to fill the path, or cancel to leave it unchanged. The walkthrough does not open the picker."),
         ("0", "disk-analyze", "Analyze space and stop", "Analyze space scans file and folder metadata in the background. You can use another add-on while it runs. Stop scan cancels the work and keeps partial results; it does not delete files. The tutorial never starts or stops a scan."),
         ("0/options", "disk-options", "Scan options and exclusions", "Enter folder names separated by semicolons to skip them. Matching ignores case and uses exact names. Exclusions affect scan coverage and can reduce totals. Leave this empty for the broadest scan; the tour changes no settings."),
-        ("0", "disk-stats", "Understand the scan totals", "These cards show discovered file bytes, file and folder counts, and elapsed time. A cancelled scan contains partial totals. Sizes are logical lengths and can differ from allocated disk space. If no scan is ready, this tour uses clearly labeled sample data."),
+        ("0", "disk-stats", "Understand the scan totals", "This bar shows discovered file bytes, file and folder counts, and elapsed time. A cancelled scan contains partial totals. Sizes are logical lengths and can differ from allocated disk space. If no scan is ready, this tour uses clearly labeled sample data."),
         ("0", "disk-tabs", "Explore the five views", "Overview explores the folder tree. Largest files ranks files across the whole scan. File types groups bytes by extension, Scan details explains coverage, and Optimization analyzes fragmentation and maintains drives. Next will visit each view for you."),
-        ("0", "disk-map", "Space map · find the largest folders", "Rectangles represent immediate children of the current folder. Larger entries have more area; tiny entries are enlarged so they remain clickable. Tiles stretch to fill gaps. Hover for full names and exact sizes, scroll sideways for more, and click a folder to drill down."),
+        ("0", "disk-map", "Space map: find the largest folders", "Rectangles represent immediate children of the current folder. Larger entries have more area; tiny entries are enlarged so they remain clickable. Tiles stretch to fill gaps. Hover for full names and exact sizes, scroll sideways for more, and click a folder to drill down."),
         ("0", "disk-filters", "Search, size, age and sorting", "Search narrows scanned paths; size and age filters reduce the result list. Sort by size, name, file count or modification time. These filters affect the list, not what was scanned or the map's underlying totals."),
         ("0", "disk-breadcrumbs", "Find your way back", "Breadcrumbs show the current folder's ancestry. Click one to return to that level, or use Back to root above the map. Changing folders only navigates the scan already in memory."),
         ("0", "disk-list", "Folder list and file actions", "The list reports entry sizes, share of the entire scan, and file counts. Click folders to explore them. Right-click an entry to copy its path or reveal it in Explorer. Pagination limits how many entries are drawn at once."),
