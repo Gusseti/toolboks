@@ -9,6 +9,7 @@ mod home;
 mod memlist;
 mod pressure;
 mod report;
+mod scheduler;
 mod stats;
 mod style;
 mod trim;
