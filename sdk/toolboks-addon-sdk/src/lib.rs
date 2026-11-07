@@ -352,6 +352,12 @@ pub trait NativeAddon {
         preferences: &mut std::collections::BTreeMap<String, serde_json::Value>,
     ) -> bool;
     fn tick(&mut self, _ctx: &egui::Context) {}
+    fn suspend(&mut self) {}
+    fn resume(&mut self) {}
+    fn has_background_work(&self) -> bool {
+        false
+    }
+    fn tick_background(&mut self) {}
     fn cancel(&mut self) {}
     fn tutorial_steps(&self) -> Vec<TutorialStep> {
         Vec::new()

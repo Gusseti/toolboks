@@ -19,6 +19,7 @@ use super::activity::{self, Activity};
 use super::growth::{self, WindowsPrivateMemory};
 use super::pressure::{Assessment, SignalSource, Verdict};
 use super::report::{self, HonestReport, MemorySampler, RunMeasurement, RunMeasurements, Trigger};
+use super::sampler::WindowsSampler;
 use super::scheduler::Decision;
 use super::stats::ProcInfo;
 use super::Memory;
@@ -274,14 +275,9 @@ impl Memory {
         self.last_growth = Some(Instant::now());
     }
 
-    /// Background work: finish jobs, check pressure, run the scheduler, take settle readings.
-    /// Called every frame by the host, also while the window is minimized or in the tray.
+    /// Sampling and automatic checks run while the Memory Cleaner workspace is active.
     pub(super) fn background(&mut self, ctx: &egui::Context) {
         self.record_history();
-        self.poll_purge(ctx);
-        self.poll_run(ctx);
-        self.poll_trim(ctx);
-        self.settle_tick();
 
         let open = self.page_open();
         let every = eval_interval(open);
@@ -314,7 +310,7 @@ impl Memory {
 
     /// One pressure reading, then the scheduler's answer to it.
     fn evaluate(&mut self, ctx: &egui::Context) {
-        let Some(signals) = self.signals.read() else {
+        let Some(signals) = self.signals.as_mut().and_then(SignalSource::read) else {
             return;
         };
         let now = self.now_ms();
@@ -386,7 +382,11 @@ impl Memory {
             .filter(|a| a.kind == Kind::Trim)
             .map(|a| a.identity.pid)
             .collect();
-        let Some(before) = self.win_sampler.sample(&trim_pids) else {
+        let Some(before) = self
+            .win_sampler
+            .get_or_insert_with(WindowsSampler::new)
+            .sample(&trim_pids)
+        else {
             self.status = Some(
                 "Could not read the memory numbers, so nothing was changed. Try again.".to_string(),
             );
@@ -424,7 +424,7 @@ impl Memory {
     }
 
     /// Picks up a finished run and starts the settle readings.
-    fn poll_run(&mut self, ctx: &egui::Context) {
+    pub(super) fn poll_run(&mut self, ctx: &egui::Context) {
         let outcome = match self.run.as_ref() {
             None => return,
             Some(job) => job.rx.try_recv(),
@@ -450,7 +450,11 @@ impl Memory {
         self.last_run = Some(summary);
         self.refresh_now();
 
-        let Some(after) = self.win_sampler.sample(&job.trim_pids) else {
+        let Some(after) = self
+            .win_sampler
+            .get_or_insert_with(WindowsSampler::new)
+            .sample(&job.trim_pids)
+        else {
             self.status = Some("Could not read the memory numbers after the run.".to_string());
             return;
         };
@@ -476,12 +480,15 @@ impl Memory {
     }
 
     /// Takes the 30 s and 120 s readings when they are due and refreshes the newest report.
-    fn settle_tick(&mut self) {
+    pub(super) fn settle_tick(&mut self) {
         let Some(settling) = self.settling.as_mut() else {
             return;
         };
         let elapsed = settling.started.elapsed();
-        match settling.poll(elapsed, &mut self.win_sampler) {
+        match settling.poll(
+            elapsed,
+            self.win_sampler.get_or_insert_with(WindowsSampler::new),
+        ) {
             SettleStep::Waiting => {}
             SettleStep::Took { last } => {
                 if let Some(newest) = self.reports.back_mut() {

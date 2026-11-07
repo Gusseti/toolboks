@@ -7,6 +7,7 @@ mod aural;
 #[derive(Default)]
 pub struct NativeHost {
     active: BTreeMap<String, Box<dyn NativeAddon>>,
+    foreground: Option<String>,
 }
 
 impl NativeHost {
@@ -81,19 +82,42 @@ impl NativeHost {
         addon.set_capabilities(capabilities);
         addon.ui(ui, prefs)
     }
-    pub fn tick(&mut self, ctx: &eframe::egui::Context, registry: &Registry) {
+    pub fn show(&mut self, provider: Option<&str>, registry: &Registry) {
+        if self.foreground.as_deref() != provider {
+            if let Some(addon) = self
+                .foreground
+                .as_deref()
+                .and_then(|old| self.active.get_mut(old))
+            {
+                addon.suspend();
+            }
+            if let Some(addon) = provider.and_then(|new| self.active.get_mut(new)) {
+                addon.resume();
+            }
+            self.foreground = provider.map(str::to_owned);
+        }
         self.active.retain(|provider, addon| {
             let enabled = registry.packages.iter().any(|p| {
                 p.manifest.native_provider.as_ref() == Some(provider)
                     && registry.enabled(&p.manifest.id)
             });
-            if enabled {
-                addon.tick(ctx);
-            } else {
+            let retain = enabled
+                && (self.foreground.as_ref() == Some(provider) || addon.has_background_work());
+            if !retain {
                 addon.cancel();
             }
-            enabled
+            retain
         });
+    }
+
+    pub fn tick(&mut self, ctx: &eframe::egui::Context) {
+        for (provider, addon) in &mut self.active {
+            if self.foreground.as_ref() == Some(provider) {
+                addon.tick(ctx);
+            } else {
+                addon.tick_background();
+            }
+        }
     }
 }
 
@@ -104,7 +128,10 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
-    struct Probe(Arc<AtomicBool>);
+    struct Probe {
+        cancelled: Arc<AtomicBool>,
+        background: bool,
+    }
     impl NativeAddon for Probe {
         fn ui(
             &mut self,
@@ -114,7 +141,10 @@ mod tests {
             false
         }
         fn cancel(&mut self) {
-            self.0.store(true, Ordering::Relaxed);
+            self.cancelled.store(true, Ordering::Relaxed);
+        }
+        fn has_background_work(&self) -> bool {
+            self.background
         }
     }
     #[test]
@@ -123,20 +153,55 @@ mod tests {
         let mut host = NativeHost::default();
         host.active.insert(
             toolboks_disk_manager::PROVIDER.into(),
-            Box::new(Probe(flag.clone())),
+            Box::new(Probe {
+                cancelled: flag.clone(),
+                background: true,
+            }),
         );
         let mut registry =
             Registry::load(std::env::temp_dir().join("toolboks-native-lifecycle-test"));
         registry.packages = vec![crate::addons::official_disk_package()];
-        let ctx = eframe::egui::Context::default();
-        host.tick(&ctx, &registry);
+        host.show(Some(toolboks_disk_manager::PROVIDER), &registry);
         assert!(!flag.load(Ordering::Relaxed));
         registry
             .config
             .disabled
             .push(toolboks_disk_manager::ID.into());
-        host.tick(&ctx, &registry);
+        host.show(Some(toolboks_disk_manager::PROVIDER), &registry);
         assert!(flag.load(Ordering::Relaxed));
         assert!(host.active.is_empty());
+    }
+
+    #[test]
+    fn switching_releases_idle_native_addons_but_keeps_live_audio() {
+        let mut host = NativeHost::default();
+        let mut registry =
+            Registry::load(std::env::temp_dir().join("toolboks-native-lifecycle-test"));
+        registry.packages = vec![
+            crate::addons::official_disk_package(),
+            crate::addons::official_package(crate::addons::AURAL_ID).unwrap(),
+        ];
+        let disk_cancelled = Arc::new(AtomicBool::new(false));
+        let audio_cancelled = Arc::new(AtomicBool::new(false));
+        host.active.insert(
+            toolboks_disk_manager::PROVIDER.into(),
+            Box::new(Probe {
+                cancelled: disk_cancelled.clone(),
+                background: false,
+            }),
+        );
+        host.show(Some(toolboks_disk_manager::PROVIDER), &registry);
+        host.active.insert(
+            crate::addons::AURAL_ID.into(),
+            Box::new(Probe {
+                cancelled: audio_cancelled.clone(),
+                background: true,
+            }),
+        );
+        host.show(Some(crate::addons::AURAL_ID), &registry);
+        host.show(None, &registry);
+        assert!(disk_cancelled.load(Ordering::Relaxed));
+        assert!(!audio_cancelled.load(Ordering::Relaxed));
+        assert_eq!(host.active.len(), 1);
     }
 }

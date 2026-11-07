@@ -530,7 +530,7 @@ impl App {
                                 self.open_tool(i);
                             }
                             if on && expanded {
-                                let pages = self.base.tools[i].pages();
+                                let pages = tools::WORKSPACES[i].1;
                                 if pages.len() > 1 {
                                     for (p, name) in pages.iter().enumerate() {
                                         if page_row(ui, name, self.base.selected.1 == p) {
@@ -582,8 +582,8 @@ impl App {
             Screen::Settings => Crumb::plain("Settings"),
             Screen::Tool(i) => {
                 let m = &self.registry.builtins[i];
-                let pages: Vec<String> = self.base.tools[i]
-                    .pages()
+                let pages: Vec<String> = tools::WORKSPACES[i]
+                    .1
                     .iter()
                     .map(|p| p.to_string())
                     .collect();
@@ -703,13 +703,12 @@ impl App {
             }
         }
 
+        self.sync_workspaces();
         let items = status_items(
             self.base
-                .tools
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| self.tool_enabled(*i))
-                .map(|(_, t)| t.status()),
+                .active
+                .and_then(|i| self.base.tools[i].as_ref())
+                .map(|t| t.status()),
         );
         egui::Panel::bottom("host-status")
             .exact_size(STATUS_H)
@@ -1008,15 +1007,14 @@ impl App {
         self.screen = Screen::Tool(tool);
     }
     /// Turns an add-on on or off and saves it. Returns false (with a message) if it could not
-    /// be saved. Turning a built-in tool off stops its background work for good: the tool is
-    /// replaced by a fresh idle one, which a later turn-on starts from scratch.
+    /// be saved. Turning a built-in tool off releases its session.
     fn set_addon_enabled(&mut self, id: &str, enabled: bool) -> bool {
         if let Err(e) = self.registry.set_enabled(id, enabled) {
             self.message = Some(e);
             return false;
         }
         if let (Some(tool), false) = (self.registry.builtin_index(id), enabled) {
-            self.base.tools[tool] = tools::build(tool);
+            self.base.tools[tool] = None;
             if self.screen == Screen::Tool(tool) {
                 self.screen = Screen::Home;
             }
@@ -1129,9 +1127,14 @@ impl App {
             self.base.selected = (tool, 0);
         }
         let page = self.base.selected.1;
-        self.base.tools[tool].ui(ui, page);
+        if let Some(workspace) = &mut self.base.tools[tool] {
+            workspace.ui(ui, page);
+        }
     }
     fn external_workspace(&mut self, ui: &mut egui::Ui, id: &str) {
+        if self.hidden {
+            return;
+        }
         if !self.registry.enabled(id) {
             self.screen = Screen::Home;
             return;

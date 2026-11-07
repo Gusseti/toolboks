@@ -7,13 +7,6 @@ mod resources;
 
 /// A utility shown as a tab. Add a module, implement this, and register it in [`all`].
 pub trait Tool {
-    fn name(&self) -> &'static str;
-
-    /// Pages of this tool (the second tab strip). Empty means a single page named after the tool.
-    fn pages(&self) -> &'static [&'static str] {
-        &[]
-    }
-
     /// Draws page number `page` (always 0 for a tool without `pages`).
     fn ui(&mut self, ui: &mut egui::Ui, page: usize);
     fn tutorial_location(&self) -> String {
@@ -21,9 +14,18 @@ pub trait Tool {
     }
     fn tutorial_navigate(&mut self, _section: &str) {}
 
-    /// Called every frame for every enabled tool, selected or not, and also while the window is
-    /// hidden (minimized). A disabled tool is not ticked at all. For background work such as auto-clean; keep it cheap.
+    /// Called while this tool is the active workspace.
     fn tick(&mut self, _ctx: &egui::Context) {}
+
+    /// Release page data. Return true only to preserve lightweight session state.
+    fn suspend(&mut self) -> bool {
+        false
+    }
+
+    fn resume(&mut self) {}
+
+    /// Complete already-started operations for suspended tools without sampling or starting work.
+    fn finish_pending(&mut self, _ctx: &egui::Context) {}
 
     /// Short items for the status bar at the bottom of the window (e.g. RAM 63%). Called every
     /// frame, so keep it cheap; return nothing if there is nothing current to show.
@@ -34,6 +36,19 @@ pub trait Tool {
 
 /// How many tools there are. Their order is fixed: it matches the built-in add-on manifests.
 pub const COUNT: usize = 4;
+/// Navigation metadata stays available without constructing a tool.
+pub const WORKSPACES: [(&str, &[&str]); COUNT] = [
+    ("Memory Cleaner", &["Home", "Advanced"]),
+    (
+        "Resource Monitor",
+        &["Overview", "Details", "Processes", "Connections"],
+    ),
+    (
+        "Debloater",
+        &["Privacy and ads", "Apps", "Startup", "Tasks", "Services"],
+    ),
+    ("Event Watch", &["Live", "Crashes", "Summary"]),
+];
 
 /// A fresh, idle instance of tool number `index` (see [`all`] for the order).
 pub fn build(index: usize) -> Box<dyn Tool> {
@@ -45,6 +60,7 @@ pub fn build(index: usize) -> Box<dyn Tool> {
     }
 }
 
+#[cfg(test)]
 pub fn all() -> Vec<Box<dyn Tool>> {
     (0..COUNT).map(build).collect()
 }

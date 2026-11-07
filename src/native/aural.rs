@@ -24,6 +24,7 @@ type AudioError = Arc<Mutex<Option<String>>>;
 #[derive(Default)]
 struct Signal {
     gain: AtomicU32,
+    metering: AtomicBool,
     peaks: [AtomicU32; 2],
     clipped: AtomicBool,
     routes: routing::Routes,
@@ -47,23 +48,25 @@ where
     f32: cpal::FromSample<T>,
 {
     let gain = f32::from_bits(signal.gain.load(Relaxed));
-    let mut peaks = [0.0_f32; 2];
-    let mut clipped = false;
-    for (index, sample) in samples.iter().enumerate() {
-        let level = (sample.to_sample::<f32>() * gain).abs();
-        if let Some(peak) = peaks.get_mut(index % channels) {
-            *peak = peak.max(level);
+    if signal.metering.load(Relaxed) {
+        let mut peaks = [0.0_f32; 2];
+        let mut clipped = false;
+        for (index, sample) in samples.iter().enumerate() {
+            let level = (sample.to_sample::<f32>() * gain).abs();
+            if let Some(peak) = peaks.get_mut(index % channels) {
+                *peak = peak.max(level);
+            }
+            clipped |= level >= 1.0;
         }
-        clipped |= level >= 1.0;
-    }
-    if channels == 1 {
-        peaks[1] = peaks[0];
-    }
-    for (slot, peak) in signal.peaks.iter().zip(peaks) {
-        slot.fetch_max(peak.to_bits(), Relaxed);
-    }
-    if clipped {
-        signal.clipped.store(true, Relaxed);
+        if channels == 1 {
+            peaks[1] = peaks[0];
+        }
+        for (slot, peak) in signal.peaks.iter().zip(peaks) {
+            slot.fetch_max(peak.to_bits(), Relaxed);
+        }
+        if clipped {
+            signal.clipped.store(true, Relaxed);
+        }
     }
     routing::forward(samples, channels, gain, &signal.routes);
 }
@@ -85,6 +88,7 @@ impl Input {
         }
         let signal = Arc::new(Signal::default());
         signal.gain.store(gain(gain_db).to_bits(), Relaxed);
+        signal.metering.store(true, Relaxed);
         macro_rules! build {
             ($t:ty) => {{
                 let samples = signal.clone();
@@ -703,6 +707,33 @@ impl NativeAddon for Aural {
     }
 
     fn tick(&mut self, _: &egui::Context) {
+        self.tick_background();
+        self.sample();
+    }
+
+    fn suspend(&mut self) {
+        if let Some(input) = &self.input {
+            input.signal.metering.store(false, Relaxed);
+        }
+        self.history = std::array::from_fn(|_| VecDeque::new());
+        self.levels = [-60.0; 2];
+    }
+
+    fn resume(&mut self) {
+        if let Some(input) = &self.input {
+            for peak in &input.signal.peaks {
+                peak.store(0, Relaxed);
+            }
+            input.signal.metering.store(true, Relaxed);
+        }
+        self.last_sample = Instant::now();
+    }
+
+    fn has_background_work(&self) -> bool {
+        self.routes.iter().any(Option::is_some)
+    }
+
+    fn tick_background(&mut self) {
         let error = self
             .input
             .as_ref()
@@ -720,7 +751,6 @@ impl NativeAddon for Aural {
                 self.route_errors[index] = error;
             }
         }
-        self.sample();
     }
 
     fn cancel(&mut self) {
@@ -754,6 +784,7 @@ mod tests {
     fn gain_updates_the_stereo_peaks_and_latches_clipping() {
         let signal = Signal::default();
         signal.gain.store(2.0_f32.to_bits(), Relaxed);
+        signal.metering.store(true, Relaxed);
         process(&[0.25_f32, -0.75], 2, &signal);
         assert_eq!(
             signal
@@ -766,6 +797,18 @@ mod tests {
         process(&[0.0_f32; 2], 2, &signal);
         assert!(signal.clipped.load(Relaxed));
         assert!((db(gain(-18.0)) + 18.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn background_audio_still_forwards_without_metering() {
+        let signal = Signal::default();
+        signal.gain.store(2.0_f32.to_bits(), Relaxed);
+        let bridge = Arc::new(Mutex::new(routing::Bridge::new(100, 100)));
+        signal.routes.lock().unwrap()[1] = Some(bridge.clone());
+        process(&[0.75_f32; 8], 1, &signal);
+        assert_eq!(signal.peaks[0].load(Relaxed), 0);
+        assert!(!signal.clipped.load(Relaxed));
+        assert_eq!(bridge.lock().unwrap().next(), [1.0; 2]);
     }
 
     #[test]

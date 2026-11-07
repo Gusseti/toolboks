@@ -5,7 +5,7 @@ use std::time::Duration;
 use eframe::egui;
 
 use crate::instance;
-use crate::tools::{self, Tool};
+use crate::tools;
 use crate::tray::{self, Tray};
 use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
@@ -77,7 +77,7 @@ impl Drop for App {
 /// `--open "Tool"` or `--open "Tool/Page"` (case-insensitive, also `--open=...`) picks the page
 /// shown at start-up, e.g. `toolboks.exe --open "Resource Monitor/Details"`. Unknown names are
 /// ignored, so a typo just opens the first page.
-fn parse_open(args: &[String], tools: &[Box<dyn Tool>]) -> Option<(usize, usize)> {
+fn parse_open(args: &[String]) -> Option<(usize, usize)> {
     let spec = args.iter().enumerate().find_map(|(i, a)| {
         a.strip_prefix("--open=")
             .map(str::to_string)
@@ -87,13 +87,13 @@ fn parse_open(args: &[String], tools: &[Box<dyn Tool>]) -> Option<(usize, usize)
         Some((t, p)) => (t.trim(), Some(p.trim())),
         None => (spec.trim(), None),
     };
-    let tool = tools
+    let tool = tools::WORKSPACES
         .iter()
-        .position(|t| t.name().eq_ignore_ascii_case(tool_name))?;
+        .position(|(name, _)| name.eq_ignore_ascii_case(tool_name))?;
     let page = page_name
         .and_then(|name| {
-            tools[tool]
-                .pages()
+            tools::WORKSPACES[tool]
+                .1
                 .iter()
                 .position(|p| p.eq_ignore_ascii_case(name))
         })
@@ -116,14 +116,13 @@ fn open_target(registry: &Registry, tool: usize) -> Result<(), String> {
 
 impl App {
     pub fn new() -> Self {
-        let tools = tools::all();
         let args: Vec<String> = std::env::args().skip(1).collect();
         let registry = Registry::load(addons::data_root());
         let mut message = None;
         let keep_in_tray = registry.config.keep_in_tray;
         let mut selected = (0, 0);
         let mut screen = Screen::Home;
-        if let Some((tool, page)) = parse_open(&args, &tools) {
+        if let Some((tool, page)) = parse_open(&args) {
             match open_target(&registry, tool) {
                 Ok(()) => {
                     selected = (tool, page);
@@ -155,7 +154,10 @@ impl App {
         }
         Self {
             native,
-            base: SystemAddon { tools, selected },
+            base: SystemAddon {
+                selected,
+                ..Default::default()
+            },
             registry,
             screen,
             sidebar_expanded: false,
@@ -330,10 +332,17 @@ impl eframe::App for App {
         self.check_on_launch(ctx);
         self.poll_update(ctx);
         self.tray_tick(ctx);
-        self.native.tick(ctx, &self.registry);
-        // A turned-off tool does no background work at all.
+        self.sync_workspaces();
+        self.native.tick(ctx);
         for (tool, manifest) in self.base.tools.iter_mut().zip(&self.registry.builtins) {
-            if self.registry.enabled(&manifest.id) {
+            if !self.registry.enabled(&manifest.id) {
+                *tool = None;
+            } else if let Some(tool) = tool {
+                tool.finish_pending(ctx);
+            }
+        }
+        if let Some(active) = self.base.active {
+            if let Some(tool) = &mut self.base.tools[active] {
                 tool.tick(ctx);
             }
         }
@@ -354,6 +363,28 @@ impl eframe::App for App {
 }
 
 impl App {
+    fn sync_workspaces(&mut self) {
+        let active = match self.screen {
+            Screen::Tool(index)
+                if !self.hidden && self.registry.enabled(&self.registry.builtins[index].id) =>
+            {
+                Some(index)
+            }
+            _ => None,
+        };
+        self.base.show(active);
+        let provider = match &self.screen {
+            Screen::External(id) if !self.hidden && self.registry.enabled(id) => self
+                .registry
+                .packages
+                .iter()
+                .find(|p| &p.manifest.id == id)
+                .and_then(|p| p.manifest.native_provider.as_deref()),
+            _ => None,
+        };
+        self.native.show(provider, &self.registry);
+    }
+
     /// Tray mode: icon, menu, hiding on close, and keeping the app ticking while hidden.
     /// eframe 0.37 calls `logic` (and repaints every ~100 ms when asked) for a hidden window,
     /// so the tools' background work keeps running without any minimize trick.
@@ -512,7 +543,6 @@ impl App {
 mod tests {
     use super::{open_target, parse_open, status_items};
     use crate::addons::Registry;
-    use crate::tools;
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -520,30 +550,28 @@ mod tests {
 
     #[test]
     fn open_picks_a_tool_and_page_case_insensitively() {
-        let tools = tools::all();
         assert_eq!(
-            parse_open(&args(&["--open", "resource monitor/DETAILS"]), &tools),
+            parse_open(&args(&["--open", "resource monitor/DETAILS"])),
             Some((1, 1))
         );
         assert_eq!(
-            parse_open(&args(&["--open=Memory Cleaner/Advanced"]), &tools),
+            parse_open(&args(&["--open=Memory Cleaner/Advanced"])),
             Some((0, 1))
         );
         assert_eq!(
-            parse_open(&args(&["--open", "Resource Monitor"]), &tools),
+            parse_open(&args(&["--open", "Resource Monitor"])),
             Some((1, 0))
         );
     }
 
     #[test]
     fn open_ignores_unknown_names_and_missing_values() {
-        let tools = tools::all();
-        assert_eq!(parse_open(&args(&[]), &tools), None);
-        assert_eq!(parse_open(&args(&["--open"]), &tools), None);
-        assert_eq!(parse_open(&args(&["--open", "Nope"]), &tools), None);
+        assert_eq!(parse_open(&args(&[])), None);
+        assert_eq!(parse_open(&args(&["--open"])), None);
+        assert_eq!(parse_open(&args(&["--open", "Nope"])), None);
         // A known tool with an unknown page opens that tool's first page.
         assert_eq!(
-            parse_open(&args(&["--open", "Resource Monitor/Nope"]), &tools),
+            parse_open(&args(&["--open", "Resource Monitor/Nope"])),
             Some((1, 0))
         );
     }
@@ -552,8 +580,7 @@ mod tests {
     fn open_of_a_turned_off_tool_falls_back_with_a_message() {
         let root = std::env::temp_dir().join(format!("toolboks-open-{}", std::process::id()));
         let mut registry = Registry::load(root.clone());
-        let tools = tools::all();
-        let (tool, _) = parse_open(&args(&["--open", "Resource Monitor/Details"]), &tools).unwrap();
+        let (tool, _) = parse_open(&args(&["--open", "Resource Monitor/Details"])).unwrap();
         assert!(open_target(&registry, tool).is_ok());
         registry
             .set_enabled("toolboks.resource-monitor", false)

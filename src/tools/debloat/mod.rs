@@ -188,12 +188,42 @@ impl Debloater {
 }
 
 impl Tool for Debloater {
-    fn name(&self) -> &'static str {
-        "Debloater"
-    }
-
-    fn pages(&self) -> &'static [&'static str] {
-        &["Privacy and ads", "Apps", "Startup", "Tasks", "Services"]
+    fn suspend(&mut self) -> bool {
+        self.statuses = Vec::new();
+        self.loaded = false;
+        self.confirming = false;
+        self.selected = HashSet::new();
+        self.apps.rows = Vec::new();
+        self.apps.loading = None;
+        self.apps.started = false;
+        self.apps.confirming = false;
+        self.apps.selected = HashSet::new();
+        self.startup.entries = Vec::new();
+        self.startup.loading = None;
+        self.startup.started = false;
+        self.startup.pending = None;
+        self.tasks.statuses = Vec::new();
+        self.tasks.loading = None;
+        self.tasks.started = false;
+        self.tasks.pending = None;
+        self.services.statuses = Vec::new();
+        self.services.loading = None;
+        self.services.started = false;
+        self.services.pending = None;
+        // Undo and results from committed actions remain available for the session.
+        !self.undo_runs.is_empty()
+            || !self.startup.steps.is_empty()
+            || !self.tasks.steps.is_empty()
+            || !self.services.steps.is_empty()
+            || self.apps.removing.is_some()
+            || self.restore.creating.is_some()
+            || self.tasks.working.is_some()
+            || self.services.working.is_some()
+            || self.message.is_some()
+            || self.apps.message.is_some()
+            || self.startup.message.is_some()
+            || self.tasks.message.is_some()
+            || self.services.message.is_some()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {
