@@ -1,3 +1,4 @@
+mod actions;
 mod admin;
 mod advanced;
 mod auto;
