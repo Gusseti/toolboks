@@ -60,8 +60,13 @@ fn handle(info: &PanicHookInfo<'_>) {
         &backtrace,
     );
 
-    let text = wide("toolboks ran into a problem and has to close. Nothing was saved or sent. Copy the details so you can report it?");
-    let title = wide("toolboks stopped");
+    let text = wide(concat!(
+        "Toolboks hit an unexpected error and has to close.\n\n",
+        "Nothing was sent anywhere and nothing was saved to your disk.\n\n",
+        "Do you want to copy a short report to the clipboard? Choose Yes to copy it, so you can ",
+        "paste it into a bug report. Choose No to close without copying anything.",
+    ));
+    let title = wide("Toolboks has stopped");
     // SAFETY: both buffers are NUL-terminated and outlive the call.
     let answer = unsafe {
         MessageBoxW(
