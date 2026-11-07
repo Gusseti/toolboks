@@ -22,6 +22,22 @@ pub fn energy_wh(watts: &[f32], step_secs: f32) -> f32 {
     watts.iter().sum::<f32>() * step_secs / 3600.0
 }
 
+/// The "CPU rated power" input, with a hint on where to find the number.
+pub fn rated_power_input(ui: &mut eframe::egui::Ui, rated_w: &mut f32) {
+    use eframe::egui;
+    // Right-to-left callers get the box first, then the label.
+    ui.add(
+        egui::DragValue::new(rated_w)
+            .range(10.0..=400.0)
+            .speed(1.0)
+            .suffix(" W"),
+    )
+    .on_hover_text(
+        "Rated power of your processor, used for the processor power estimate. Find it in your processor's specifications (often called TDP).",
+    );
+    ui.label(egui::RichText::new("CPU rated power").weak());
+}
+
 pub fn fmt_watts(v: f32) -> String {
     format!("{v:.0} W")
 }

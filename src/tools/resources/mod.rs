@@ -5,9 +5,11 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 mod connections;
+mod detail;
 mod details;
 mod gpu;
 mod history;
+mod list;
 mod nvml;
 mod overview;
 mod power;
@@ -16,6 +18,9 @@ mod sampler;
 
 use history::{History, Range};
 use sampler::{GpuSample, Info, Msg, Sample, Sampler};
+
+/// Space between the range row and the page below it.
+const GAP_BELOW_BAR: f32 = 8.0;
 
 /// A sample older than this means the sampler is no longer live.
 const LIVE_WITHIN: Duration = Duration::from_secs(5);
@@ -69,18 +74,44 @@ impl<const N: usize> Keyed<N> {
     }
 }
 
-/// Which list the "Top processes" card shows.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum TopTab {
+/// A row of the Overview list; the one selected decides what the detail pane shows.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub(crate) enum Resource {
     #[default]
     Cpu,
     Memory,
     Gpu,
     Disk,
+    Network,
+    Power,
+}
+
+impl Resource {
+    pub(crate) const ALL: [Resource; 6] = [
+        Resource::Cpu,
+        Resource::Memory,
+        Resource::Gpu,
+        Resource::Disk,
+        Resource::Network,
+        Resource::Power,
+    ];
+
+    /// The section name the guided tour uses for this resource.
+    fn key(self) -> &'static str {
+        match self {
+            Resource::Cpu => "cpu",
+            Resource::Memory => "memory",
+            Resource::Gpu => "gpu",
+            Resource::Disk => "disk",
+            Resource::Network => "network",
+            Resource::Power => "power",
+        }
+    }
 }
 
 pub struct Resources {
-    top_tab: TopTab,
+    /// The row picked in the Overview list (in memory only).
+    selected: Resource,
     /// How far back the graphs look.
     range: Range,
     sampler: Option<Sampler>,
@@ -113,7 +144,7 @@ pub struct Resources {
 impl Resources {
     pub fn new() -> Self {
         Self {
-            top_tab: TopTab::default(),
+            selected: Resource::default(),
             range: Range::default(),
             sampler: None,
             info: None,
@@ -141,50 +172,54 @@ impl Resources {
 }
 
 impl Resources {
-    /// The "how far back" switch above the graph pages.
-    fn range_bar(&mut self, ui: &mut egui::Ui) {
+    /// The "how far back" switch above the graph pages. `with_rated` adds the processor rated
+    /// power box at the right (the Details page); the Overview keeps that box in its Power view
+    /// and puts the switch at the right of the row.
+    fn range_bar(&mut self, ui: &mut egui::Ui, with_rated: bool) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(egui::RichText::new("Graphs show the last").weak());
-            for range in Range::ALL {
-                if crate::ui::pill(ui, range.label(), self.range == range).clicked() {
-                    self.range = range;
-                }
+            if with_rated {
+                ui.label(egui::RichText::new("Graphs show the last").weak());
+                self.range_pills(ui);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    power::rated_power_input(ui, &mut self.cpu_rated_w);
+                });
+            } else {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    // Right-to-left, so add the last pill first.
+                    for range in Range::ALL.into_iter().rev() {
+                        self.range_pill(ui, range);
+                    }
+                    ui.label(egui::RichText::new("Graphs show the last").weak());
+                });
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut self.cpu_rated_w)
-                        .range(10.0..=400.0)
-                        .speed(1.0)
-                        .suffix(" W"),
-                )
-                .on_hover_text(
-                    "Rated power of your processor, used for the processor power estimate.                      Find it in your processor's specifications (often called TDP).",
-                );
-                ui.label(egui::RichText::new("CPU rated power").weak());
-            });
         });
-        ui.add_space(2.0);
+        ui.add_space(GAP_BELOW_BAR);
+    }
+
+    fn range_pills(&mut self, ui: &mut egui::Ui) {
+        for range in Range::ALL {
+            self.range_pill(ui, range);
+        }
+    }
+
+    fn range_pill(&mut self, ui: &mut egui::Ui, range: Range) {
+        if crate::ui::pill(ui, range.label(), self.range == range).clicked() {
+            self.range = range;
+        }
     }
 }
 
 impl crate::tools::Tool for Resources {
     fn tutorial_location(&self) -> String {
-        match self.top_tab {
-            TopTab::Cpu => "cpu",
-            TopTab::Memory => "memory",
-            TopTab::Gpu => "gpu",
-            TopTab::Disk => "disk",
-        }
-        .into()
+        self.selected.key().into()
     }
     fn tutorial_navigate(&mut self, section: &str) {
-        self.top_tab = match section {
-            "memory" => TopTab::Memory,
-            "gpu" => TopTab::Gpu,
-            "disk" => TopTab::Disk,
-            _ => TopTab::Cpu,
-        };
+        self.selected = Resource::ALL
+            .into_iter()
+            .find(|r| r.key() == section)
+            .unwrap_or_default();
     }
     fn name(&self) -> &'static str {
         "Resource Monitor"
@@ -276,13 +311,18 @@ impl crate::tools::Tool for Resources {
             }
             _ => {}
         }
-        toolboks_addon_sdk::tutorial::region(ui, "resource-range", |ui| self.range_bar(ui));
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| match page {
-                1 => self.details_ui(ui),
-                _ => self.overview_ui(ui),
-            });
+        let with_rated = page == 1;
+        toolboks_addon_sdk::tutorial::region(ui, "resource-range", |ui| {
+            self.range_bar(ui, with_rated)
+        });
+        if page == 1 {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| self.details_ui(ui));
+        } else {
+            // The Overview scrolls its detail pane itself; the list stays put.
+            self.overview_ui(ui);
+        }
     }
 }
 
