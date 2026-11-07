@@ -5,6 +5,7 @@ mod commit;
 mod groups;
 mod home;
 mod memlist;
+mod pressure;
 mod report;
 mod stats;
 mod style;
