@@ -33,7 +33,8 @@ Dark graphite, compact, calm. A tool you open for a minute next to a game or wor
 | Bar divider | `#1c1e22` |
 | Text | `#e8e9ec` |
 | Muted text | `#9a9ea8` (6.2:1 on a card; never go darker) |
-| Accent | `#8b5cf6`; wash `#8b5cf633` for the active sidebar item |
+| Accent | `#8b5cf6` for fills, selection, rings and graph lines; wash `#8b5cf633` for the active sidebar item |
+| Accent text | `#b39dfa` for text-sized accent on a card (4.5:1; the plain accent is 4.3:1 and fails for small text) |
 
 Data colours, one per resource, always shown next to a label (never colour alone): CPU `#8b5cf6`, Memory `#b39dfa`, GPU and GPU power `#3ecf8e`, Disk `#f0a83a`, Network `#45b8f0`, a second line (write, up, estimate) `#9a9ea8`. Status: ok `#3ecf8e`, watch `#f0a83a`, problem `#e5534b`.
 
@@ -45,7 +46,7 @@ Data colours, one per resource, always shown next to a label (never colour alone
 
 ## Type
 
-Windows system font (Segoe UI Variable). Sizes: 18 page title (once per page, 600), 14 section (600), 12 body, 11 caption. Numbers that change use tabular figures. Do not use a display face, monospace for decoration, or uppercase labels. Sentence case everywhere.
+Windows system font (Segoe UI Variable). Sizes: 18 page title (once per page, 600), 14 section (600), 12 body, 11 caption. Numbers that change should use tabular figures where the toolkit allows; egui has no tabular-figure setting, so keep value columns right-aligned with a fixed width so they do not jump. Do not use a display face, monospace for decoration, or uppercase labels. Sentence case everywhere.
 
 ## Components
 
