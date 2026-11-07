@@ -19,6 +19,7 @@ pub mod plan;
 pub mod restore;
 pub mod services;
 pub mod startup;
+mod style;
 pub mod tasks;
 
 /// State of the Apps page. Package calls are slow, so they run on worker threads and report
