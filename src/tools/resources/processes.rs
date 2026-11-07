@@ -1278,7 +1278,7 @@ mod tests {
         let cmd = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("System32/cmd.exe");
         let mut child = Command::new(cmd)
-            .args(["/d", "/q"])
+            .args(["/d", "/q", "/c", "set /p toolboks_test_wait="])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
