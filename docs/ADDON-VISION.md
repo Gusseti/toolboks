@@ -5,7 +5,7 @@ and boundaries are documented in [ADDON-ARCHITECTURE.md](ADDON-ARCHITECTURE.md).
 
 - Toolboks is the frame for installable add-ons. Each workspace stays in the same
   window, and installed/enabled add-ons appear in a collapsible sidebar.
-- The four original tools are packaged as the preinstalled System Essentials add-on.
+- The four original tools are packaged as separate preinstalled add-ons.
 - Add-ons can style their content while sharing the host's standard background colors.
   The approved host direction uses graphite backgrounds, a dark purple accent and the
   original Toolboks app icon. Text should be clear and comfortable to read.

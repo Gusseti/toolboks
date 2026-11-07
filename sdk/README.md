@@ -54,13 +54,13 @@ Capabilities:
 
 Toolboks owns the window, navigation, and backgrounds. Add-ons choose their content,
 pages and accent color. Background tokens are in `theme.json`. They are not editable
-by a package. The built-in System Essentials collection retains its native egui UI.
+by a package. The four built-in tools keep their native egui UI.
 
 ## Trust and scope
 
 Publisher names in local manifests are descriptive, not authenticated identities.
 They never grant a checkmark. Embedded first-party records grant the checkmark to
-System Essentials and the exact Disk Manager package; these are listed first.
+the four built-in tools and the exact Disk Manager package; these are listed first.
 Signed publisher identity, online discovery,
 and remote add-on updates are future work.
 

@@ -21,8 +21,8 @@ pub trait Tool {
     }
     fn tutorial_navigate(&mut self, _section: &str) {}
 
-    /// Called every frame for every tool, selected or not, and also while the window is hidden
-    /// (minimized). For background work such as auto-clean; keep it cheap.
+    /// Called every frame for every enabled tool, selected or not, and also while the window is
+    /// hidden (minimized). A disabled tool is not ticked at all. For background work such as auto-clean; keep it cheap.
     fn tick(&mut self, _ctx: &egui::Context) {}
 
     /// Short items for the status bar at the bottom of the window (e.g. RAM 63%). Called every
@@ -32,11 +32,19 @@ pub trait Tool {
     }
 }
 
+/// How many tools there are. Their order is fixed: it matches the built-in add-on manifests.
+pub const COUNT: usize = 4;
+
+/// A fresh, idle instance of tool number `index` (see [`all`] for the order).
+pub fn build(index: usize) -> Box<dyn Tool> {
+    match index {
+        0 => Box::new(memory::Memory::new()),
+        1 => Box::new(resources::Resources::new()),
+        2 => Box::new(debloat::Debloater::new()),
+        _ => Box::new(events::EventWatch::new()),
+    }
+}
+
 pub fn all() -> Vec<Box<dyn Tool>> {
-    vec![
-        Box::new(memory::Memory::new()),
-        Box::new(resources::Resources::new()),
-        Box::new(debloat::Debloater::new()),
-        Box::new(events::EventWatch::new()),
-    ]
+    (0..COUNT).map(build).collect()
 }

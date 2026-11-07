@@ -11,15 +11,14 @@ pub(super) struct Run {
     reveal_frames: u8,
     original_base: (usize, usize),
     original_page: usize,
+    /// Position of the built-in tool this tour belongs to, if it is not a package.
+    pub(super) tool: Option<usize>,
     locations: Vec<String>,
     provider: Option<String>,
 }
-fn chapter(route: &str, base: bool) -> String {
-    if base {
-        route.split('/').take(2).collect::<Vec<_>>().join("/")
-    } else {
-        route.split('/').next().unwrap_or("").into()
-    }
+/// The page a step belongs to: the first part of its route (`page` or `page/section`).
+fn chapter(route: &str) -> String {
+    route.split('/').next().unwrap_or("").into()
 }
 impl App {
     fn tour_provider(&self, owner: &str) -> Option<String> {
@@ -30,11 +29,13 @@ impl App {
             .and_then(|p| p.manifest.native_provider.clone())
     }
     fn tour_steps(&mut self, owner: &str) -> (Vec<TutorialStep>, String) {
-        if owner == addons::BASE_ID {
-            return (
-                catalog::system(),
-                format!("{}/{}", self.base.selected.0, self.base.selected.1),
-            );
+        if let Some(tool) = self.registry.builtin_index(owner) {
+            let page = if self.base.selected.0 == tool {
+                self.base.selected.1
+            } else {
+                0
+            };
+            return (catalog::for_tool(tool), page.to_string());
         }
         if let Some(provider) = self.tour_provider(owner) {
             return (
@@ -83,24 +84,20 @@ impl App {
     fn start_tutorial(&mut self, owner: String, current_only: bool) {
         let (mut steps, location) = self.tour_steps(&owner);
         if current_only {
-            steps.retain(|s| {
-                chapter(&s.page, owner == addons::BASE_ID)
-                    == chapter(&location, owner == addons::BASE_ID)
-            });
+            steps.retain(|s| chapter(&s.page) == chapter(&location));
         }
         if steps.is_empty() {
             self.message = Some("This add-on has no walkthrough for this page yet.".into());
             return;
         }
         let provider = self.tour_provider(&owner);
+        let tool = self.registry.builtin_index(&owner);
         let locations = if let Some(p) = &provider {
             vec![self.native.tutorial_location(p)]
+        } else if let Some(t) = tool {
+            vec![self.base.tools[t].tutorial_location()]
         } else {
-            self.base
-                .tools
-                .iter()
-                .map(|t| t.tutorial_location())
-                .collect()
+            Vec::new()
         };
         if let Some(p) = &provider {
             self.native.tutorial_start(p);
@@ -113,6 +110,7 @@ impl App {
             reveal_frames: 3,
             original_base: self.base.selected,
             original_page: self.addon_page,
+            tool,
             locations,
             provider,
         });
@@ -124,12 +122,9 @@ impl App {
         };
         let step = &run.steps[run.index];
         if !run.applied {
-            if run.owner == addons::BASE_ID {
+            if let Some(t) = run.tool {
                 let mut parts = step.page.split('/');
-                if let (Some(t), Some(p)) = (
-                    parts.next().and_then(|s| s.parse::<usize>().ok()),
-                    parts.next().and_then(|s| s.parse::<usize>().ok()),
-                ) {
+                if let Some(p) = parts.next().and_then(|s| s.parse::<usize>().ok()) {
                     self.base.selected = (t, p);
                     self.base.tools[t].tutorial_navigate(parts.next().unwrap_or(""));
                 }
@@ -159,10 +154,8 @@ impl App {
                     self.native.tutorial_navigate(&provider, location);
                 }
                 self.native.tutorial_finish(&provider);
-            } else {
-                for (tool, location) in self.base.tools.iter_mut().zip(run.locations) {
-                    tool.tutorial_navigate(&location);
-                }
+            } else if let (Some(t), Some(location)) = (run.tool, run.locations.first()) {
+                self.base.tools[t].tutorial_navigate(location);
             }
         }
         anchors::prepare(ctx, None, false);
@@ -173,10 +166,7 @@ impl App {
             let (steps, location) = self.tour_steps(&owner);
             let current = steps
                 .iter()
-                .filter(|s| {
-                    chapter(&s.page, owner == addons::BASE_ID)
-                        == chapter(&location, owner == addons::BASE_ID)
-                })
+                .filter(|s| chapter(&s.page) == chapter(&location))
                 .count();
             let mut choice = None;
             let response=egui::Modal::new(egui::Id::unique("help-chooser")).show(ctx,|ui| {
@@ -312,56 +302,58 @@ mod tests {
     use super::*;
     #[test]
     fn current_tab_includes_its_inner_sections_only() {
-        assert_eq!(chapter("0/1/system", true), "0/1");
-        assert_eq!(chapter("overview/options", false), "overview");
+        assert_eq!(chapter("1/system"), "1");
+        assert_eq!(chapter("2"), "2");
+        assert_eq!(chapter("overview/options"), "overview");
     }
     #[test]
-    fn system_catalog_covers_every_page() {
-        let steps = catalog::system();
+    fn every_builtin_tool_has_its_own_tour_covering_every_page() {
         for (t, tool) in tools::all().iter().enumerate() {
+            let steps = catalog::for_tool(t);
+            assert!(!steps.is_empty(), "{} has a tour", tool.name());
             for p in 0..tool.pages().len() {
                 assert!(
-                    steps
-                        .iter()
-                        .any(|s| chapter(&s.page, true) == format!("{t}/{p}")),
+                    steps.iter().any(|s| chapter(&s.page) == p.to_string()),
                     "{} page {p}",
                     tool.name()
                 );
             }
         }
+        assert!(catalog::for_tool(tools::COUNT).is_empty());
     }
     #[test]
-    fn system_steps_resolve_real_layout_anchors() {
+    fn tool_steps_resolve_real_layout_anchors() {
         let ctx = egui::Context::default();
         let mut tools = tools::all();
-        for step in catalog::system() {
-            let parts: Vec<_> = step.page.split('/').collect();
-            let t: usize = parts[0].parse().unwrap();
-            let p: usize = parts[1].parse().unwrap();
-            tools[t].tutorial_navigate(parts.get(2).copied().unwrap_or(""));
-            for _ in 0..5 {
-                let mut output = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            Vec2::new(1500.0, 1000.0),
-                        )),
-                        ..Default::default()
-                    },
-                    |ui| {
-                        anchors::prepare(ui.ctx(), Some(&step.target), true);
-                        ui.disable();
-                        tools[t].ui(ui, p);
-                    },
+        for (t, tool) in tools.iter_mut().enumerate() {
+            for step in catalog::for_tool(t) {
+                let parts: Vec<_> = step.page.split('/').collect();
+                let p: usize = parts[0].parse().unwrap();
+                tool.tutorial_navigate(parts.get(1).copied().unwrap_or(""));
+                for _ in 0..5 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                Vec2::new(1500.0, 1000.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            anchors::prepare(ui.ctx(), Some(&step.target), true);
+                            ui.disable();
+                            tool.ui(ui, p);
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+                assert!(
+                    anchors::anchor(&ctx).is_some(),
+                    "{}: missing {}",
+                    step.title,
+                    step.target
                 );
-                output.textures_delta.clear();
             }
-            assert!(
-                anchors::anchor(&ctx).is_some(),
-                "{}: missing {}",
-                step.title,
-                step.target
-            );
         }
     }
 }

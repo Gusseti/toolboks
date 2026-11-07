@@ -1,5 +1,19 @@
 use toolboks_addon_sdk::TutorialStep as S;
-pub(super) fn system() -> Vec<S> {
+/// The walkthrough of one built-in tool (`tool` is its position in `tools::all()`). Step keys
+/// are `page` or `page/section`, where `page` is the tool's page number.
+pub(super) fn for_tool(tool: usize) -> Vec<S> {
+    let prefix = format!("{tool}/");
+    all_steps()
+        .into_iter()
+        .filter_map(|(route, target, title, description)| {
+            route
+                .strip_prefix(&prefix)
+                .map(|rest| S::new(rest, target, title, description))
+        })
+        .collect()
+}
+/// Every step, keyed `tool/page[/section]`. Use [`for_tool`].
+fn all_steps() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
     let entries = [
         ("0/0", "memory-summary", "Memory Cleaner · your memory", "In use is RAM currently occupied; Available is what Windows can offer applications. Cached memory is reusable, so a high used percentage alone does not mean anything is wrong."),
         ("0/0", "memory-optimize", "Optimize memory", "This asks applications to release working-set pages they are not actively using. Windows already manages memory, so the benefit may be temporary and applications may briefly slow down. The tour never presses this button."),
@@ -52,8 +66,5 @@ pub(super) fn system() -> Vec<S> {
         ("3/1", "inspector", "Crashes · evidence and dumps", "The inspector explains the selected evidence and can offer additional details or dump reading when available. A stop code or named component is a starting point for investigation, not proof of the root cause."),
         ("3/2", "table", "Summary · recurring patterns", "The summary highlights notable patterns in the loaded period and reports when nothing notable was found. Limited log access or retention can hide older events, so absence of evidence is not a complete health guarantee."),
     ];
-    entries
-        .into_iter()
-        .map(|(p, t, h, d)| S::new(p, t, h, d))
-        .collect()
+    entries.into()
 }

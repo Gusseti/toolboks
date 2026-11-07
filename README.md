@@ -5,7 +5,7 @@ A lightweight workspace for system utilities, written in Rust.
 ## Local add-on preview
 
 The local development branch introduces a Stratum-inspired shell, a persistent sidebar,
-and an add-on framework. The original four tools are grouped into **System Essentials**.
+and an add-on framework. The original four tools (Memory Cleaner, Resource Monitor, Debloater and Event Watch) are separate built-in add-ons that can each be turned off.
 Local `.tbaddon` packages render inside the same window. See [the architecture](docs/ADDON-ARCHITECTURE.md),
 [SDK](sdk/README.md), and [preview build instructions](docs/LOCAL-DEVELOPMENT.md).
 

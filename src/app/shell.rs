@@ -8,7 +8,8 @@ pub(super) enum Screen {
     Home,
     Browser,
     Settings,
-    Base,
+    /// A built-in tool, by its position in `tools::all()`.
+    Tool(usize),
     External(String),
 }
 
@@ -352,15 +353,17 @@ impl App {
                     eyebrow(ui, "Your add-ons");
                 }
                 ui.add_space(10.0);
-                let base_title = self.registry.base.title.clone();
-                if nav(
-                    ui,
-                    &base_title,
-                    "activity",
-                    self.screen == Screen::Base,
-                    true,
-                ) {
-                    self.screen = Screen::Base;
+                let tools: Vec<_> = (0..self.registry.builtins.len())
+                    .filter(|&i| self.tool_enabled(i))
+                    .map(|i| {
+                        let m = &self.registry.builtins[i];
+                        (i, m.title.clone(), m.icon.clone())
+                    })
+                    .collect();
+                for (i, title, icon) in tools {
+                    if nav(ui, &title, &icon, self.screen == Screen::Tool(i), true) {
+                        self.open_tool(i);
+                    }
                 }
                 let installed: Vec<_> = self
                     .registry
@@ -452,7 +455,14 @@ impl App {
                     });
                 });
             });
-        let items = status_items(self.base.tools.iter().map(|t| t.status()));
+        let items = status_items(
+            self.base
+                .tools
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| self.tool_enabled(*i))
+                .map(|(_, t)| t.status()),
+        );
         egui::Panel::bottom("host-status")
             .exact_size(28.0)
             .resizable(false)
@@ -498,7 +508,7 @@ impl App {
                     Screen::Home => self.home(ui),
                     Screen::Browser => self.browser(ui),
                     Screen::Settings => self.settings(ui),
-                    Screen::Base => self.base_workspace(ui),
+                    Screen::Tool(i) => self.tool_workspace(ui, i),
                     Screen::External(id) => self.external_workspace(ui, &id),
                 }
             });
@@ -517,22 +527,22 @@ impl App {
     fn home(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().id_salt("home-scroll").show(ui,|ui|{
             Self::title(ui,"See the bigger picture","A little clarity. A lot more control.","One workspace for the tools that make your system yours.");
-            panel().show(ui,|ui|{ui.set_width(ui.available_width());ui.set_min_height(188.0);ui.horizontal(|ui|{ui.vertical(|ui|{badge(ui,"MADE FOR THE CURIOUS",ACCENT);ui.add_space(16.0);ui.label(RichText::new("Know your PC.\nMake it work for you.").size(32.0));ui.add_space(10.0);muted(ui,"Understand what is happening. Find the right tool. Stay in control.");ui.add_space(18.0);if primary(ui,"Open System Essentials  →").clicked(){self.screen=Screen::Base;}});ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{ui.add_space(32.0);brand_logo(ui,112.0);});});});
+            panel().show(ui,|ui|{ui.set_width(ui.available_width());ui.set_min_height(188.0);ui.horizontal(|ui|{ui.vertical(|ui|{badge(ui,"MADE FOR THE CURIOUS",ACCENT);ui.add_space(16.0);ui.label(RichText::new("Know your PC.\nMake it work for you.").size(32.0));ui.add_space(10.0);muted(ui,"Understand what is happening. Find the right tool. Stay in control.");ui.add_space(18.0);if primary(ui,"Get started  →").clicked(){match (0..self.registry.builtins.len()).find(|&i|self.tool_enabled(i)){Some(i)=>self.open_tool(i),None=>self.screen=Screen::Browser}}});ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{ui.add_space(32.0);brand_logo(ui,112.0);});});});
             ui.add_space(17.0);
             ui.columns(3, |cols| {
-                let stats = [("Installed add-ons",format!("{:02}",self.registry.packages.len()+1),"Your personal toolkit"),("Included system tools","04".into(),"Ready in System Essentials"),("Your workspace","Local".into(),"Preferences saved on this PC")];
+                let total_tools=self.registry.builtins.len();let on_tools=(0..total_tools).filter(|&i|self.tool_enabled(i)).count();let stats = [("Installed add-ons",format!("{:02}",total_tools+self.registry.packages.len()),"Your personal toolkit".to_owned()),("Included system tools",format!("{on_tools:02}"),format!("{on_tools} of {total_tools} turned on")),("Your workspace","Local".into(),"Preferences saved on this PC".to_owned())];
                 for (col,(label,value,desc)) in cols.iter_mut().zip(stats) {
                     panel().show(col,|ui| {ui.set_width(ui.available_width());eyebrow(ui,label);ui.add_space(11.0);ui.label(RichText::new(value).size(28.0));ui.add_space(6.0);muted(ui,desc);});
                 }
             });
             ui.add_space(26.0);ui.horizontal(|ui|{ui.label(RichText::new("Your starting point").size(16.0));ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{if ui.link("Explore add-ons >").clicked(){self.screen=Screen::Browser;}});});ui.add_space(12.0);
-            let base=self.registry.base.clone();self.addon_card(ui,&base,true,true);
+            let builtins=self.registry.builtins.clone();for (i,m) in builtins.iter().enumerate(){let on=self.tool_enabled(i);self.addon_card(ui,m,true,on);ui.add_space(12.0);}
             ui.add_space(12.0);muted(ui,"Build a toolkit around the way you use your PC. Add-ons live right here, inside Toolboks.");
         });
     }
     fn addon_card(&mut self, ui: &mut egui::Ui, m: &Manifest, verified: bool, enabled: bool) {
-        let installed =
-            m.id == addons::BASE_ID || self.registry.packages.iter().any(|p| p.manifest.id == m.id);
+        let installed = self.registry.builtin_index(&m.id).is_some()
+            || self.registry.packages.iter().any(|p| p.manifest.id == m.id);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -595,11 +605,8 @@ impl App {
                         self.pending_package = Some(addons::official_disk_package());
                         return;
                     }
-                    if !enabled {
-                        if let Err(e) = self.registry.set_enabled(&m.id, true) {
-                            self.message = Some(e);
-                            return;
-                        }
+                    if !enabled && !self.set_addon_enabled(&m.id, true) {
+                        return;
                     }
                     self.open_addon(&m.id);
                 }
@@ -610,12 +617,50 @@ impl App {
         });
     }
     fn open_addon(&mut self, id: &str) {
-        self.screen = if id == addons::BASE_ID {
-            Screen::Base
-        } else {
-            Screen::External(id.into())
-        };
+        if let Some(tool) = self.registry.builtin_index(id) {
+            self.open_tool(tool);
+            return;
+        }
+        self.screen = Screen::External(id.into());
         self.addon_page = 0;
+    }
+    fn tool_enabled(&self, tool: usize) -> bool {
+        self.registry
+            .builtins
+            .get(tool)
+            .is_some_and(|m| self.registry.enabled(&m.id))
+    }
+    fn open_tool(&mut self, tool: usize) {
+        if !self.tool_enabled(tool) {
+            self.screen = Screen::Home;
+            return;
+        }
+        if self.base.selected.0 != tool {
+            self.base.selected = (tool, 0);
+        }
+        self.screen = Screen::Tool(tool);
+    }
+    /// Turns an add-on on or off and saves it. Returns false (with a message) if it could not
+    /// be saved. Turning a built-in tool off stops its background work for good: the tool is
+    /// replaced by a fresh idle one, which a later turn-on starts from scratch.
+    fn set_addon_enabled(&mut self, id: &str, enabled: bool) -> bool {
+        if let Err(e) = self.registry.set_enabled(id, enabled) {
+            self.message = Some(e);
+            return false;
+        }
+        if let (Some(tool), false) = (self.registry.builtin_index(id), enabled) {
+            self.base.tools[tool] = tools::build(tool);
+            if self.screen == Screen::Tool(tool) {
+                self.screen = Screen::Home;
+            }
+            if self.tour.as_ref().is_some_and(|run| run.tool == Some(tool)) {
+                self.tour = None;
+            }
+            if self.help.as_deref() == Some(id) {
+                self.help = None;
+            }
+        }
+        true
     }
     fn browser(&mut self, ui: &mut egui::Ui) {
         Self::title(
@@ -664,7 +709,7 @@ impl App {
                 .to_lowercase()
                 .contains(&needle)
         };
-        let base = self.registry.base.clone();
+        let builtins = self.registry.builtins.clone();
         let packages: Vec<_> = self
             .registry
             .packages
@@ -675,38 +720,38 @@ impl App {
         let disk = addons::official_disk_package().manifest;
         egui::ScrollArea::vertical().id_salt("browser-scroll").show(ui,|ui|{
             eyebrow(ui,"From Toolboks");ui.add_space(10.0);
-            if matches(&base){self.addon_card(ui,&base,true,true);ui.add_space(14.0);}
+            for (i,m) in builtins.iter().enumerate(){if matches(m){let on=self.tool_enabled(i);self.addon_card(ui,m,true,on);ui.add_space(14.0);}}
             if matches(&disk){let enabled=self.registry.enabled(&disk.id);self.addon_card(ui,&disk,true,enabled);ui.add_space(20.0);}
             let third_party:Vec<_>=packages.into_iter().filter(|m|m.id!=toolboks_disk_manager::ID).collect();
             if !third_party.is_empty(){eyebrow(ui,"Your installed add-ons");ui.add_space(10.0);for m in third_party{let enabled=self.registry.enabled(&m.id);self.addon_card(ui,&m,false,enabled);ui.add_space(12.0);}}
-            if !matches(&base)&&!matches(&disk)&&!self.registry.packages.iter().any(|p|matches(&p.manifest)){muted(ui,"No add-ons match your search.");}
+            if !builtins.iter().any(&matches)&&!matches(&disk)&&!self.registry.packages.iter().any(|p|matches(&p.manifest)){muted(ui,"No add-ons match your search.");}
             ui.add_space(8.0);panel().show(ui,|ui|{ui.set_width(ui.available_width());ui.label(RichText::new("A platform for your next tool.").size(18.0));ui.add_space(6.0);muted(ui,"Install local packages or try the SDK starter. Verified first-party add-ons are listed first.");ui.add_space(10.0);if ui.button("Install SDK example").clicked(){match Package::parse(addons::SDK_EXAMPLE.as_bytes(),env!("CARGO_PKG_VERSION")){Ok(p)=>self.pending_package=Some(p),Err(e)=>self.message=Some(e)}}});
         });
     }
 
-    fn base_workspace(&mut self, ui: &mut egui::Ui) {
+    fn tool_workspace(&mut self, ui: &mut egui::Ui, tool: usize) {
+        if !self.tool_enabled(tool) {
+            self.screen = Screen::Home;
+            return;
+        }
+        if self.base.selected.0 != tool {
+            self.base.selected = (tool, 0);
+        }
+        let manifest = self.registry.builtins[tool].clone();
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 eyebrow(ui, "Your system, in perspective");
-                ui.label(RichText::new("System Essentials").size(27.0));
+                ui.label(RichText::new(&manifest.title).size(27.0));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Help").clicked() {
-                    self.help = Some(addons::BASE_ID.into());
+                    self.help = Some(manifest.id.clone());
                 }
                 badge(ui, "✓  TOOLBOKS VERIFIED", ACCENT)
             });
         });
         ui.add_space(15.0);
-        ui.horizontal_wrapped(|ui| {
-            for (i, t) in self.base.tools.iter().enumerate() {
-                if look::tab(ui, t.name(), self.base.selected.0 == i, 35.0).clicked() {
-                    self.base.selected = (i, 0);
-                }
-            }
-        });
-        ui.add_space(8.0);
-        let pages = self.base.tools[self.base.selected.0].pages();
+        let pages = self.base.tools[tool].pages();
         if pages.len() > 1 {
             ui.horizontal_wrapped(|ui| {
                 for (i, p) in pages.iter().enumerate() {
@@ -717,8 +762,8 @@ impl App {
             });
             ui.add_space(16.0);
         }
-        let (t, p) = self.base.selected;
-        self.base.tools[t].ui(ui, p);
+        let page = self.base.selected.1;
+        self.base.tools[tool].ui(ui, page);
     }
     fn external_workspace(&mut self, ui: &mut egui::Ui, id: &str) {
         if !self.registry.enabled(id) {
@@ -966,8 +1011,8 @@ impl App {
             return;
         }
         if let Some(id) = self.detail.clone() {
-            let manifest = if id == addons::BASE_ID {
-                Some(self.registry.base.clone())
+            let manifest = if let Some(tool) = self.registry.builtin_index(&id) {
+                Some(self.registry.builtins[tool].clone())
             } else if id == toolboks_disk_manager::ID {
                 Some(addons::official_disk_package().manifest)
             } else {
@@ -1023,32 +1068,31 @@ impl App {
                                 }
                             });
                         ui.add_space(18.0);
-                        if id != addons::BASE_ID
-                            && self.registry.packages.iter().any(|p| p.manifest.id == id)
-                        {
+                        let builtin = self.registry.builtin_index(&id).is_some();
+                        let package = self.registry.packages.iter().any(|p| p.manifest.id == id);
+                        if builtin || package {
                             let mut enabled = self.registry.enabled(&id);
                             if ui.checkbox(&mut enabled, "Show in sidebar").changed() {
-                                if let Err(e) = self.registry.set_enabled(&id, enabled) {
-                                    self.message = Some(e);
-                                }
+                                self.set_addon_enabled(&id, enabled);
                             }
                             ui.add_space(14.0);
-                            if ui
-                                .button(RichText::new("Remove add-on").color(look::RED))
-                                .clicked()
-                            {
-                                self.detail = None;
-                                self.remove_pending = Some(id.clone());
+                            if package {
+                                if ui
+                                    .button(RichText::new("Remove add-on").color(look::RED))
+                                    .clicked()
+                                {
+                                    self.detail = None;
+                                    self.remove_pending = Some(id.clone());
+                                }
+                            } else {
+                                muted(
+                                    ui,
+                                    "Included with Toolboks. Updated together with the app. \
+                                     Turn it off to stop it running in the background.",
+                                );
                             }
                         } else {
-                            muted(
-                                ui,
-                                if id == addons::BASE_ID {
-                                    "Included with Toolboks. Updated together with the app."
-                                } else {
-                                    "Available in the add-on browser."
-                                },
-                            );
+                            muted(ui, "Available in the add-on browser.");
                         }
                         ui.add_space(12.0);
                         if ui.button("Close").clicked() {

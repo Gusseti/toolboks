@@ -8,8 +8,29 @@ use std::{
 };
 use toolboks_addon_sdk::{Package, MAX_PACKAGE_BYTES};
 
-pub const BASE_ID: &str = "toolboks.system-essentials";
-pub const BASE_MANIFEST: &str = include_str!("../assets/system-essentials.json");
+/// The built-in tools, in the same order as `tools::all()`: one manifest each.
+pub const BUILTIN_MANIFESTS: [&str; 4] = [
+    include_str!("../assets/memory-cleaner.json"),
+    include_str!("../assets/resource-monitor.json"),
+    include_str!("../assets/debloater.json"),
+    include_str!("../assets/event-watch.json"),
+];
+/// The IDs of [`BUILTIN_MANIFESTS`], same order (a test keeps the two in step).
+pub const BUILTIN_IDS: [&str; 4] = [
+    "toolboks.memory-cleaner",
+    "toolboks.resource-monitor",
+    "toolboks.debloater",
+    "toolboks.event-watch",
+];
+/// The single "System Essentials" entry that older versions stored. It is gone now; saved
+/// settings that mention it are dropped when the configuration is loaded.
+pub const LEGACY_BASE_ID: &str = "toolboks.system-essentials";
+pub fn builtin_manifests() -> Vec<toolboks_addon_sdk::Manifest> {
+    BUILTIN_MANIFESTS
+        .iter()
+        .map(|m| serde_json::from_str(m).expect("bundled manifest"))
+        .collect()
+}
 pub const SDK_EXAMPLE: &str = include_str!("../sdk/examples/hello-system.tbaddon");
 pub fn official_disk_package() -> Package {
     serde_json::from_str(toolboks_disk_manager::PACKAGE).expect("bundled disk package")
@@ -45,7 +66,8 @@ pub struct Config {
     pub preferences: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 }
 pub struct Registry {
-    pub base: toolboks_addon_sdk::Manifest,
+    /// Built-in tools, in tool order (index matches `SystemAddon::tools`).
+    pub builtins: Vec<toolboks_addon_sdk::Manifest>,
     pub packages: Vec<Package>,
     pub config: Config,
     pub root: PathBuf,
@@ -102,6 +124,9 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::rename(temp, path).map_err(|e| e.to_string())?;
     Ok(())
 }
+fn reserved(id: &str) -> bool {
+    id == LEGACY_BASE_ID || BUILTIN_IDS.contains(&id)
+}
 fn read_package(path: &Path) -> Result<Package, String> {
     let file = fs::File::open(path).map_err(|e| format!("Could not open package: {e}"))?;
     let mut bytes = Vec::new();
@@ -110,15 +135,15 @@ fn read_package(path: &Path) -> Result<Package, String> {
         .map_err(|e| e.to_string())?;
     let p = Package::parse(&bytes, env!("CARGO_PKG_VERSION"))?;
     validate_provider(&p)?;
-    if p.manifest.id == BASE_ID {
-        return Err("The bundled system add-on cannot be replaced by a local package.".into());
+    if reserved(&p.manifest.id) {
+        return Err("A bundled add-on cannot be replaced by a local package.".into());
     }
     Ok(p)
 }
 impl Registry {
     pub fn load(root: PathBuf) -> Self {
         let mut r = Self {
-            base: serde_json::from_str(BASE_MANIFEST).expect("bundled manifest"),
+            builtins: builtin_manifests(),
             packages: vec![],
             config: Config::default(),
             root,
@@ -136,6 +161,9 @@ impl Registry {
                 )),
             }
         }
+        // The old combined entry no longer exists; forget anything saved for it.
+        r.config.disabled.retain(|s| s != LEGACY_BASE_ID);
+        r.config.preferences.remove(LEGACY_BASE_ID);
         let folder = r.root.join("addons");
         match fs::read_dir(&folder) {
             Ok(entries) => {
@@ -178,13 +206,13 @@ impl Registry {
     pub fn enabled(&self, id: &str) -> bool {
         !self.config.disabled.iter().any(|s| s == id)
     }
+    pub fn builtin_index(&self, id: &str) -> Option<usize> {
+        self.builtins.iter().position(|m| m.id == id)
+    }
     pub fn verified(&self, id: &str) -> bool {
-        id == BASE_ID || id == toolboks_disk_manager::ID
+        self.builtin_index(id).is_some() || id == toolboks_disk_manager::ID
     }
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> Result<(), String> {
-        if id == BASE_ID {
-            return Err("System Essentials is included with Toolboks and stays enabled.".into());
-        }
         let before = self.config.clone();
         self.config.disabled.retain(|s| s != id);
         if !enabled {
@@ -202,7 +230,7 @@ impl Registry {
     pub fn install(&mut self, p: Package) -> Result<(), String> {
         p.validate(env!("CARGO_PKG_VERSION"))?;
         validate_provider(&p)?;
-        if p.manifest.id == BASE_ID {
+        if reserved(&p.manifest.id) {
             return Err("Cannot replace the bundled add-on.".into());
         }
         if let Some(old) = self
@@ -233,7 +261,7 @@ impl Registry {
         Ok(())
     }
     pub fn uninstall(&mut self, id: &str) -> Result<(), String> {
-        if id == BASE_ID || !self.packages.iter().any(|p| p.manifest.id == id) {
+        if reserved(id) || !self.packages.iter().any(|p| p.manifest.id == id) {
             return Err("This add-on cannot be removed.".into());
         }
         fs::remove_file(self.root.join("addons").join(format!("{id}.tbaddon")))
@@ -281,7 +309,7 @@ mod tests {
         let mut reloaded = Registry::load(root.clone());
         assert_eq!(reloaded.packages.len(), 1);
         assert!(!reloaded.enabled("com.example.hello-system"));
-        assert!(reloaded.uninstall(BASE_ID).is_err());
+        assert!(reloaded.uninstall("toolboks.memory-cleaner").is_err());
         reloaded.uninstall("com.example.hello-system").unwrap();
         assert!(Registry::load(root.clone()).packages.is_empty());
         fs::remove_dir_all(root).unwrap();
@@ -290,7 +318,7 @@ mod tests {
     fn cannot_impersonate_bundled_addon() {
         let mut r = Registry::load(std::env::temp_dir());
         let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
-        p.manifest.id = BASE_ID.into();
+        p.manifest.id = "toolboks.event-watch".into();
         assert!(r.install(p).is_err());
     }
     #[test]
@@ -342,5 +370,72 @@ mod tests {
         assert_eq!(reloaded.config.preferences[&id]["label"], "Custom name");
         assert_eq!(reloaded.errors.len(), 1);
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn every_builtin_manifest_parses_and_validates() {
+        let manifests = builtin_manifests();
+        assert_eq!(manifests.len(), BUILTIN_IDS.len());
+        let tool_names: Vec<_> = crate::tools::all().iter().map(|t| t.name()).collect();
+        for (i, m) in manifests.iter().enumerate() {
+            assert_eq!(m.id, BUILTIN_IDS[i]);
+            assert_eq!(m.title, tool_names[i], "manifest order matches tool order");
+            assert_eq!(m.version, env!("CARGO_PKG_VERSION"));
+            assert_eq!(m.min_toolboks_version, env!("CARGO_PKG_VERSION"));
+            let package = serde_json::json!({
+                "schema_version": 1,
+                "manifest": m,
+                "pages": [{"id": "home", "title": "Home", "widgets": []}],
+            });
+            Package::parse(package.to_string().as_bytes(), env!("CARGO_PKG_VERSION")).unwrap();
+        }
+        assert!(manifests[1]
+            .capabilities
+            .contains(&toolboks_addon_sdk::Capability::HostMetrics));
+    }
+    #[test]
+    fn disabling_a_builtin_persists_and_enabling_restores_it() {
+        let root = std::env::temp_dir().join(format!("toolboks-builtin-{}", std::process::id()));
+        let mut r = Registry::load(root.clone());
+        for id in BUILTIN_IDS {
+            assert!(r.enabled(id), "{id} starts enabled");
+        }
+        r.set_enabled("toolboks.resource-monitor", false).unwrap();
+        let mut reloaded = Registry::load(root.clone());
+        assert!(!reloaded.enabled("toolboks.resource-monitor"));
+        assert!(reloaded.enabled("toolboks.memory-cleaner"));
+        reloaded
+            .set_enabled("toolboks.resource-monitor", true)
+            .unwrap();
+        assert!(Registry::load(root.clone()).enabled("toolboks.resource-monitor"));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn old_system_essentials_settings_are_dropped_without_error() {
+        let root = std::env::temp_dir().join(format!("toolboks-legacy-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("config.json"),
+            br#"{"keep_in_tray":true,"disabled":["toolboks.system-essentials","com.example.x"],
+            "preferences":{"toolboks.system-essentials":{"a":1}}}"#,
+        )
+        .unwrap();
+        let r = Registry::load(root.clone());
+        assert!(r.errors.is_empty());
+        assert!(r.config.keep_in_tray);
+        assert_eq!(r.config.disabled, ["com.example.x"]);
+        assert!(r.config.preferences.is_empty());
+        for id in BUILTIN_IDS {
+            assert!(r.enabled(id));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn local_packages_cannot_take_old_or_new_builtin_ids() {
+        let mut r = Registry::load(std::env::temp_dir());
+        for id in [LEGACY_BASE_ID, "toolboks.debloater"] {
+            let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
+            p.manifest.id = id.into();
+            assert!(r.install(p).is_err());
+        }
     }
 }

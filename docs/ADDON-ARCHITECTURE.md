@@ -2,8 +2,17 @@
 
 Toolboks owns the window, background palette, collapsible sidebar, overview, local
 add-on browser, settings and status bar. Add-ons render inside that workspace.
-The four original tools are grouped in the preinstalled System Essentials provider;
-their pages, background ticks, status items and `--open Tool/Page` links remain.
+The four original tools are separate preinstalled (built-in) add-ons with their own
+manifests in `assets/`: `toolboks.memory-cleaner`, `toolboks.resource-monitor`,
+`toolboks.debloater` and `toolboks.event-watch`. Each has a sidebar entry, can be turned
+off and on like any other add-on, and keeps its pages and `--open Tool/Page` link.
+They cannot be removed or replaced by a local package.
+
+A turned-off tool is not ticked: Resource Monitor sampling and Memory Cleaner automatic
+cleaning stop, its status bar items disappear and it leaves the sidebar. `--open` for a
+turned-off tool opens the overview with a short message. Turning the tool on starts it
+fresh. The tray shows memory only and does not depend on any tool. Older settings for
+the former combined `toolboks.system-essentials` entry are ignored and dropped.
 
 ## Packages and providers
 

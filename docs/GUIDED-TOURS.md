@@ -9,10 +9,12 @@ between steps; Cancel or Escape exits at any point. Jump to lets users choose a
 particular explanation. Completing or cancelling restores prior page selections.
 Workspace controls are disabled while touring; existing background jobs continue.
 
-System Essentials has 50 steps across Memory Cleaner (Home and Advanced, including
-Selected/System/Rules), Resource Monitor (Overview, Details, Processes, Connections,
-and each top-process ranking), Debloater (Privacy and ads, Apps, Startup, Tasks,
-Services), and Event Watch (Live, Crashes, Summary).
+Each built-in tool has its own tour, with its Help button in its own workspace:
+Memory Cleaner (12 steps: Home and Advanced, including Selected/System/Rules),
+Resource Monitor (22 steps: Overview, Details, Processes, Connections, and each
+top-process ranking), Debloater (10 steps: Privacy and ads, Apps, Startup, Tasks,
+Services), and Event Watch (6 steps: Live, Crashes, Summary). "Just this tab" tours
+the page that is open, including its inner sections.
 
 Disk Manager has 21 steps covering drive/path selection, folder browsing, scanning
 and cancellation, exclusions, totals, view navigation, map, filters, breadcrumbs,

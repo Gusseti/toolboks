@@ -97,11 +97,23 @@ fn parse_open(args: &[String], tools: &[Box<dyn Tool>]) -> Option<(usize, usize)
     Some((tool, page))
 }
 
+/// Whether `--open` may show tool number `tool`: a turned-off tool falls back to the overview
+/// with a short explanation instead.
+fn open_target(registry: &Registry, tool: usize) -> Result<(), String> {
+    match registry.builtins.get(tool) {
+        Some(m) if registry.enabled(&m.id) => Ok(()),
+        Some(m) => Err(format!(
+            "{} is turned off. You can turn it on again in the add-on browser.",
+            m.title
+        )),
+        None => Err("That tool is not available.".into()),
+    }
+}
+
 impl App {
     pub fn new() -> Self {
         let tools = tools::all();
         let args: Vec<String> = std::env::args().skip(1).collect();
-        let selected = parse_open(&args, &tools).unwrap_or((0, 0));
         let registry = Registry::load(addons::data_root());
         let mut message = None;
         if !registry.root.join("config.json").exists() {
@@ -110,11 +122,17 @@ impl App {
             }
         }
         let keep_in_tray = registry.config.keep_in_tray;
-        let mut screen = if parse_open(&args, &tools).is_some() {
-            Screen::Base
-        } else {
-            Screen::Home
-        };
+        let mut selected = (0, 0);
+        let mut screen = Screen::Home;
+        if let Some((tool, page)) = parse_open(&args, &tools) {
+            match open_target(&registry, tool) {
+                Ok(()) => {
+                    selected = (tool, page);
+                    screen = Screen::Tool(tool);
+                }
+                Err(text) => message = Some(text),
+            }
+        }
         let mut native = crate::native::NativeHost::default();
         if let Some(index) = args.iter().position(|a| a == "--open-addon") {
             if let Some(id) = args.get(index + 1) {
@@ -316,8 +334,11 @@ impl eframe::App for App {
         self.poll_update(ctx);
         self.tray_tick(ctx);
         self.native.tick(ctx, &self.registry);
-        for tool in &mut self.base.tools {
-            tool.tick(ctx);
+        // A turned-off tool does no background work at all.
+        for (tool, manifest) in self.base.tools.iter_mut().zip(&self.registry.builtins) {
+            if self.registry.enabled(&manifest.id) {
+                tool.tick(ctx);
+            }
         }
         if self
             .preferences_dirty
@@ -473,7 +494,8 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_open, status_items};
+    use super::{open_target, parse_open, status_items};
+    use crate::addons::Registry;
     use crate::tools;
 
     fn args(list: &[&str]) -> Vec<String> {
@@ -508,6 +530,23 @@ mod tests {
             parse_open(&args(&["--open", "Resource Monitor/Nope"]), &tools),
             Some((1, 0))
         );
+    }
+
+    #[test]
+    fn open_of_a_turned_off_tool_falls_back_with_a_message() {
+        let root = std::env::temp_dir().join(format!("toolboks-open-{}", std::process::id()));
+        let mut registry = Registry::load(root.clone());
+        let tools = tools::all();
+        let (tool, _) = parse_open(&args(&["--open", "Resource Monitor/Details"]), &tools).unwrap();
+        assert!(open_target(&registry, tool).is_ok());
+        registry
+            .set_enabled("toolboks.resource-monitor", false)
+            .unwrap();
+        let message = open_target(&registry, tool).unwrap_err();
+        assert!(message.contains("Resource Monitor is turned off"));
+        // The other tools are unaffected.
+        assert!(open_target(&registry, 0).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

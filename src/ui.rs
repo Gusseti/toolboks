@@ -103,41 +103,6 @@ pub fn apply_style(ctx: &egui::Context) {
     });
 }
 
-/// A text tab of a tab strip: `height` tall, the selected one underlined 2 px in the accent,
-/// a faint highlight on hover.
-pub fn tab(ui: &mut egui::Ui, text: &str, selected: bool, height: f32) -> egui::Response {
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let color = if selected {
-        ui.visuals().strong_text_color()
-    } else {
-        ui.visuals().weak_text_color()
-    };
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
-    let size = Vec2::new(galley.size().x + 24.0, height);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        if response.hovered() && !selected {
-            painter.rect_filled(rect, 0.0, Color32::from_white_alpha(8));
-        }
-        let color = if response.hovered() && !selected {
-            ui.visuals().text_color()
-        } else {
-            color
-        };
-        painter.galley(rect.center() - galley.size() / 2.0, galley, color);
-        if selected {
-            let line = egui::Rect::from_min_max(
-                Pos2::new(rect.left() + 6.0, rect.bottom() - 2.0),
-                Pos2::new(rect.right() - 6.0, rect.bottom()),
-            );
-            painter.rect_filled(line, 1.0, ACCENT);
-        }
-    }
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, selected, text));
-    response
-}
-
 /// A rounded card of exactly `width` (including its border), at least `min_height` tall.
 pub fn card(ui: &mut egui::Ui, width: f32, min_height: f32, add: impl FnOnce(&mut egui::Ui)) {
     let visuals = ui.visuals();
