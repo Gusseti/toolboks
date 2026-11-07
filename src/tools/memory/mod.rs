@@ -3,6 +3,7 @@ mod advanced;
 mod auto;
 mod commit;
 mod groups;
+mod growth;
 mod home;
 mod memlist;
 mod pressure;
