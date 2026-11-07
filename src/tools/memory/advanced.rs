@@ -6,22 +6,22 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::Duration;
 
-use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Vec2};
 use egui_extras::{Column, TableBuilder};
 
 use super::groups::color_for;
 use super::stats::{format_bytes, group_by_name, sort_and_filter, ProcInfo, SortKey};
+use super::style::{panel, section, section_with_note, stat_row};
 use super::trim::{skip_reason, trim_process, SkipReason};
 use super::workbench::{
     legend, list_bar_parts, list_segments, plan_trim, row_key, share_of, trim_summary,
 };
 use super::Memory;
 use crate::format::size_plain;
-use crate::ui::{pill, stacked_bar, ACCENT, CARD_PAD, GAP};
+use crate::ui::{pill, stacked_bar, ACCENT, GAP, SPACE_L, SPACE_XS};
 
 const ROW_HEIGHT: f32 = 22.0;
-const INSPECTOR_WIDTH: f32 = 200.0;
-const INSPECTOR_PAD: f32 = 8.0;
+const INSPECTOR_WIDTH: f32 = 240.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -80,39 +80,44 @@ impl Memory {
         }
         self.prune_selection();
 
-        let inspector = egui::Frame::NONE
-            .fill(ui.visuals().extreme_bg_color)
-            .inner_margin(INSPECTOR_PAD);
-        let panel = egui::Panel::right("memory_workbench_inspector")
+        let margin = |left: i8, right: i8| egui::Margin {
+            left,
+            right,
+            top: SPACE_L as i8,
+            bottom: SPACE_L as i8,
+        };
+        let gap = (GAP / 2.0) as i8;
+        let inspector = egui::Panel::right("memory_workbench_inspector")
             .resizable(false)
             .exact_size(INSPECTOR_WIDTH)
-            .frame(inspector)
+            .frame(egui::Frame::NONE.inner_margin(margin(gap, SPACE_L as i8)))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| self.workbench_inspector(ui));
+                    .show(ui, |ui| {
+                        panel(ui, 0.0, |ui| self.workbench_inspector(ui));
+                    });
             });
-        let rect = panel.response.rect;
-        toolboks_addon_sdk::tutorial::mark(ui, "inspector", rect);
-        ui.painter().vline(
-            rect.left(),
-            rect.y_range(),
-            Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        );
+        toolboks_addon_sdk::tutorial::mark(ui, "inspector", inspector.response.rect);
 
-        let side = egui::Frame::NONE.inner_margin(CARD_PAD);
-        egui::CentralPanel::default().frame(side).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            ui.spacing_mut().button_padding = Vec2::new(6.0, 1.0);
-            toolboks_addon_sdk::tutorial::region(ui, "memory-lists", |ui| self.lists_strip(ui));
-            ui.add_space(GAP - 2.0);
-            toolboks_addon_sdk::tutorial::region(ui, "toolbar", |ui| self.toolbar(ui));
-            if let Some(status) = &self.status {
-                ui.label(RichText::new(status).small().weak());
-            }
-            ui.add_space(2.0);
-            toolboks_addon_sdk::tutorial::region(ui, "table", |ui| self.table(ui));
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.inner_margin(margin(SPACE_L as i8, gap)))
+            .show(ui, |ui| {
+                ui.spacing_mut().button_padding = Vec2::new(6.0, 1.0);
+                toolboks_addon_sdk::tutorial::region(ui, "memory-lists", |ui| {
+                    panel(ui, 0.0, |ui| self.lists_strip(ui))
+                });
+                ui.add_space(GAP);
+                toolboks_addon_sdk::tutorial::region(ui, "toolbar", |ui| self.toolbar(ui));
+                if let Some(status) = &self.status {
+                    ui.label(RichText::new(status).small().weak());
+                }
+                ui.add_space(SPACE_XS);
+                let height = ui.available_height();
+                toolboks_addon_sdk::tutorial::region(ui, "table", |ui| {
+                    panel(ui, height, |ui| self.table(ui))
+                });
+            });
     }
 
     /// Forget selected rows that no longer exist (the process ended).
@@ -133,12 +138,7 @@ impl Memory {
 
     fn lists_strip(&self, ui: &mut egui::Ui) {
         let total = self.sampler.as_ref().map_or(0, |s| s.totals.total);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Memory lists").strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(format!("{} total", size_plain(total))).weak());
-            });
-        });
+        section_with_note(ui, "Memory lists", &format!("{} total", size_plain(total)));
         let parts = list_bar_parts(total, self.lists);
         let Some(lists) = self.lists.filter(|_| !parts.is_empty()) else {
             ui.label(RichText::new("Memory lists are not available").weak());
@@ -200,6 +200,7 @@ impl Memory {
             &sampler.processes
         };
         let rows = sort_and_filter(source, self.sort_key, self.descending, &self.filter);
+        ui.spacing_mut().item_spacing.y = 0.0;
 
         // The table borrows the sampler, selection and exclusions, so record what was clicked
         // and apply it to `self` once the table is done.
@@ -426,7 +427,7 @@ impl Memory {
             .flatten();
         let all_protected = !names.is_empty() && names.iter().all(|n| self.exclusions.contains(n));
 
-        ui.label(RichText::new(title).strong());
+        section(ui, &title);
         for (label, value) in [
             ("Processes", procs.to_string()),
             ("Working set", format_bytes(ws)),
@@ -436,12 +437,7 @@ impl Memory {
                 format!("{:.1}%", share_of(ws, used) * 100.0),
             ),
         ] {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(label).weak());
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(value);
-                });
-            });
+            stat_row(ui, label, value);
         }
         if let Some(reason) = single_reason {
             ui.label(RichText::new(reason.describe()).small().weak());
@@ -509,7 +505,7 @@ impl Memory {
     fn last_trim_line(&self, ui: &mut egui::Ui) {
         if let Some(text) = &self.last_trim {
             ui.add_space(2.0);
-            ui.label(RichText::new("Last trim").strong());
+            section(ui, "Last trim");
             ui.label(RichText::new(text).small());
         }
     }
@@ -518,7 +514,7 @@ impl Memory {
     pub(super) fn exclusions_list(&mut self, ui: &mut egui::Ui) {
         let mut names: Vec<String> = self.exclusions.iter().cloned().collect();
         names.sort();
-        ui.label(RichText::new(format!("Protected apps ({})", names.len())).strong());
+        section(ui, &format!("Protected apps ({})", names.len()));
         if names.is_empty() {
             ui.label(
                 RichText::new(

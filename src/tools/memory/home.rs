@@ -9,18 +9,21 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Vec2};
 
 use super::commit::{self, Level};
 use super::groups::{Breakdown, Segment};
 use super::memlist::{self, Command};
 use super::report::{self, Snapshot};
 use super::stats::ProcInfo;
+use super::style::{banner, meter, panel, primary_button, section, section_with_note, stat_row};
 use super::trim::{skip_reason, trim_process};
 use super::{Memory, AUTO_CHECK};
 use crate::elevation;
 use crate::format::size_plain;
-use crate::ui::{stacked_bar, toggle_switch, BarPart, ACCENT, AMBER, CARD_PAD, GAP, GREEN, RED};
+use crate::ui::{
+    stacked_bar, toggle_switch, BarPart, AMBER, GAP, GREEN, RED, SPACE_L, SPACE_XS, TEXT_SECTION,
+};
 
 const MB: u64 = 1024 * 1024;
 pub const DEFAULT_MIN_APP_MB: u32 = 32;
@@ -31,8 +34,8 @@ const SETTLE_FOR: Duration = Duration::from_secs(10);
 /// How often the cheap RAM totals are re-read while settling.
 const SETTLE_EVERY: Duration = Duration::from_millis(500);
 /// The Home zones: the left column, the right inspector and the height of a legend row.
-const LEFT_WIDTH: f32 = 150.0;
-const RIGHT_WIDTH: f32 = 176.0;
+const LEFT_WIDTH: f32 = 220.0;
+const RIGHT_WIDTH: f32 = 250.0;
 const LEGEND_ROW: f32 = 22.0;
 /// After an automatic run, wait at least this long before the next one.
 const AUTO_OPT_COOLDOWN: Duration = Duration::from_secs(5 * 60);
@@ -392,24 +395,32 @@ impl Memory {
 
     pub(super) fn home_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let side = egui::Frame::NONE.inner_margin(CARD_PAD);
+        let margin = |left: i8, right: i8| egui::Margin {
+            left,
+            right,
+            top: SPACE_L as i8,
+            bottom: SPACE_L as i8,
+        };
+        let gap = (GAP / 2.0) as i8;
+        let edge = SPACE_L as i8;
         egui::Panel::left("memory_left")
             .resizable(false)
             .exact_size(LEFT_WIDTH)
-            .frame(side)
+            .frame(egui::Frame::NONE.inner_margin(margin(edge, gap)))
             .show(ui, |ui| {
-                toolboks_addon_sdk::tutorial::region(ui, "memory-summary", |ui| {
-                    self.left_column(ui, &ctx)
-                })
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        toolboks_addon_sdk::tutorial::region(ui, "memory-summary", |ui| {
+                            self.left_column(ui, &ctx)
+                        })
+                    });
             });
 
-        let inspector = egui::Frame::NONE
-            .fill(ui.visuals().extreme_bg_color)
-            .inner_margin(CARD_PAD);
-        let panel = egui::Panel::right("memory_inspector")
+        egui::Panel::right("memory_inspector")
             .resizable(false)
             .exact_size(RIGHT_WIDTH)
-            .frame(inspector)
+            .frame(egui::Frame::NONE.inner_margin(margin(gap, edge)))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -419,82 +430,64 @@ impl Memory {
                         })
                     });
             });
-        let rect = panel.response.rect;
-        ui.painter().vline(
-            rect.left(),
-            rect.y_range(),
-            Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        );
 
-        egui::CentralPanel::default().frame(side).show(ui, |ui| {
-            self.hint(ui);
-            toolboks_addon_sdk::tutorial::region(ui, "memory-apps", |ui| self.memory_goes(ui));
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.inner_margin(margin(gap, gap)))
+            .show(ui, |ui| {
+                self.hint(ui);
+                toolboks_addon_sdk::tutorial::region(ui, "memory-apps", |ui| self.memory_goes(ui));
+            });
     }
 
-    /// The left column: the percentage in use, the numbers behind it and the button.
+    /// The left column: memory in use, the numbers behind it, the button and the commit card.
     fn left_column(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let totals = self.sampler.as_ref().map(|s| s.totals).unwrap_or_default();
         let used_percent = totals.used_fraction() * 100.0;
         let state = health(used_percent);
-        let width = ui.available_width();
 
-        ui.label(RichText::new("Memory in use").weak());
-        ui.label(
-            RichText::new(format!("{used_percent:.0}%"))
-                .size(26.0)
-                .strong()
-                .color(state.color()),
-        );
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 3.0, ui.visuals().widgets.inactive.bg_fill);
-        let mut fill = rect;
-        fill.set_width(width * totals.used_fraction().clamp(0.0, 1.0));
-        painter.rect_filled(fill, 3.0, state.color());
-        ui.add_space(2.0);
-        ui.label(RichText::new(state.headline()).small());
-        ui.add_space(6.0);
-
-        let cached = self
-            .lists
-            .map_or_else(|| "-".to_string(), |l| size_plain(l.standby));
-        for (label, value) in [
-            ("In use", size_plain(totals.used)),
-            ("Available", size_plain(totals.available)),
-            ("Cached", cached),
-            ("Total", size_plain(totals.total)),
-        ] {
+        panel(ui, 0.0, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(label).weak());
+                section(ui, "Memory in use");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(value);
+                    ui.label(
+                        RichText::new(format!("{used_percent:.0}%"))
+                            .size(TEXT_SECTION)
+                            .strong()
+                            .color(state.color()),
+                    );
                 });
             });
-        }
+            meter(ui, 6.0, totals.used_fraction(), state.color());
+            ui.label(RichText::new(state.headline()).small());
+            ui.add_space(SPACE_XS);
 
-        ui.add_space(GAP);
-        let label = if self.optimizing.is_some() {
-            "Optimizing..."
-        } else {
-            "Optimize memory"
-        };
-        let button = egui::Button::new(RichText::new(label).strong().color(Color32::WHITE))
-            .fill(ACCENT)
-            .min_size(Vec2::new(width, 28.0))
-            .corner_radius(4.0);
-        let response = ui.add_enabled(!self.busy(), button).on_hover_text(
-            "Moves memory that apps are not using right now out of RAM. Windows does this by itself when it needs to. You may notice no difference.",
-        );
-        toolboks_addon_sdk::tutorial::mark(ui, "memory-optimize", response.rect);
-        if response.clicked() {
-            self.start_optimize(ctx, false);
-        }
-        toolboks_addon_sdk::tutorial::region(ui, "memory-commit", |ui| self.commit_row(ui, width));
+            let cached = self
+                .lists
+                .map_or_else(|| "-".to_string(), |l| size_plain(l.standby));
+            stat_row(ui, "In use", size_plain(totals.used));
+            stat_row(ui, "Available", size_plain(totals.available));
+            stat_row(ui, "Cached", cached);
+            stat_row(ui, "Total", size_plain(totals.total));
+
+            ui.add_space(GAP);
+            let label = if self.optimizing.is_some() {
+                "Optimizing..."
+            } else {
+                "Optimize memory"
+            };
+            let response = primary_button(ui, !self.busy(), label).on_hover_text(
+                "Moves memory that apps are not using right now out of RAM. Windows does this by itself when it needs to. You may notice no difference.",
+            );
+            toolboks_addon_sdk::tutorial::mark(ui, "memory-optimize", response.rect);
+            if response.clicked() {
+                self.start_optimize(ctx, false);
+            }
+        });
+        toolboks_addon_sdk::tutorial::region(ui, "memory-commit", |ui| self.commit_row(ui));
     }
 
     /// Commit charge: promised memory against the limit, amber/red near the limit.
-    fn commit_row(&self, ui: &mut egui::Ui, width: f32) {
+    fn commit_row(&self, ui: &mut egui::Ui) {
         let Some(c) = self.commit.filter(|c| c.limit > 0) else {
             return;
         };
@@ -504,30 +497,26 @@ impl Memory {
             Level::Hot => RED,
         };
         ui.add_space(GAP);
-        let head = ui.horizontal(|ui| {
-            ui.label(RichText::new("Commit").weak());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(format!("{:.0}%", commit::percent(&c))).color(color));
+        panel(ui, 0.0, |ui| {
+            let head = ui.horizontal(|ui| {
+                section(ui, "Commit");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(format!("{:.0}%", commit::percent(&c))).color(color));
+                });
             });
+            meter(ui, 4.0, commit::percent(&c) / 100.0, color);
+            ui.label(
+                RichText::new(format!(
+                    "{} of {} promised",
+                    size_plain(c.total),
+                    size_plain(c.limit)
+                ))
+                .small(),
+            );
+            ui.label(RichText::new(commit::sentence(&c)).weak().small());
+            head.response
+                .on_hover_text(format!("Peak so far: {}", size_plain(c.peak)));
         });
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 4.0), Sense::hover());
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 2.0, ui.visuals().widgets.inactive.bg_fill);
-        let mut fill = rect;
-        fill.set_width(width * (commit::percent(&c) / 100.0).clamp(0.0, 1.0));
-        painter.rect_filled(fill, 2.0, color);
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new(format!(
-                "{} of {} promised",
-                size_plain(c.total),
-                size_plain(c.limit)
-            ))
-            .small(),
-        );
-        ui.label(RichText::new(commit::sentence(&c)).weak().small());
-        head.response
-            .on_hover_text(format!("Peak so far: {}", size_plain(c.peak)));
     }
 
     /// A one-time hint, hidden for the rest of the session once dismissed.
@@ -535,84 +524,77 @@ impl Memory {
         if self.hint_dismissed {
             return;
         }
-        egui::Frame::NONE
-            .fill(ui.visuals().extreme_bg_color)
-            .corner_radius(4.0)
-            .inner_margin(6.0)
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new(
-                        "Used memory is not a problem. Free memory is wasted memory. Look at Commit and the last run report if your PC feels slow.",
-                    )
-                    .small(),
-                );
-                if ui.small_button("Got it").clicked() {
-                    self.hint_dismissed = true;
-                }
-            });
+        if banner(
+            ui,
+            "Used memory is not a problem. Free memory is wasted memory. Look at Commit and the last run report if your PC feels slow.",
+        ) {
+            self.hint_dismissed = true;
+        }
         ui.add_space(GAP);
     }
 
-    /// The right inspector: the options, then the result of the last run.
+    /// The right column: the options card, then the result of the last run.
     fn inspector(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        ui.label(RichText::new("Options").strong());
+        panel(ui, 0.0, |ui| {
+            section(ui, "Options");
 
-        ui.horizontal(|ui| {
-            let was_on = self.auto_opt_on;
-            toggle_switch(ui, &mut self.auto_opt_on);
-            ui.label("Clean automatically");
-            if self.auto_opt_on && !was_on {
-                // Switched on: allow an immediate run if memory is already high.
-                self.last_auto_opt = None;
-            }
-        });
-        ui.label(
-            RichText::new(
-                "Off by default. Cleaning on a timer is the least proven option and can make apps briefly slower.",
-            )
-            .weak()
-            .small(),
-        );
-        ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(50.0);
-        ui.add_enabled_ui(self.auto_opt_on, |ui| {
-            ui.label(RichText::new("Start when in use reaches").weak().small());
-            ui.add(egui::Slider::new(&mut self.auto_opt_percent, 50..=95).suffix(" %"));
-        })
-        .response
-        .on_hover_text(
-            "Runs the same safe clean as the button, at most once every 5 minutes, \
-             while this window is open or minimized.",
-        );
-        ui.label(RichText::new("Skip apps under N MB").weak().small());
-        ui.add(
-            egui::Slider::new(&mut self.opt_min_mb, 8..=512)
-                .logarithmic(true)
-                .suffix(" MB"),
-        );
-        if self.elevated {
-            ui.checkbox(&mut self.opt_deep, "Also clear cached memory")
-                .on_hover_text("A deeper clean that also clears cached memory.");
-        } else {
+            ui.horizontal(|ui| {
+                let was_on = self.auto_opt_on;
+                toggle_switch(ui, &mut self.auto_opt_on);
+                ui.label("Clean automatically");
+                if self.auto_opt_on && !was_on {
+                    // Switched on: allow an immediate run if memory is already high.
+                    self.last_auto_opt = None;
+                }
+            });
             ui.label(
-                RichText::new("Deeper clean needs permission.")
-                    .weak()
-                    .small(),
+                RichText::new(
+                    "Off by default. Cleaning on a timer is the least proven option and can make apps briefly slower.",
+                )
+                .weak()
+                .small(),
             );
-            if ui.link("Restart with permission").clicked() {
-                if elevation::relaunch_elevated() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                } else {
-                    self.status = Some("The permission request was cancelled.".into());
+            ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(50.0);
+            ui.add_enabled_ui(self.auto_opt_on, |ui| {
+                ui.label(RichText::new("Start when in use reaches").weak().small());
+                ui.add(egui::Slider::new(&mut self.auto_opt_percent, 50..=95).suffix(" %"));
+            })
+            .response
+            .on_hover_text(
+                "Runs the same safe clean as the button, at most once every 5 minutes, \
+                 while this window is open or minimized.",
+            );
+            ui.label(RichText::new("Skip apps under N MB").weak().small());
+            ui.add(
+                egui::Slider::new(&mut self.opt_min_mb, 8..=512)
+                    .logarithmic(true)
+                    .suffix(" MB"),
+            );
+            if self.elevated {
+                ui.checkbox(&mut self.opt_deep, "Also clear cached memory")
+                    .on_hover_text("A deeper clean that also clears cached memory.");
+            } else {
+                ui.label(
+                    RichText::new("Deeper clean needs permission.")
+                        .weak()
+                        .small(),
+                );
+                if ui.link("Restart with permission").clicked() {
+                    if elevation::relaunch_elevated() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    } else {
+                        self.status = Some("The permission request was cancelled.".into());
+                    }
                 }
             }
-        }
+        });
 
         if self.outcome.is_some() || self.status.is_some() {
             ui.add_space(GAP);
-            ui.separator();
-            ui.label(RichText::new("Last run").strong());
-            self.result(ui);
+            panel(ui, 0.0, |ui| {
+                section(ui, "Last run");
+                self.result(ui);
+            });
         }
         self.history(ui);
     }
@@ -648,20 +630,22 @@ impl Memory {
             return;
         }
         ui.add_space(GAP);
-        egui::CollapsingHeader::new(RichText::new("History").strong())
-            .default_open(false)
-            .show(ui, |ui| {
-                for r in self.reports.iter().rev() {
-                    let mins = r.finished.elapsed().as_secs() / 60;
-                    let when = if mins == 0 {
-                        "just now".to_string()
-                    } else {
-                        format!("{mins} min ago")
-                    };
-                    ui.label(RichText::new(when).weak().small());
-                    ui.label(RichText::new(report::one_line(r)).small());
-                }
-            });
+        panel(ui, 0.0, |ui| {
+            egui::CollapsingHeader::new(RichText::new("History").size(TEXT_SECTION).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    for r in self.reports.iter().rev() {
+                        let mins = r.finished.elapsed().as_secs() / 60;
+                        let when = if mins == 0 {
+                            "just now".to_string()
+                        } else {
+                            format!("{mins} min ago")
+                        };
+                        ui.label(RichText::new(when).weak().small());
+                        ui.label(RichText::new(report::one_line(r)).small());
+                    }
+                });
+        });
     }
 
     /// The result of the last optimize run in plain words, or the last status message.
@@ -693,54 +677,62 @@ impl Memory {
     /// details.
     fn memory_goes(&self, ui: &mut egui::Ui) {
         let b = &self.breakdown;
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Where your memory goes").strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(format!("{} in use", size_plain(b.in_use))).weak());
-            });
-        });
-        if b.segments.is_empty() {
-            ui.label(RichText::new("Collecting...").weak());
-            return;
-        }
-        ui.add_space(4.0);
-        let mut hovered = stacked_bar(ui, 22.0, &bar_parts(b));
-        ui.add_space(6.0);
+        let height = ui.available_height();
+        let mut hovered = None;
+        panel(ui, height, |ui| {
+            section_with_note(
+                ui,
+                "Where your memory goes",
+                &format!("{} in use", size_plain(b.in_use)),
+            );
+            if b.segments.is_empty() {
+                ui.label(RichText::new("Collecting...").weak());
+                return;
+            }
+            ui.add_space(SPACE_XS);
+            hovered = stacked_bar(ui, 22.0, &bar_parts(b));
+            ui.add_space(GAP);
 
-        let (swatch, size_w, pct_w, gap) = (10.0, 64.0, 36.0, 8.0);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let row_w = ui.available_width();
-                let name_w = (row_w - swatch - size_w - pct_w - 3.0 * gap).max(40.0);
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for (i, seg) in b.segments.iter().enumerate() {
-                    let row = ui.allocate_ui_with_layout(
-                        Vec2::new(row_w, LEGEND_ROW),
-                        Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.spacing_mut().item_spacing.x = gap;
-                            let (r, _) =
-                                ui.allocate_exact_size(Vec2::splat(swatch), Sense::hover());
-                            let c = seg.color;
-                            ui.painter()
-                                .rect_filled(r, 3.0, Color32::from_rgb(c[0], c[1], c[2]));
-                            cell(ui, name_w, Align::LEFT, |ui| {
-                                ui.add(egui::Label::new(&seg.name).truncate().selectable(false));
-                            });
-                            cell(ui, size_w, Align::RIGHT, |ui| {
-                                ui.label(RichText::new(size_plain(seg.bytes)).weak());
-                            });
-                            cell(ui, pct_w, Align::RIGHT, |ui| {
-                                ui.label(format!("{:.0}%", seg.percent));
-                            });
-                        },
-                    );
-                    if ui.rect_contains_pointer(row.response.rect) {
-                        hovered = Some(i);
+            let (swatch, size_w, pct_w, gap) = (10.0, 64.0, 36.0, 8.0);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let row_w = ui.available_width();
+                    let name_w = (row_w - swatch - size_w - pct_w - 3.0 * gap).max(40.0);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for (i, seg) in b.segments.iter().enumerate() {
+                        let row = ui.allocate_ui_with_layout(
+                            Vec2::new(row_w, LEGEND_ROW),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = gap;
+                                let (r, _) =
+                                    ui.allocate_exact_size(Vec2::splat(swatch), Sense::hover());
+                                let c = seg.color;
+                                ui.painter().rect_filled(
+                                    r,
+                                    3.0,
+                                    Color32::from_rgb(c[0], c[1], c[2]),
+                                );
+                                cell(ui, name_w, Align::LEFT, |ui| {
+                                    ui.add(
+                                        egui::Label::new(&seg.name).truncate().selectable(false),
+                                    );
+                                });
+                                cell(ui, size_w, Align::RIGHT, |ui| {
+                                    ui.label(RichText::new(size_plain(seg.bytes)).weak());
+                                });
+                                cell(ui, pct_w, Align::RIGHT, |ui| {
+                                    ui.label(format!("{:.0}%", seg.percent));
+                                });
+                            },
+                        );
+                        if ui.rect_contains_pointer(row.response.rect) {
+                            hovered = Some(i);
+                        }
                     }
-                }
-            });
+                });
+        });
         if let Some(seg) = hovered.and_then(|i| b.segments.get(i)) {
             egui::Tooltip::always_open(
                 ui.ctx().clone(),

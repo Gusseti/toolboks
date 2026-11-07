@@ -7,6 +7,7 @@ mod home;
 mod memlist;
 mod report;
 mod stats;
+mod style;
 mod trim;
 mod workbench;
 
