@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.0] - 2026-11-07
+
+### Changed
+
+- The preinstalled **System Essentials** add-on is split into four add-ons: **Memory Cleaner**, **Resource Monitor**, **Debloater** and **Event Watch**. Each has its own entry in the sidebar and in the add-on browser.
+- Each of the four can now be turned off and on again. A tool that is turned off stops its background work, for example the Resource Monitor stops sampling, and its status bar items are hidden. Turning it on again starts it clean, so its in-memory graph history starts empty.
+- `--open Tool/Page` for a tool that is turned off opens Home with a short message instead of failing.
+- Guided walkthroughs are now one per tool (12 steps for Memory Cleaner, 22 for Resource Monitor, 10 for Debloater, 6 for Event Watch).
+- The Home cards count the tools that are turned on instead of showing a fixed number.
+- Existing settings keep working: the old System Essentials entry is dropped and all four tools start turned on.
+
 ## [0.9.0] - 2026-11-07
 
 ### Added
