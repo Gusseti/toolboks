@@ -2,7 +2,7 @@
 
 Chosen by the owner on 2026-11-07 from nine directions on the design canvas. Plan only; nothing is built yet. Tracked in the GitHub issues labelled `area: ui` (epic #24).
 
-**Scope: the whole app.** The shell, every built-in tool (Memory Cleaner, Resource Monitor, Debloater, Event Watch), Home, the add-on browser, Settings, the tray and update windows, and the add-ons (Disk Manager and the SDK templates). The visual system is recorded once in [DESIGN.md](../DESIGN.md) at the repo root; that file is the reference every later add-on follows.
+**Scope: the whole app and every plugin.** The shell, Home, the add-on browser, Settings, the tray and update windows, all four built-in tools (they are add-ons: Memory Cleaner, Resource Monitor, Debloater, Event Watch), Disk Manager, every add-on installed from a `.tbaddon` package, and the SDK templates. The visual system is recorded once in [DESIGN.md](../DESIGN.md) at the repo root; that file is the reference every later add-on follows.
 
 ## The design
 
