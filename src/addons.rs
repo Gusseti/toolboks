@@ -35,16 +35,35 @@ pub const SDK_EXAMPLE: &str = include_str!("../sdk/examples/hello-system.tbaddon
 pub fn official_disk_package() -> Package {
     serde_json::from_str(toolboks_disk_manager::PACKAGE).expect("bundled disk package")
 }
+pub const AURAL_ID: &str = "toolboks.aural";
+pub const OFFICIAL_ADDONS: [&str; 2] = [toolboks_disk_manager::ID, AURAL_ID];
+
+pub fn official_package(id: &str) -> Option<Package> {
+    match id {
+        toolboks_disk_manager::ID => Some(official_disk_package()),
+        AURAL_ID => Some(
+            serde_json::from_str(include_str!("../assets/aural.tbaddon"))
+                .expect("bundled Aural package"),
+        ),
+        _ => None,
+    }
+}
+
 pub fn trusted_native(p: &Package) -> bool {
-    let value = serde_json::to_value(p).ok();
-    value == serde_json::to_value(official_disk_package()).ok()
-        || value
-            == serde_json::from_str::<Package>(toolboks_disk_manager::LEGACY_PACKAGE)
+    let Ok(value) = serde_json::to_value(p) else {
+        return false;
+    };
+    let official = official_package(&p.manifest.id).and_then(|p| serde_json::to_value(p).ok());
+    official.as_ref() == Some(&value)
+        || (p.manifest.id == toolboks_disk_manager::ID
+            && serde_json::from_str::<Package>(toolboks_disk_manager::LEGACY_PACKAGE)
                 .ok()
                 .and_then(|p| serde_json::to_value(p).ok())
+                .as_ref()
+                == Some(&value))
 }
 fn validate_provider(p: &Package) -> Result<(), String> {
-    if (p.manifest.native_provider.is_some() || p.manifest.id == toolboks_disk_manager::ID)
+    if (p.manifest.native_provider.is_some() || OFFICIAL_ADDONS.contains(&p.manifest.id.as_str()))
         && !trusted_native(p)
     {
         Err("This native package does not match a trusted provider in this Toolboks build.".into())
@@ -210,7 +229,7 @@ impl Registry {
         self.builtins.iter().position(|m| m.id == id)
     }
     pub fn verified(&self, id: &str) -> bool {
-        self.builtin_index(id).is_some() || id == toolboks_disk_manager::ID
+        self.builtin_index(id).is_some() || OFFICIAL_ADDONS.contains(&id)
     }
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> Result<(), String> {
         let before = self.config.clone();
@@ -276,6 +295,21 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_aural_package_cannot_be_impersonated() {
+        let package = official_package(AURAL_ID).unwrap();
+        package.validate(env!("CARGO_PKG_VERSION")).unwrap();
+        assert!(trusted_native(&package));
+        assert_eq!(
+            package.manifest.capabilities,
+            [toolboks_addon_sdk::Capability::LiveAudio]
+        );
+
+        let mut spoof = package;
+        spoof.manifest.native_provider = None;
+        assert!(validate_provider(&spoof).is_err());
+    }
     #[test]
     fn legacy_disk_package_keeps_read_only_permissions_until_update() {
         let legacy: Package = serde_json::from_str(toolboks_disk_manager::LEGACY_PACKAGE).unwrap();

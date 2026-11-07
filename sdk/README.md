@@ -135,6 +135,9 @@ through `set_capabilities` and must gate actions accordingly. The host trusts on
 its exact first-party providers; adding a capability to a manifest does not grant it.
 Disk Manager 0.1 remains read-only until its approved 0.2 package update is installed.
 
+`live_audio` is a native-only capability for microphone monitoring and routing to
+user-selected outputs. Aural opens audio streams only after an explicit action.
+
 `take_host_request` can return `ReviewUpdate` or `RestartElevated { page }`. The host
 handles the package review or user-requested administrator restart. `navigate(page)`
 restores the requested native page after restart without automatically doing work.

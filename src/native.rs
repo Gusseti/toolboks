@@ -2,6 +2,7 @@
 use crate::addons::Registry;
 use std::collections::BTreeMap;
 use toolboks_addon_sdk::NativeAddon;
+mod aural;
 
 #[derive(Default)]
 pub struct NativeHost {
@@ -32,14 +33,14 @@ impl NativeHost {
         self.provider(provider).and_then(|p| p.take_host_request())
     }
     fn provider(&mut self, provider: &str) -> Option<&mut Box<dyn NativeAddon>> {
-        if provider != toolboks_disk_manager::PROVIDER {
-            return None;
-        }
-        Some(
-            self.active
-                .entry(provider.into())
-                .or_insert_with(|| Box::new(toolboks_disk_manager::DiskManager::default())),
-        )
+        let create: fn() -> Box<dyn NativeAddon> = match provider {
+            toolboks_disk_manager::PROVIDER => {
+                || Box::new(toolboks_disk_manager::DiskManager::default())
+            }
+            crate::addons::AURAL_ID => || Box::new(aural::Aural::default()),
+            _ => return None,
+        };
+        Some(self.active.entry(provider.into()).or_insert_with(create))
     }
     pub fn tutorial_steps(&mut self, provider: &str) -> Vec<toolboks_addon_sdk::TutorialStep> {
         self.provider(provider)
@@ -73,14 +74,10 @@ impl NativeHost {
         capabilities: &[toolboks_addon_sdk::Capability],
         prefs: &mut BTreeMap<String, serde_json::Value>,
     ) -> bool {
-        if provider != toolboks_disk_manager::PROVIDER {
+        let Some(addon) = self.provider(provider) else {
             ui.label("This native provider is not available in this Toolboks build.");
             return false;
-        }
-        let addon = self
-            .active
-            .entry(provider.into())
-            .or_insert_with(|| Box::new(toolboks_disk_manager::DiskManager::default()));
+        };
         addon.set_capabilities(capabilities);
         addon.ui(ui, prefs)
     }

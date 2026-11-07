@@ -785,20 +785,18 @@ impl App {
                 enabled: self.tool_enabled(i),
             });
         }
-        let disk = addons::official_disk_package().manifest;
-        let disk_installed = self
-            .registry
-            .packages
-            .iter()
-            .any(|p| p.manifest.id == disk.id);
-        list.push(Entry {
-            enabled: self.registry.enabled(&disk.id),
-            installed: disk_installed,
-            verified: true,
-            m: disk,
-        });
+        for id in addons::OFFICIAL_ADDONS {
+            if let Some(package) = addons::official_package(id) {
+                list.push(Entry {
+                    enabled: self.registry.enabled(id),
+                    installed: self.registry.packages.iter().any(|p| p.manifest.id == id),
+                    verified: true,
+                    m: package.manifest,
+                });
+            }
+        }
         for p in &self.registry.packages {
-            if p.manifest.id == toolboks_disk_manager::ID {
+            if addons::OFFICIAL_ADDONS.contains(&p.manifest.id.as_str()) {
                 continue;
             }
             list.push(Entry {
@@ -934,7 +932,7 @@ impl App {
     /// The primary action of an add-on: install it, turn it on, or open it.
     fn run_action(&mut self, e: &Entry) {
         if !e.installed {
-            self.pending_package = Some(addons::official_disk_package());
+            self.pending_package = addons::official_package(&e.m.id);
             return;
         }
         if !e.enabled && !self.set_addon_enabled(&e.m.id, true) {
@@ -1425,6 +1423,7 @@ impl App {
                             toolboks_addon_sdk::Capability::FilesystemRead => "Read file and folder metadata for locations you select",
                             toolboks_addon_sdk::Capability::UserExports => "Save reports to a destination you choose",
                             toolboks_addon_sdk::Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
+                            toolboks_addon_sdk::Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
                         });
                     }
                     ui.add_space(look::SPACE_L);
@@ -1459,8 +1458,8 @@ impl App {
         if let Some(id) = self.detail.clone() {
             let manifest = if let Some(tool) = self.registry.builtin_index(&id) {
                 Some(self.registry.builtins[tool].clone())
-            } else if id == toolboks_disk_manager::ID {
-                Some(addons::official_disk_package().manifest)
+            } else if let Some(package) = addons::official_package(&id) {
+                Some(package.manifest)
             } else {
                 self.registry
                     .packages

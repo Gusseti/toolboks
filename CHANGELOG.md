@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Aural, a verified add-on for live microphone levels, input gain, headphone monitoring and routing audio to other apps through a virtual cable.
+
 ### Fixed
 
 - Resource Monitor verifies the selected process before ending it or changing its priority and pauses those actions while a list is frozen.

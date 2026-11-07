@@ -116,7 +116,8 @@
               "local_preferences",
               "filesystem_read",
               "user_exports",
-              "drive_optimize"
+              "drive_optimize",
+              "live_audio"
             ]
           }
         },

@@ -68,6 +68,7 @@ pub enum Capability {
     FilesystemRead,
     UserExports,
     DriveOptimize,
+    LiveAudio,
 }
 
 #[cfg(feature = "native-ui")]
@@ -255,12 +256,11 @@ impl Package {
                     Capability::FilesystemRead
                         | Capability::UserExports
                         | Capability::DriveOptimize
+                        | Capability::LiveAudio
                 )
             })
         {
-            return Err(
-                "Filesystem and export capabilities require an approved native provider.".into(),
-            );
+            return Err("This capability requires an approved native provider.".into());
         }
         if m.byline.as_ref().is_some_and(|s| !text(s, 60)) {
             return Err("Invalid add-on byline.".into());
@@ -399,10 +399,12 @@ mod tests {
         let mut v = example();
         v["manifest"]["capabilities"] = serde_json::json!([]);
         assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
-        let mut v = example();
-        v["manifest"]["capabilities"] =
-            serde_json::json!(["host_metrics", "local_preferences", "drive_optimize"]);
-        assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
+        for capability in ["drive_optimize", "live_audio"] {
+            let mut v = example();
+            v["manifest"]["capabilities"] =
+                serde_json::json!(["host_metrics", "local_preferences", capability]);
+            assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
+        }
     }
     #[test]
     fn repeated_page_ids_and_preference_keys_are_rejected() {
