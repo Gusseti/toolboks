@@ -59,6 +59,8 @@ pub struct Sampler {
     sys: System,
     pub totals: Totals,
     pub processes: Vec<ProcInfo>,
+    /// Parent pid of each process, where known.
+    pub parents: std::collections::HashMap<u32, u32>,
 }
 
 impl Sampler {
@@ -68,6 +70,7 @@ impl Sampler {
             sys: System::new().ok()?,
             totals: Totals::default(),
             processes: Vec::new(),
+            parents: std::collections::HashMap::new(),
         };
         sampler.refresh();
         Some(sampler)
@@ -102,6 +105,12 @@ impl Sampler {
                 private: p.virtual_memory(),
                 count: 1,
             })
+            .collect();
+        self.parents = self
+            .sys
+            .processes()
+            .values()
+            .filter_map(|p| Some((p.pid().as_u32(), p.parent()?.as_u32())))
             .collect();
     }
 }

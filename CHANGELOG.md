@@ -6,6 +6,10 @@
 
 - Audio Gainer by aural, a verified add-on for live microphone levels, input gain, headphone monitoring and routing audio to other apps through a virtual cable.
 
+### Changed
+
+- Memory Cleaner reports honestly: it measures what moved to cache and what came back after 30 seconds and two minutes, and never says memory was freed. Optimize memory now lowers the memory priority of idle background apps and trims only the biggest idle ones, one by one, never the app in front. Clean automatically is off by default, waits for real memory pressure and runs at most once an hour. Trim-all, the full cache purge and the modified-list flush are gone; the low-priority cache purge is under Advanced (admin only, with a warning). The apps list shows growth per hour.
+
 ### Fixed
 
 - Resource Monitor verifies the selected process before ending it or changing its priority and pauses those actions while a list is frozen.

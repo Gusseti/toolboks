@@ -6,8 +6,6 @@
 //! that have each held continuously for `HOLD_MS`. Thresholds are a synthesis, not measured
 //! facts, so they all live in `limits` and are easy to change.
 
-#![allow(dead_code)] // wired in by the integration slice
-
 use std::time::Instant;
 
 use windows::core::{BOOL, PCWSTR};
@@ -22,6 +20,11 @@ use windows::Win32::System::Performance::{
 };
 use windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+
+/// PDH path of the Pages Input/sec counter.
+pub(super) const PAGES_INPUT_PATH: &str = "\\Memory\\Pages Input/sec";
+/// PDH path of the Page Faults/sec counter (all page faults, soft and hard).
+pub(super) const PAGE_FAULTS_PATH: &str = "\\Memory\\Page Faults/sec";
 
 /// Every tunable number in one place.
 pub mod limits {
@@ -274,21 +277,21 @@ impl Drop for LowMemoryWatcher {
     }
 }
 
-/// Pages Input/sec: pages read from disk to resolve hard faults. Counter path from the
-/// English PDH namespace; if it cannot be added the value is simply `None`.
-struct HardFaultCounter {
+/// A per-second rate counter from the English PDH namespace; if it cannot be added the value
+/// is simply `None`. Used for Pages Input/sec (hard faults) here and in the run sampler.
+pub(super) struct RateCounter {
     query: PDH_HQUERY,
     counter: PDH_HCOUNTER,
 }
 
-impl HardFaultCounter {
-    fn new() -> Option<Self> {
+impl RateCounter {
+    pub(super) fn new(counter_path: &str) -> Option<Self> {
         let mut query = PDH_HQUERY::default();
         // SAFETY: valid out pointer; a null data source means live data.
         if unsafe { PdhOpenQueryW(None, 0, &mut query) } != 0 {
             return None;
         }
-        let path: Vec<u16> = "\\Memory\\Pages Input/sec\0".encode_utf16().collect();
+        let path: Vec<u16> = counter_path.encode_utf16().chain(Some(0)).collect();
         let mut counter = PDH_HCOUNTER::default();
         // SAFETY: `query` is open, `path` is NUL-terminated and outlives the call.
         let status =
@@ -304,7 +307,7 @@ impl HardFaultCounter {
         Some(Self { query, counter })
     }
 
-    fn read(&mut self) -> Option<f64> {
+    pub(super) fn read(&mut self) -> Option<f64> {
         // SAFETY: `self.query` is open for the life of `self`.
         if unsafe { PdhCollectQueryData(self.query) } != 0 {
             return None;
@@ -321,7 +324,7 @@ impl HardFaultCounter {
     }
 }
 
-impl Drop for HardFaultCounter {
+impl Drop for RateCounter {
     fn drop(&mut self) {
         // SAFETY: the query is owned by `self` and closed exactly once.
         unsafe { PdhCloseQuery(self.query) };
@@ -333,14 +336,14 @@ impl Drop for HardFaultCounter {
 /// Hard faults come from PDH and are `None` on the first read or if PDH is unavailable.
 pub struct WindowsSignals {
     watcher: Option<LowMemoryWatcher>,
-    hard_faults: Option<HardFaultCounter>,
+    hard_faults: Option<RateCounter>,
 }
 
 impl WindowsSignals {
     pub fn new() -> Self {
         Self {
             watcher: LowMemoryWatcher::new(),
-            hard_faults: HardFaultCounter::new(),
+            hard_faults: RateCounter::new(PAGES_INPUT_PATH),
         }
     }
 }

@@ -24,56 +24,13 @@ use crate::win::Handle;
 const SYSTEM_MEMORY_LIST_INFORMATION_CLASS: u32 = 80;
 const STATUS_PRIVILEGE_NOT_HELD: i32 = 0xC000_0061_u32 as i32;
 
-/// `SYSTEM_MEMORY_LIST_COMMAND` values.
+/// `SYSTEM_MEMORY_LIST_COMMAND` values. Only the gentlest one is offered: emptying every
+/// working set, a full standby purge and a modified-list flush are deliberately not available.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum Command {
-    /// Trim the working set of every process.
-    EmptyWorkingSets = 2,
-    /// Write the modified (dirty) pages to disk so they become cached pages. Used by the Home
-    /// page's deeper clean only; not part of `ALL`.
-    FlushModifiedList = 3,
-    /// Drop all cached (standby) pages.
-    PurgeStandbyList = 4,
     /// Drop only the lowest-priority cached pages.
     PurgeLowPriorityStandbyList = 5,
-}
-
-impl Command {
-    pub const ALL: [Command; 3] = [
-        Command::PurgeLowPriorityStandbyList,
-        Command::PurgeStandbyList,
-        Command::EmptyWorkingSets,
-    ];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Command::EmptyWorkingSets => "Trim all working sets",
-            Command::FlushModifiedList => "Flush modified pages",
-            Command::PurgeStandbyList => "Purge standby list",
-            Command::PurgeLowPriorityStandbyList => "Purge low-priority standby",
-        }
-    }
-
-    pub fn warning(self) -> &'static str {
-        match self {
-            Command::EmptyWorkingSets => {
-                "Trims every process. Their memory moves to the standby list and is read back \
-                 when used. This rarely helps in practice."
-            }
-            Command::FlushModifiedList => {
-                "Writes changed memory pages to disk so they can be reused right away. \
-                 Safe, but it can cause a short burst of disk activity."
-            }
-            Command::PurgeStandbyList => {
-                "Drops all cached file data from RAM. Programs and games read from disk again, \
-                 so things can feel slower for a while."
-            }
-            Command::PurgeLowPriorityStandbyList => {
-                "Drops only the least valuable cached pages. Gentler than a full purge."
-            }
-        }
-    }
 }
 
 /// `SYSTEM_MEMORY_LIST_INFORMATION`; every field is pointer-sized, counted in pages.
@@ -165,7 +122,6 @@ pub struct StandbyBreakdown {
     pub by_priority: [u64; 8],
 }
 
-#[allow(dead_code)] // wired in by the integration slice
 impl StandbyBreakdown {
     /// All standby memory.
     pub fn total(&self) -> u64 {
@@ -173,6 +129,7 @@ impl StandbyBreakdown {
     }
 
     /// Standby memory with a priority below `priority` (0 to 8).
+    #[cfg(test)]
     pub fn below(&self, priority: usize) -> u64 {
         self.by_priority.iter().take(priority.min(8)).sum()
     }
@@ -187,8 +144,6 @@ impl StandbyBreakdown {
 }
 
 /// Standby memory by priority for the before/after of a purge, or `None` if unavailable.
-// wired in by the integration slice
-#[allow(dead_code)]
 pub fn standby_breakdown() -> Option<StandbyBreakdown> {
     let raw = read_raw()?;
     Some(StandbyBreakdown::from_raw(&raw, page_size()))
@@ -282,16 +237,9 @@ fn run_with(backend: &mut dyn CommandBackend, command: Command) -> Result<(), Me
     classify(status)
 }
 
-/// Runs one memory-list command. Needs admin; see the module docs.
-pub fn run(command: Command) -> Result<(), MemListError> {
-    run_with(&mut RealBackend, command)
-}
-
 /// Drops only the lowest-priority cached (standby) pages (command value 5). Needs an elevated
 /// process: returns `Err(MemListError::NotElevated)` otherwise, so the UI can hide or disable
 /// the action and explain why. Never changes commit. Never call this automatically.
-// wired in by the integration slice
-#[allow(dead_code)]
 pub fn purge_low_priority_standby() -> Result<(), MemListError> {
     run_with(&mut RealBackend, Command::PurgeLowPriorityStandbyList)
 }
@@ -304,9 +252,6 @@ mod tests {
     fn command_values_match_the_nt_enum() {
         // SYSTEM_MEMORY_LIST_COMMAND: ... MemoryEmptyWorkingSets = 2, MemoryFlushModifiedList = 3,
         // MemoryPurgeStandbyList = 4, MemoryPurgeLowPriorityStandbyList = 5.
-        assert_eq!(Command::EmptyWorkingSets as u32, 2);
-        assert_eq!(Command::FlushModifiedList as u32, 3);
-        assert_eq!(Command::PurgeStandbyList as u32, 4);
         assert_eq!(Command::PurgeLowPriorityStandbyList as u32, 5);
     }
 

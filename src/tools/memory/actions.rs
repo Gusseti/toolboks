@@ -9,8 +9,6 @@
 //!
 //! Integration entry points: [`plan`], [`run`], [`UndoLog::restore_all`], [`Cooldowns`],
 //! [`foreground_pid`], [`WindowsOps`].
-// wired in by the integration slice
-#![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
@@ -24,7 +22,7 @@ use windows::Win32::System::ProcessStatus::{
 use windows::Win32::System::Threading::{
     GetProcessInformation, GetProcessTimes, OpenProcess, ProcessMemoryPriority,
     QueryFullProcessImageNameW, SetProcessInformation, MEMORY_PRIORITY,
-    MEMORY_PRIORITY_INFORMATION, MEMORY_PRIORITY_NORMAL, PROCESS_ACCESS_RIGHTS, PROCESS_NAME_WIN32,
+    MEMORY_PRIORITY_INFORMATION, PROCESS_ACCESS_RIGHTS, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
@@ -35,7 +33,8 @@ use crate::win::Handle;
 /// Memory priority applied to idle background apps (MEMORY_PRIORITY_LOW).
 pub const LOW_PRIORITY: u32 = 2;
 /// Windows default memory priority.
-pub const NORMAL_PRIORITY: u32 = MEMORY_PRIORITY_NORMAL.0;
+#[cfg(test)]
+pub const NORMAL_PRIORITY: u32 = windows::Win32::System::Threading::MEMORY_PRIORITY_NORMAL.0;
 
 const MB: u64 = 1024 * 1024;
 
@@ -379,6 +378,7 @@ impl ActionResult {
         self.error.is_none()
     }
 
+    #[cfg(test)]
     pub fn freed(&self) -> u64 {
         match (self.before, self.after) {
             (Some(b), Some(a)) => b.saturating_sub(a),
@@ -476,6 +476,21 @@ fn creation_time(handle: HANDLE) -> windows::core::Result<u64> {
     // SAFETY: the handle has query access and all four outputs are valid FILETIME buffers.
     unsafe { GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) }?;
     Ok(filetime(created))
+}
+
+/// Identity of a running process (pid, creation time, given image name), or `None` if it cannot
+/// be opened (protected, other user) or has no creation time.
+pub fn identity_of(pid: u32, name: &str) -> Option<Identity> {
+    // SAFETY: plain FFI call; the returned handle is wrapped for closing right away.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .map(Handle)
+        .ok()?;
+    let created = creation_time(handle.0).ok()?;
+    Some(Identity {
+        pid,
+        created,
+        name: name.to_string(),
+    })
 }
 
 /// Opens the process and verifies start time and image name before returning the handle.

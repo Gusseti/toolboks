@@ -15,6 +15,9 @@ pub struct Segment {
     pub percent: f32,
     /// RGB color.
     pub color: [u8; 3],
+    /// Lowercase process name of the biggest process in the group, the key for growth hints.
+    /// `None` for "Other apps" and "Windows and other".
+    pub key: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -185,6 +188,9 @@ pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
     let mut win_count = 0usize;
     // Groups with a fixed brand color; everything else gets a palette color (see below).
     let mut brand: Vec<String> = Vec::new();
+    // Group name -> (working set, lowercase process name) of its biggest process.
+    let mut biggest: std::collections::HashMap<String, (u64, String)> =
+        std::collections::HashMap::new();
     for p in procs {
         let n = normalize(&p.name);
         if WINDOWS_NAMES.contains(&n.as_str()) {
@@ -202,6 +208,10 @@ pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
         };
         if is_brand && !brand.contains(&name) {
             brand.push(name.clone());
+        }
+        let top = biggest.entry(name.clone()).or_insert((0, String::new()));
+        if top.1.is_empty() || p.working_set > top.0 {
+            *top = (p.working_set, p.name.to_lowercase());
         }
         match groups.iter_mut().find(|g| g.0 == name) {
             Some(g) => {
@@ -245,12 +255,14 @@ pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
             other_bytes += bytes;
             other_count += count;
         } else {
+            let key = biggest.get(&name).map(|b| b.1.clone());
             segments.push(Segment {
                 name,
                 bytes,
                 count,
                 percent: pct(bytes),
                 color,
+                key,
             });
         }
     }
@@ -261,6 +273,7 @@ pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
             count: other_count,
             percent: pct(other_bytes),
             color: OTHER_COLOR,
+            key: None,
         });
     }
     if windows > 0 {
@@ -270,6 +283,7 @@ pub fn breakdown(procs: &[ProcInfo], in_use: u64) -> Breakdown {
             count: win_count,
             percent: pct(windows),
             color: WINDOWS_COLOR,
+            key: None,
         });
     }
     Breakdown { in_use, segments }
@@ -389,6 +403,20 @@ mod tests {
         let b = breakdown(&[p("claude.exe", 100), p("Claude Helper.exe", 50)], 1000);
         let s = seg(&b, "Claude");
         assert_eq!((s.bytes, s.count, s.color), (150, 2, [217, 119, 87]));
+    }
+
+    #[test]
+    fn segments_carry_the_biggest_process_name_as_growth_key() {
+        let b = breakdown(
+            &[
+                p("Claude Helper.exe", 50),
+                p("claude.exe", 100),
+                p("svchost.exe", 30),
+            ],
+            1000,
+        );
+        assert_eq!(seg(&b, "Claude").key.as_deref(), Some("claude.exe"));
+        assert_eq!(seg(&b, "Windows and other").key, None);
     }
 
     #[test]

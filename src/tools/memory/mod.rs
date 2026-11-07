@@ -1,14 +1,16 @@
 mod actions;
+mod activity;
 mod admin;
 mod advanced;
-mod auto;
 mod commit;
+mod engine;
 mod groups;
 mod growth;
 mod home;
 mod memlist;
 mod pressure;
 mod report;
+mod sampler;
 mod scheduler;
 mod stats;
 mod style;
@@ -20,21 +22,24 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use self::admin::Job;
-use self::auto::AutoClean;
-use self::home::{Optimizing, Outcome, DEFAULT_AUTO_PERCENT, DEFAULT_MIN_APP_MB};
+use self::actions::{Cooldowns, UndoLog};
+use self::activity::Activity;
+use self::admin::PurgeJob;
+use self::engine::{RunJob, RunSummary, Settling};
+use self::growth::GrowthTracker;
 use self::memlist::Lists;
+use self::pressure::{Assessment, PressureModel, Verdict, WindowsSignals};
+use self::sampler::WindowsSampler;
+use self::scheduler::Scheduler;
 use self::stats::{Sampler, SortKey};
 use self::workbench::Selection;
 use super::Tool;
 use crate::elevation;
 
 const REFRESH: Duration = Duration::from_secs(2);
-/// How often the auto-clean rules are checked, in the background too.
-const AUTO_CHECK: Duration = Duration::from_secs(5);
 
-/// Live RAM usage, a per-process table, manual per-process trimming and, with admin rights,
-/// system-wide memory list commands and auto-clean (see `admin`).
+/// Live RAM usage, a per-process table, manual per-process trimming, a pressure verdict, the
+/// safe optimize run and an automatic mode that only acts under real memory pressure.
 /// Nothing is stored anywhere: exclusions and filters reset when the app closes.
 pub struct Memory {
     /// `None` if the platform refused to provide system info.
@@ -58,32 +63,47 @@ pub struct Memory {
     /// "Trim selected" running on a worker thread, and the result of the last one.
     trim_job: Option<advanced::TrimJob>,
     last_trim: Option<String>,
-    /// A system-wide command waiting for the user's confirmation.
-    pending_system: Option<memlist::Command>,
-    /// The system-wide command running on a worker thread, if any.
-    job: Option<Job>,
+    /// The low-priority cache purge running on a worker thread, and its last result.
+    purge: Option<PurgeJob>,
+    last_purge: Option<String>,
     /// Result of the last action, shown above the table.
     status: Option<String>,
-    auto: AutoClean,
-    last_auto_check: Instant,
-    /// The one-click optimize run in progress, and the result of the last one (Home page).
-    optimizing: Option<Optimizing>,
-    outcome: Option<Outcome>,
-    /// Home options: skip apps below this size, and also clear cached memory when elevated.
-    opt_min_mb: u32,
-    opt_deep: bool,
-    /// Home "Clean automatically": on/off, the percentage in use that starts it, when it last
-    /// started (for the pause between runs) and when the rule was last evaluated.
-    auto_opt_on: bool,
-    auto_opt_percent: u32,
-    last_auto_opt: Option<Instant>,
-    last_opt_check: Instant,
+    /// The safe optimize run on a worker thread, what the last one did, and the settle
+    /// readings still to come.
+    run: Option<RunJob>,
+    last_run: Option<RunSummary>,
+    settling: Option<Settling>,
+    /// Why the last automatic run started (the scheduler's text).
+    run_note: Option<String>,
+    /// Memory priorities the tool lowered, and when each app was last trimmed.
+    undo: UndoLog,
+    cooldowns: Cooldowns,
+    /// When each app was last in front, for the idle checks of the safe actions.
+    activity: Activity,
+    /// Pressure verdict: the model, the Windows readings and the latest assessment.
+    pressure: PressureModel,
+    signals: WindowsSignals,
+    assessment: Assessment,
+    /// Automatic mode (off by default) and the advice shown instead of a run.
+    scheduler: Scheduler,
+    advice: Option<String>,
+    advice_hidden: bool,
+    /// Zero for the models' millisecond clock, when the pressure check last ran and when the
+    /// page last drew a frame.
+    epoch: Instant,
+    last_eval: Instant,
+    last_ui: Option<Instant>,
+    /// Per-app growth, fed from the process refresh.
+    growth: GrowthTracker,
+    last_growth: Option<Instant>,
+    /// Reads the numbers a run report compares.
+    win_sampler: WindowsSampler,
     /// "Where your memory goes" on Home; rebuilt with every refresh. Not stored anywhere.
     breakdown: groups::Breakdown,
     /// Commit charge on Home; refreshed with the sampler. `None` if the query fails.
     commit: Option<commit::Commit>,
-    /// The last 20 before/after reports, newest last. In memory only.
-    reports: VecDeque<report::RunReport>,
+    /// The last 20 honest run reports, newest last. In memory only.
+    reports: VecDeque<report::HonestReport>,
     /// The "used memory is not a problem" hint was dismissed (this session only).
     hint_dismissed: bool,
 }
@@ -95,7 +115,8 @@ impl Memory {
             .as_ref()
             .map(|s| groups::breakdown(&s.processes, s.totals.used))
             .unwrap_or_default();
-        Self {
+        let epoch = Instant::now();
+        let mut memory = Self {
             sampler,
             lists: memlist::query(),
             elevated: elevation::is_elevated(),
@@ -110,24 +131,38 @@ impl Memory {
             was_grouped: false,
             trim_job: None,
             last_trim: None,
-            pending_system: None,
-            job: None,
+            purge: None,
+            last_purge: None,
             status: None,
-            auto: AutoClean::new(),
-            last_auto_check: Instant::now(),
-            optimizing: None,
-            outcome: None,
-            opt_min_mb: DEFAULT_MIN_APP_MB,
-            opt_deep: true,
-            auto_opt_on: false,
-            auto_opt_percent: DEFAULT_AUTO_PERCENT,
-            last_auto_opt: None,
-            last_opt_check: Instant::now(),
+            run: None,
+            last_run: None,
+            settling: None,
+            run_note: None,
+            undo: UndoLog::new(),
+            cooldowns: Cooldowns::new(),
+            activity: Activity::new(0),
+            pressure: PressureModel::new(),
+            signals: WindowsSignals::new(),
+            assessment: Assessment {
+                verdict: Verdict::Healthy,
+                reasons: Vec::new(),
+            },
+            scheduler: Scheduler::default(),
+            advice: None,
+            advice_hidden: false,
+            epoch,
+            last_eval: Instant::now(),
+            last_ui: None,
+            growth: GrowthTracker::new(),
+            last_growth: None,
+            win_sampler: WindowsSampler::new(),
             breakdown,
             commit: commit::query(),
             reports: VecDeque::new(),
             hint_dismissed: false,
-        }
+        };
+        memory.feed_growth();
+        memory
     }
 
     fn refresh_now(&mut self) {
@@ -138,6 +173,7 @@ impl Memory {
         self.lists = memlist::query();
         self.commit = commit::query();
         self.last_refresh = Instant::now();
+        self.feed_growth();
     }
 
     /// Clicking the active column flips the order; a new column starts in its natural order.
@@ -192,6 +228,7 @@ impl Tool for Memory {
             return;
         }
 
+        self.last_ui = Some(Instant::now());
         if self.last_refresh.elapsed() >= REFRESH {
             self.refresh_now();
         }

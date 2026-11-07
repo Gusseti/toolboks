@@ -9,7 +9,9 @@ use std::time::Duration;
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Vec2};
 use egui_extras::{Column, TableBuilder};
 
+use super::engine::per_hour_text;
 use super::groups::color_for;
+use super::growth::Hint;
 use super::stats::{format_bytes, group_by_name, sort_and_filter, ProcInfo, SortKey};
 use super::style::{panel, section, section_with_note, stat_row};
 use super::trim::{skip_reason, trim_process, SkipReason};
@@ -19,7 +21,8 @@ use super::workbench::{
 use super::Memory;
 use crate::format::size_plain;
 use crate::ui::{
-    header_cell, pill, row_rule, stacked_bar, table_style, ACCENT, GAP, MUTED, SPACE_L, SPACE_XS,
+    header_cell, pill, row_rule, stacked_bar, table_style, ACCENT, AMBER, GAP, MUTED, SPACE_L,
+    SPACE_XS,
 };
 
 const ROW_HEIGHT: f32 = 22.0;
@@ -213,6 +216,7 @@ impl Memory {
         let (selection, exclusions) = (&self.selection, &self.exclusions);
         let own_pid = std::process::id();
         let modifiers = ui.input(|i| i.modifiers);
+        let (growth, now_ms) = (&self.growth, self.now_ms());
 
         table_style(ui);
         TableBuilder::new(ui)
@@ -225,6 +229,7 @@ impl Memory {
             .column(Column::exact(78.0))
             .column(Column::exact(78.0))
             .column(Column::exact(116.0))
+            .column(Column::exact(84.0))
             .column(Column::exact(36.0))
             .header(ROW_HEIGHT, |mut header| {
                 header.col(|_| {});
@@ -246,6 +251,12 @@ impl Memory {
                     ui.label(RichText::new("Share of used").small().color(MUTED))
                         .on_hover_text(
                             "Working set as a share of the memory in use (sort by Working)",
+                        );
+                });
+                header.col(|ui| {
+                    ui.label(RichText::new("Growth").small().color(MUTED))
+                        .on_hover_text(
+                            "Change in the app's memory per hour, over all processes with this                              name. Shown once about ten minutes of data exist.",
                         );
                 });
                 header.col(|ui| {
@@ -294,6 +305,19 @@ impl Memory {
                             painter.rect_filled(fill, 3.0, ACCENT);
                             cell(ui, format!("{:.1}%", share * 100.0));
                         });
+                    });
+                    row.col(|ui| {
+                        let info = growth.info(&p.name.to_lowercase(), now_ms);
+                        let hint = info.as_ref().map_or(Hint::Fine, |i| i.hint);
+                        let text = per_hour_text(info.as_ref().and_then(|i| i.per_hour));
+                        let text = RichText::new(text);
+                        let text = if hint == Hint::Fine {
+                            text.weak()
+                        } else {
+                            text.color(AMBER)
+                        };
+                        ui.add(egui::Label::new(text).selectable(false))
+                            .on_hover_text(hint.text());
                     });
                     row.col(|ui| {
                         // System and shell processes are always protected, so they show as
@@ -354,17 +378,33 @@ impl Memory {
         match self.tab {
             Tab::Selected => self.selected_tab(ui),
             Tab::System => {
-                self.system_panel(ui);
+                self.advanced_block(ui);
                 if let Some(status) = &self.status {
                     ui.separator();
                     ui.label(RichText::new(status).small());
                 }
             }
             Tab::Rules => {
-                self.auto_panel(ui);
+                self.automatic_status(ui);
                 ui.separator();
                 self.exclusions_list(ui);
             }
+        }
+    }
+
+    /// The state of automatic cleaning; the switch itself is on the Home page.
+    fn automatic_status(&self, ui: &mut egui::Ui) {
+        section(ui, "Automatic cleaning");
+        stat_row(ui, "Status", self.scheduler.status(self.now_ms()));
+        ui.label(
+            RichText::new(
+                "Switch it on from the Home page. It is off by default and only acts when                  memory is really short, at most once an hour.",
+            )
+            .weak()
+            .small(),
+        );
+        if let Some(line) = super::engine::verdict_line(&self.assessment) {
+            ui.label(RichText::new(line).small());
         }
     }
 
