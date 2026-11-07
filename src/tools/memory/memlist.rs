@@ -126,8 +126,8 @@ fn page_size() -> u64 {
     u64::from(info.dwPageSize)
 }
 
-/// Current free, modified and standby memory, or `None` if the query is unavailable.
-pub fn query() -> Option<Lists> {
+/// Reads the raw memory list counters, or `None` if the query is unavailable.
+fn read_raw() -> Option<RawLists> {
     let export = ntdll_export(s!("NtQuerySystemInformation"))?;
     // SAFETY: `NtQuerySystemInformation` has exactly this signature.
     let nt_query =
@@ -144,10 +144,12 @@ pub fn query() -> Option<Lists> {
             &mut returned,
         )
     };
-    if status < 0 {
-        return None;
-    }
+    (status >= 0).then_some(raw)
+}
 
+/// Current free, modified and standby memory, or `None` if the query is unavailable.
+pub fn query() -> Option<Lists> {
+    let raw = read_raw()?;
     let page = page_size();
     let standby_pages: usize = raw.page_count_by_priority.iter().sum();
     Some(Lists {
@@ -155,6 +157,41 @@ pub fn query() -> Option<Lists> {
         modified: (raw.modified_page_count + raw.modified_no_write_page_count) as u64 * page,
         standby: standby_pages as u64 * page,
     })
+}
+
+/// Standby (cache) memory per priority, in bytes. Index 0 is the lowest priority, 7 the highest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StandbyBreakdown {
+    pub by_priority: [u64; 8],
+}
+
+#[allow(dead_code)] // wired in by the integration slice
+impl StandbyBreakdown {
+    /// All standby memory.
+    pub fn total(&self) -> u64 {
+        self.by_priority.iter().sum()
+    }
+
+    /// Standby memory with a priority below `priority` (0 to 8).
+    pub fn below(&self, priority: usize) -> u64 {
+        self.by_priority.iter().take(priority.min(8)).sum()
+    }
+
+    fn from_raw(raw: &RawLists, page: u64) -> Self {
+        let mut by_priority = [0u64; 8];
+        for (out, pages) in by_priority.iter_mut().zip(raw.page_count_by_priority) {
+            *out = pages as u64 * page;
+        }
+        Self { by_priority }
+    }
+}
+
+/// Standby memory by priority for the before/after of a purge, or `None` if unavailable.
+// wired in by the integration slice
+#[allow(dead_code)]
+pub fn standby_breakdown() -> Option<StandbyBreakdown> {
+    let raw = read_raw()?;
+    Some(StandbyBreakdown::from_raw(&raw, page_size()))
 }
 
 fn enable_privilege(name: PCWSTR) -> bool {
@@ -202,26 +239,61 @@ fn classify(status: i32) -> Result<(), MemListError> {
     }
 }
 
-/// Runs one memory-list command. Needs admin; see the module docs.
-pub fn run(command: Command) -> Result<(), MemListError> {
-    if !enable_privilege(w!("SeProfileSingleProcessPrivilege")) {
+/// The two system steps a command needs, so the order and error mapping are testable.
+trait CommandBackend {
+    /// Enables `SeProfileSingleProcessPrivilege`; false if it is not held.
+    fn enable_privilege(&mut self) -> bool;
+    /// Sends a `SYSTEM_MEMORY_LIST_COMMAND` value; returns the NTSTATUS, or `None` if the
+    /// export is missing.
+    fn set_command(&mut self, value: u32) -> Option<i32>;
+}
+
+struct RealBackend;
+
+impl CommandBackend for RealBackend {
+    fn enable_privilege(&mut self) -> bool {
+        enable_privilege(w!("SeProfileSingleProcessPrivilege"))
+    }
+
+    fn set_command(&mut self, value: u32) -> Option<i32> {
+        let export = ntdll_export(s!("NtSetSystemInformation"))?;
+        // SAFETY: `NtSetSystemInformation` has exactly this signature.
+        let nt_set =
+            unsafe { std::mem::transmute::<unsafe extern "system" fn() -> isize, NtSet>(export) };
+        let mut value = value;
+        // SAFETY: the buffer is the 4-byte command value the information class expects.
+        Some(unsafe {
+            nt_set(
+                SYSTEM_MEMORY_LIST_INFORMATION_CLASS,
+                &mut value as *mut u32 as *mut c_void,
+                size_of::<u32>() as u32,
+            )
+        })
+    }
+}
+
+fn run_with(backend: &mut dyn CommandBackend, command: Command) -> Result<(), MemListError> {
+    if !backend.enable_privilege() {
         return Err(MemListError::NotElevated);
     }
-    let export = ntdll_export(s!("NtSetSystemInformation")).ok_or(MemListError::Unavailable)?;
-    // SAFETY: `NtSetSystemInformation` has exactly this signature.
-    let nt_set =
-        unsafe { std::mem::transmute::<unsafe extern "system" fn() -> isize, NtSet>(export) };
-
-    let mut value = command as u32;
-    // SAFETY: the buffer is the 4-byte command value the information class expects.
-    let status = unsafe {
-        nt_set(
-            SYSTEM_MEMORY_LIST_INFORMATION_CLASS,
-            &mut value as *mut u32 as *mut c_void,
-            size_of::<u32>() as u32,
-        )
-    };
+    let status = backend
+        .set_command(command as u32)
+        .ok_or(MemListError::Unavailable)?;
     classify(status)
+}
+
+/// Runs one memory-list command. Needs admin; see the module docs.
+pub fn run(command: Command) -> Result<(), MemListError> {
+    run_with(&mut RealBackend, command)
+}
+
+/// Drops only the lowest-priority cached (standby) pages (command value 5). Needs an elevated
+/// process: returns `Err(MemListError::NotElevated)` otherwise, so the UI can hide or disable
+/// the action and explain why. Never changes commit. Never call this automatically.
+// wired in by the integration slice
+#[allow(dead_code)]
+pub fn purge_low_priority_standby() -> Result<(), MemListError> {
+    run_with(&mut RealBackend, Command::PurgeLowPriorityStandbyList)
 }
 
 #[cfg(test)]
@@ -255,6 +327,78 @@ mod tests {
             classify(0xC000_0022_u32 as i32),
             Err(MemListError::Status(0xC000_0022_u32 as i32))
         );
+    }
+
+    struct Fake {
+        privilege: bool,
+        status: Option<i32>,
+        sent: Vec<u32>,
+    }
+
+    impl CommandBackend for Fake {
+        fn enable_privilege(&mut self) -> bool {
+            self.privilege
+        }
+        fn set_command(&mut self, value: u32) -> Option<i32> {
+            self.sent.push(value);
+            self.status
+        }
+    }
+
+    fn fake(privilege: bool, status: Option<i32>) -> Fake {
+        Fake {
+            privilege,
+            status,
+            sent: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn low_priority_purge_sends_only_command_five() {
+        let mut f = fake(true, Some(0));
+        assert_eq!(
+            run_with(&mut f, Command::PurgeLowPriorityStandbyList),
+            Ok(())
+        );
+        assert_eq!(f.sent, vec![5]);
+    }
+
+    #[test]
+    fn not_elevated_sends_nothing() {
+        let mut f = fake(false, Some(0));
+        assert_eq!(
+            run_with(&mut f, Command::PurgeLowPriorityStandbyList),
+            Err(MemListError::NotElevated)
+        );
+        assert!(f.sent.is_empty());
+    }
+
+    #[test]
+    fn privilege_status_and_missing_export_are_typed() {
+        let mut f = fake(true, Some(STATUS_PRIVILEGE_NOT_HELD));
+        assert_eq!(
+            run_with(&mut f, Command::PurgeLowPriorityStandbyList),
+            Err(MemListError::NotElevated)
+        );
+        let mut f = fake(true, None);
+        assert_eq!(
+            run_with(&mut f, Command::PurgeLowPriorityStandbyList),
+            Err(MemListError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn breakdown_converts_pages_and_sums() {
+        let raw = RawLists {
+            page_count_by_priority: [1, 2, 3, 4, 5, 6, 7, 8],
+            ..RawLists::default()
+        };
+        let b = StandbyBreakdown::from_raw(&raw, 4096);
+        assert_eq!(b.by_priority[0], 4096);
+        assert_eq!(b.by_priority[7], 8 * 4096);
+        assert_eq!(b.total(), 36 * 4096);
+        assert_eq!(b.below(2), 3 * 4096);
+        assert_eq!(b.below(99), b.total());
     }
 
     #[test]
