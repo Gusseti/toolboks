@@ -13,8 +13,13 @@ pub(super) enum Screen {
     External(String),
 }
 
+/// Body text (12 px) in the muted token.
 fn muted(ui: &mut egui::Ui, s: impl Into<String>) {
-    ui.label(RichText::new(s.into()).color(MUTED));
+    ui.label(RichText::new(s.into()).size(look::TEXT_BODY).color(MUTED));
+}
+/// A control label (12 px, full-strength text).
+fn body(ui: &mut egui::Ui, s: &str) {
+    ui.label(RichText::new(s).size(look::TEXT_BODY).color(TEXT));
 }
 fn caption(ui: &mut egui::Ui, s: impl Into<String>) {
     ui.label(
@@ -70,7 +75,7 @@ const ACCENT_TEXT: Color32 = look::DATA_MEMORY;
 fn switch_row(ui: &mut egui::Ui, label: &str, on: &mut bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label(label);
+        body(ui, label);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let response = look::toggle_switch(ui, on);
             let value = *on;
@@ -782,9 +787,23 @@ impl App {
             .iter()
             .position(|e| Some(&e.m.id) == self.home_selected.as_ref())
             .unwrap_or(0);
-        let list_w = 280.0_f32.min(ui.available_width() * 0.45);
-        let height = ui.available_height();
-        ui.horizontal_top(|ui| {
+        // Narrow window or large text scale: stack the list above the detail instead of
+        // squeezing two columns.
+        let narrow = ui.available_width() < 520.0;
+        let (list_w, height, layout) = if narrow {
+            (
+                ui.available_width(),
+                (ui.available_height() * 0.4).clamp(132.0, 220.0),
+                egui::Layout::top_down(egui::Align::Min),
+            )
+        } else {
+            (
+                280.0_f32.min(ui.available_width() * 0.45),
+                ui.available_height(),
+                egui::Layout::left_to_right(egui::Align::Min),
+            )
+        };
+        ui.with_layout(layout, |ui| {
             ui.allocate_ui_with_layout(
                 Vec2::new(list_w, height),
                 egui::Layout::top_down(egui::Align::Min),
@@ -1124,7 +1143,12 @@ impl App {
                 .id_salt(("addon", id, page))
                 .show(ui, |ui| {
                     for (index, w) in package.pages[page].widgets.iter().enumerate() {
+                        let is_heading = matches!(w, Widget::Heading { .. });
                         let widget = ui.push_id((id, page, index), |ui| {
+                            // More space above a heading than below it.
+                            if is_heading && index > 0 {
+                                ui.add_space(look::SPACE_XS);
+                            }
                             match w {
                                 Widget::Heading { text } => {
                                     section(ui, text);
@@ -1135,21 +1159,24 @@ impl App {
                                 Widget::Note { title, text } => {
                                     panel().show(ui, |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.label(RichText::new(title).strong());
-                                        ui.add_space(6.0);
+                                        section(ui, title);
+                                        ui.add_space(look::SPACE_XS);
                                         muted(ui, text);
                                     });
                                 }
                                 Widget::Metric { label, binding } => {
                                     panel().show(ui, |ui| {
                                         ui.set_width(ui.available_width());
-                                        caption(ui, label);
-                                        ui.label(
-                                            RichText::new(metric(*binding))
-                                                .size(look::TEXT_TITLE)
-                                                .strong()
-                                                .color(TEXT),
-                                        );
+                                        // A stat: value in 600, small muted label beside it.
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(
+                                                RichText::new(metric(*binding))
+                                                    .size(look::TEXT_SECTION)
+                                                    .strong()
+                                                    .color(TEXT),
+                                            );
+                                            caption(ui, label);
+                                        });
                                     });
                                     ui.request_repaint_after(Duration::from_secs(2));
                                 }
@@ -1179,7 +1206,7 @@ impl App {
                                     label,
                                     default,
                                 } => {
-                                    ui.label(label);
+                                    body(ui, label);
                                     let prefs = self
                                         .registry
                                         .config
@@ -1205,7 +1232,11 @@ impl App {
                                     }
                                 }
                             }
-                            ui.add_space(look::SPACE_M);
+                            ui.add_space(if is_heading {
+                                look::SPACE_XS
+                            } else {
+                                look::SPACE_M
+                            });
                         });
                         toolboks_addon_sdk::tutorial::mark(
                             ui,
