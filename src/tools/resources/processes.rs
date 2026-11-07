@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Align, Layout, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align, Layout, RichText, Sense, Vec2};
 use egui_extras::{Column, TableBuilder};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use windows::core::HRESULT;
@@ -23,14 +23,13 @@ use windows::Win32::System::Threading::{
 
 use crate::format::{friendly_name, size_plain, uptime};
 use crate::ui::{
-    toggle_switch, BAR_DIVIDER, BORDER, CARD_PAD, GAP, MUTED, PANEL_BG, RED, SELECTED_BG, SPACE_M,
-    TEXT, TEXT_SECTION,
+    body_cell, header_cell, inspector_edge, inspector_frame, row_rule, switch_row, table_style,
+    CARD_PAD, GAP, RED, SPACE_M, TEXT_SECTION,
 };
 use crate::win::Handle;
 
 pub(super) const ROW_HEIGHT: f32 = 28.0;
 pub(super) const INSPECTOR_WIDTH: f32 = 240.0;
-const INSPECTOR_PAD: f32 = SPACE_M;
 /// Time between two process refreshes while the page is visible.
 pub(super) const REFRESH: Duration = Duration::from_secs(2);
 /// Wait before the second refresh that makes CPU percentages meaningful.
@@ -1030,104 +1029,6 @@ impl Page {
             );
         }
     }
-}
-
-/// The inspector panel's frame: a card-coloured side panel.
-pub(super) fn inspector_frame() -> egui::Frame {
-    egui::Frame::NONE.fill(PANEL_BG).inner_margin(INSPECTOR_PAD)
-}
-
-/// The hairline between the table and the inspector.
-pub(super) fn inspector_edge(ui: &egui::Ui, rect: egui::Rect) {
-    ui.painter()
-        .vline(rect.left(), rect.y_range(), Stroke::new(1.0, BORDER));
-}
-
-/// Table look for the scope it is called in: a soft selection fill and a quiet hover fill.
-pub(super) fn table_style(ui: &mut egui::Ui) {
-    let v = ui.visuals_mut();
-    v.selection.bg_fill = SELECTED_BG;
-    v.widgets.hovered.bg_fill = BAR_DIVIDER;
-}
-
-/// Hairline under a table row, drawn across the whole row.
-pub(super) fn row_rule(painter: &egui::Painter, rect: egui::Rect) {
-    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BAR_DIVIDER));
-}
-
-/// A sortable column header: muted caption, full-strength text on the sorted column.
-pub(super) fn header_cell(
-    ui: &mut egui::Ui,
-    label: &str,
-    arrow: &str,
-    active: bool,
-    right: bool,
-) -> bool {
-    let color = if active { TEXT } else { MUTED };
-    let button = |ui: &mut egui::Ui| {
-        ui.add(
-            egui::Button::new(
-                RichText::new(format!("{label}{arrow}"))
-                    .small()
-                    .color(color),
-            )
-            .frame(false),
-        )
-        .clicked()
-    };
-    if right {
-        ui.with_layout(Layout::right_to_left(Align::Center), button)
-            .inner
-    } else {
-        button(ui)
-    }
-}
-
-/// A table cell; numbers are right-aligned and muted when `weak`.
-pub(super) fn body_cell(
-    ui: &mut egui::Ui,
-    text: String,
-    right: bool,
-    weak: bool,
-) -> egui::Response {
-    let mut t = RichText::new(text);
-    if weak {
-        t = t.weak();
-    }
-    let label = egui::Label::new(t).selectable(false).truncate();
-    if right {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| ui.add(label))
-            .inner
-    } else {
-        ui.add(label)
-    }
-}
-
-/// A switch followed by its label, for on/off filters.
-pub(super) fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        toggle_switch(ui, on);
-        ui.label(label);
-    });
-}
-
-/// A one-line, muted, dismissible note. Returns true when dismissed.
-pub(super) fn banner(ui: &mut egui::Ui, text: &str) -> bool {
-    let mut dismissed = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = GAP;
-        let w = (ui.available_width() - 70.0).max(0.0);
-        ui.add_sized(
-            [w, 16.0],
-            egui::Label::new(RichText::new(text).small().weak()).truncate(),
-        )
-        .on_hover_text(text);
-        dismissed = ui
-            .add(egui::Button::new(RichText::new("Dismiss").small().color(MUTED)).frame(false))
-            .clicked();
-    });
-    dismissed
 }
 
 /// A small caption over a value.

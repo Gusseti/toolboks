@@ -18,7 +18,9 @@ use super::workbench::{
 };
 use super::Memory;
 use crate::format::size_plain;
-use crate::ui::{pill, stacked_bar, ACCENT, GAP, SPACE_L, SPACE_XS};
+use crate::ui::{
+    header_cell, pill, row_rule, stacked_bar, table_style, ACCENT, GAP, MUTED, SPACE_L, SPACE_XS,
+};
 
 const ROW_HEIGHT: f32 = 22.0;
 const INSPECTOR_WIDTH: f32 = 240.0;
@@ -212,8 +214,9 @@ impl Memory {
         let own_pid = std::process::id();
         let modifiers = ui.input(|i| i.modifiers);
 
+        table_style(ui);
         TableBuilder::new(ui)
-            .striped(true)
+            .striped(false)
             .sense(Sense::click())
             .auto_shrink([false, false])
             .column(Column::exact(22.0))
@@ -227,18 +230,11 @@ impl Memory {
                 header.col(|_| {});
                 let sortable = |ui: &mut egui::Ui, label: &str, key: SortKey| {
                     let arrow = sort_arrow(sort_key == key, descending);
-                    ui.add(
-                        egui::Button::new(
-                            RichText::new(format!("{label}{arrow}")).small().strong(),
-                        )
-                        .frame(false),
-                    )
-                    .clicked()
-                    .then_some(key)
+                    header_cell(ui, label, arrow, sort_key == key, false).then_some(key)
                 };
                 header.col(|ui| sort_click = sortable(ui, "Name", SortKey::Name).or(sort_click));
                 header.col(|ui| {
-                    ui.label(RichText::new("Procs").small().strong());
+                    ui.label(RichText::new("Procs").small().color(MUTED));
                 });
                 header.col(|ui| {
                     sort_click = sortable(ui, "Working", SortKey::WorkingSet).or(sort_click)
@@ -247,17 +243,18 @@ impl Memory {
                     sort_click = sortable(ui, "Private", SortKey::Private).or(sort_click)
                 });
                 header.col(|ui| {
-                    ui.label(RichText::new("Share of used").small().strong())
+                    ui.label(RichText::new("Share of used").small().color(MUTED))
                         .on_hover_text(
                             "Working set as a share of the memory in use (sort by Working)",
                         );
                 });
                 header.col(|ui| {
-                    ui.label(RichText::new("Lock").small().strong())
+                    ui.label(RichText::new("Lock").small().color(MUTED))
                         .on_hover_text("Tick to keep this app from ever being trimmed");
                 });
             })
-            .body(|body| {
+            .body(|mut body| {
+                let rule = body.ui_mut().painter().clone();
                 body.rows(ROW_HEIGHT, rows.len(), |mut row| {
                     let p = rows[row.index()];
                     let key = row_key(grouped, p);
@@ -310,7 +307,9 @@ impl Memory {
                             exclude_click = Some(p.name.to_lowercase());
                         }
                     });
-                    if row.response().clicked() && click.is_none() {
+                    let response = row.response();
+                    row_rule(&rule, response.rect);
+                    if response.clicked() && click.is_none() {
                         click = Some(Click::Row(key, modifiers));
                     }
                 });

@@ -579,6 +579,97 @@ pub fn stacked_bar(ui: &mut egui::Ui, height: f32, parts: &[BarPart]) -> Option<
     hovered
 }
 
+// Shared table, inspector and banner pieces (Resource Monitor lists, Debloater, Memory Cleaner).
+
+/// The inspector panel's frame: a card-coloured side panel.
+pub fn inspector_frame() -> egui::Frame {
+    egui::Frame::NONE.fill(PANEL_BG).inner_margin(SPACE_M)
+}
+
+/// The hairline between the table and the inspector.
+pub fn inspector_edge(ui: &egui::Ui, rect: egui::Rect) {
+    ui.painter()
+        .vline(rect.left(), rect.y_range(), Stroke::new(1.0, BORDER));
+}
+
+/// Table look for the scope it is called in: a soft selection fill and a quiet hover fill.
+pub fn table_style(ui: &mut egui::Ui) {
+    let v = ui.visuals_mut();
+    v.selection.bg_fill = SELECTED_BG;
+    v.widgets.hovered.bg_fill = BAR_DIVIDER;
+}
+
+/// Hairline under a table row, drawn across the whole row.
+pub fn row_rule(painter: &egui::Painter, rect: egui::Rect) {
+    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BAR_DIVIDER));
+}
+
+/// A sortable column header: muted caption, full-strength text on the sorted column.
+pub fn header_cell(ui: &mut egui::Ui, label: &str, arrow: &str, active: bool, right: bool) -> bool {
+    let color = if active { TEXT } else { MUTED };
+    let button = |ui: &mut egui::Ui| {
+        ui.add(
+            egui::Button::new(
+                RichText::new(format!("{label}{arrow}"))
+                    .small()
+                    .color(color),
+            )
+            .frame(false),
+        )
+        .clicked()
+    };
+    if right {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), button)
+            .inner
+    } else {
+        button(ui)
+    }
+}
+
+/// A table cell; numbers are right-aligned and muted when `weak`.
+pub fn body_cell(ui: &mut egui::Ui, text: String, right: bool, weak: bool) -> egui::Response {
+    let mut t = RichText::new(text);
+    if weak {
+        t = t.weak();
+    }
+    let label = egui::Label::new(t).selectable(false).truncate();
+    if right {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add(label)
+        })
+        .inner
+    } else {
+        ui.add(label)
+    }
+}
+
+/// A switch followed by its label, for on/off filters.
+pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        toggle_switch(ui, on);
+        ui.label(label);
+    });
+}
+
+/// A one-line, muted, dismissible note. Returns true when dismissed.
+pub fn banner(ui: &mut egui::Ui, text: &str) -> bool {
+    let mut dismissed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = GAP;
+        let w = (ui.available_width() - 70.0).max(0.0);
+        ui.add_sized(
+            [w, 16.0],
+            egui::Label::new(RichText::new(text).small().weak()).truncate(),
+        )
+        .on_hover_text(text);
+        dismissed = ui
+            .add(egui::Button::new(RichText::new("Dismiss").small().color(MUTED)).frame(false))
+            .clicked();
+    });
+    dismissed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
