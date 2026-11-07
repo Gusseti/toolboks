@@ -13,46 +13,175 @@ pub(super) enum Screen {
     External(String),
 }
 
-fn eyebrow(ui: &mut egui::Ui, s: &str) {
-    ui.label(RichText::new(s.to_uppercase()).size(10.0).color(MUTED));
-}
 fn muted(ui: &mut egui::Ui, s: impl Into<String>) {
     ui.label(RichText::new(s.into()).color(MUTED));
 }
-fn panel() -> egui::Frame {
+fn caption(ui: &mut egui::Ui, s: impl Into<String>) {
+    ui.label(
+        RichText::new(s.into())
+            .size(look::TEXT_CAPTION)
+            .color(MUTED),
+    );
+}
+/// A section heading: 14 px, strong.
+fn section(ui: &mut egui::Ui, s: &str) {
+    ui.label(
+        RichText::new(s)
+            .size(look::TEXT_SECTION)
+            .strong()
+            .color(TEXT),
+    );
+}
+pub(super) fn panel() -> egui::Frame {
     egui::Frame::new()
         .fill(PANEL_BG)
         .stroke(egui::Stroke::new(1.0, BORDER))
-        .corner_radius(12)
-        .inner_margin(20)
+        .corner_radius(look::CARD_RADIUS)
+        .inner_margin(look::SPACE_M)
 }
-fn primary(ui: &mut egui::Ui, s: &str) -> egui::Response {
+/// The one primary button of a view: accent fill, white text (6:1 on the fill).
+pub(super) fn primary(ui: &mut egui::Ui, s: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(
-            RichText::new(s.replace('→', ">")).color(Color32::from_rgb(245, 240, 251)),
-        )
-        .fill(look::HOST_ACCENT_FILL)
-        .corner_radius(7)
-        .min_size(Vec2::new(90.0, 34.0)),
+        egui::Button::new(RichText::new(s).color(Color32::WHITE))
+            .fill(look::HOST_ACCENT_FILL)
+            .corner_radius(look::CONTROL_RADIUS)
+            .min_size(Vec2::new(80.0, 28.0)),
     )
 }
-fn badge(ui: &mut egui::Ui, s: &str, color: Color32) {
+/// A small status chip. Always carries a word; `verified` adds the verified mark before it.
+fn badge(ui: &mut egui::Ui, s: &str, color: Color32, verified: bool) {
     egui::Frame::new()
         .fill(color.gamma_multiply(0.12))
-        .corner_radius(20)
-        .inner_margin(egui::Margin::symmetric(9, 4))
+        .corner_radius(look::CONTROL_RADIUS)
+        .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if s.starts_with('✓') {
+                ui.spacing_mut().item_spacing.x = look::SPACE_XS;
+                if verified {
                     verified_mark(ui);
                 }
-                ui.label(
-                    RichText::new(s.trim_start_matches('✓').trim())
-                        .size(10.0)
-                        .color(color),
-                );
+                ui.label(RichText::new(s).size(look::TEXT_CAPTION).color(color));
             });
         });
+}
+/// Text-sized accent that reaches 4.5:1 on a card (the plain accent is 4.3:1).
+const ACCENT_TEXT: Color32 = look::DATA_MEMORY;
+/// A label with an on/off switch at the right and an accessible name.
+fn switch_row(ui: &mut egui::Ui, label: &str, on: &mut bool) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let response = look::toggle_switch(ui, on);
+            let value = *on;
+            response
+                .widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, value, label));
+            changed = response.changed();
+        });
+    });
+    changed
+}
+/// Width of a modal: `want`, but never wider than the window allows.
+fn modal_width(ctx: &egui::Context, want: f32) -> f32 {
+    want.min((ctx.content_rect().width() - 64.0).max(240.0))
+}
+
+/// One add-on as the person sees it, with its state.
+struct Entry {
+    m: Manifest,
+    verified: bool,
+    installed: bool,
+    enabled: bool,
+}
+
+impl Entry {
+    fn status(&self) -> &'static str {
+        if !self.installed {
+            "Not installed"
+        } else if self.enabled {
+            "On"
+        } else {
+            "Off"
+        }
+    }
+    fn action(&self) -> &'static str {
+        if !self.installed {
+            "Install add-on"
+        } else if self.enabled {
+            "Open add-on"
+        } else {
+            "Turn on"
+        }
+    }
+}
+
+/// One selectable row of the Home list: small icon, name, one plain detail line, state at the
+/// right. Selected = lighter fill.
+fn list_row(
+    ui: &mut egui::Ui,
+    m: &Manifest,
+    status: &str,
+    status_color: Color32,
+    selected: bool,
+    icon_color: Color32,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let fill = if selected {
+            look::SELECTED_BG
+        } else if response.hovered() {
+            look::BAR_DIVIDER
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, look::CONTROL_RADIUS, fill);
+        focus_ring(ui, rect, &response);
+        paint_glyph(
+            ui.painter(),
+            egui::Rect::from_center_size(
+                egui::pos2(rect.left() + 20.0, rect.center().y),
+                Vec2::splat(18.0),
+            ),
+            &m.icon,
+            icon_color,
+            18.0,
+        );
+        let small = egui::FontId::proportional(look::TEXT_CAPTION);
+        let state = ui
+            .painter()
+            .layout_no_wrap(status.to_owned(), small.clone(), status_color);
+        let text_clip = egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(rect.right() - state.size().x - 16.0, rect.bottom()),
+        );
+        let p = ui.painter().with_clip_rect(text_clip);
+        p.text(
+            egui::pos2(rect.left() + 38.0, rect.center().y - 8.0),
+            egui::Align2::LEFT_CENTER,
+            &m.title,
+            egui::FontId::proportional(look::TEXT_BODY),
+            TEXT,
+        );
+        p.text(
+            egui::pos2(rect.left() + 38.0, rect.center().y + 8.0),
+            egui::Align2::LEFT_CENTER,
+            &m.category,
+            small,
+            MUTED,
+        );
+        ui.painter().galley(
+            egui::pos2(
+                rect.right() - state.size().x - 10.0,
+                rect.center().y - state.size().y / 2.0,
+            ),
+            state,
+            status_color,
+        );
+    }
+    let name = format!("{}, {}", m.title, status);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &name));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 fn accent(m: &Manifest) -> Color32 {
     let rgb = u32::from_str_radix(&m.accent[1..], 16).unwrap_or(0xa48aca);
@@ -61,28 +190,6 @@ fn accent(m: &Manifest) -> Color32 {
 fn glyph(ui: &mut egui::Ui, name: &str, color: Color32, size: f32) {
     let (r, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
     paint_glyph(ui.painter(), r, name, color, size);
-}
-fn brand_logo(ui: &mut egui::Ui, size: f32) {
-    let id = egui::Id::unique("toolboks-original-logo");
-    let existing = ui
-        .ctx()
-        .data_mut(|data| data.get_temp::<egui::TextureHandle>(id));
-    let texture = existing.unwrap_or_else(|| {
-        let icon =
-            eframe::icon_data::from_png_bytes(include_bytes!("../../assets/toolboks-logo.png"))
-                .expect("bundled Toolboks logo");
-        let image = egui::ColorImage::from_rgba_unmultiplied(
-            [icon.width as usize, icon.height as usize],
-            &icon.rgba,
-        );
-        let texture = ui
-            .ctx()
-            .load_texture("toolboks-logo", image, egui::TextureOptions::LINEAR);
-        ui.ctx()
-            .data_mut(|data| data.insert_temp(id, texture.clone()));
-        texture
-    });
-    ui.add(egui::Image::new((texture.id(), Vec2::splat(size))));
 }
 fn paint_glyph(p: &egui::Painter, r: egui::Rect, name: &str, color: Color32, size: f32) {
     let stroke = egui::Stroke::new(1.6, color);
@@ -579,19 +686,16 @@ impl App {
             )
             .show(ui, |ui| {
                 if let Some(message) = self.message.clone() {
-                    egui::Frame::new()
-                        .fill(Color32::from_rgb(38, 43, 34))
-                        .corner_radius(7)
-                        .inner_margin(10)
-                        .show(ui, |ui| {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new(message).color(ACCENT));
-                                if ui.small_button("Dismiss").clicked() {
-                                    self.message = None;
-                                }
-                            });
+                    panel().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(message).color(TEXT));
+                            if ui.small_button("Dismiss").clicked() {
+                                self.message = None;
+                            }
                         });
-                    ui.add_space(12.0);
+                    });
+                    ui.add_space(look::GAP);
                 }
                 match self.screen.clone() {
                     Screen::Home => self.home(ui),
@@ -605,103 +709,205 @@ impl App {
         self.update_prompt(ui.ctx());
         self.tutorial_ui(ui.ctx());
     }
-    fn title(ui: &mut egui::Ui, eye: &str, title: &str, description: &str) {
-        eyebrow(ui, eye);
-        ui.add_space(6.0);
-        ui.label(RichText::new(title).size(30.0).color(TEXT));
-        ui.add_space(3.0);
+    fn title(ui: &mut egui::Ui, title: &str, description: &str) {
+        ui.label(
+            RichText::new(title)
+                .size(look::TEXT_TITLE)
+                .strong()
+                .color(TEXT),
+        );
         muted(ui, description);
-        ui.add_space(24.0);
+        ui.add_space(look::SPACE_M);
+    }
+    /// Every add-on the person can see: the built-in tools, the Disk Manager and any package they
+    /// installed, with its state.
+    fn entries(&self) -> Vec<Entry> {
+        let mut list = Vec::new();
+        for (i, m) in self.registry.builtins.iter().enumerate() {
+            list.push(Entry {
+                m: m.clone(),
+                verified: true,
+                installed: true,
+                enabled: self.tool_enabled(i),
+            });
+        }
+        let disk = addons::official_disk_package().manifest;
+        let disk_installed = self
+            .registry
+            .packages
+            .iter()
+            .any(|p| p.manifest.id == disk.id);
+        list.push(Entry {
+            enabled: self.registry.enabled(&disk.id),
+            installed: disk_installed,
+            verified: true,
+            m: disk,
+        });
+        for p in &self.registry.packages {
+            if p.manifest.id == toolboks_disk_manager::ID {
+                continue;
+            }
+            list.push(Entry {
+                m: p.manifest.clone(),
+                verified: false,
+                installed: true,
+                enabled: self.registry.enabled(&p.manifest.id),
+            });
+        }
+        list
     }
     fn home(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().id_salt("home-scroll").show(ui,|ui|{
-            Self::title(ui,"See the bigger picture","A little clarity. A lot more control.","One workspace for the tools that make your system yours.");
-            panel().show(ui,|ui|{ui.set_width(ui.available_width());ui.set_min_height(188.0);ui.horizontal(|ui|{ui.vertical(|ui|{badge(ui,"MADE FOR THE CURIOUS",ACCENT);ui.add_space(16.0);ui.label(RichText::new("Know your PC.\nMake it work for you.").size(32.0));ui.add_space(10.0);muted(ui,"Understand what is happening. Find the right tool. Stay in control.");ui.add_space(18.0);if primary(ui,"Get started  →").clicked(){match (0..self.registry.builtins.len()).find(|&i|self.tool_enabled(i)){Some(i)=>self.open_tool(i),None=>self.screen=Screen::Browser}}});ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{ui.add_space(32.0);brand_logo(ui,112.0);});});});
-            ui.add_space(17.0);
-            ui.columns(3, |cols| {
-                let total_tools=self.registry.builtins.len();let on_tools=(0..total_tools).filter(|&i|self.tool_enabled(i)).count();let stats = [("Installed add-ons",format!("{:02}",total_tools+self.registry.packages.len()),"Your personal toolkit".to_owned()),("Included system tools",format!("{on_tools:02}"),format!("{on_tools} of {total_tools} turned on")),("Your workspace","Local".into(),"Preferences saved on this PC".to_owned())];
-                for (col,(label,value,desc)) in cols.iter_mut().zip(stats) {
-                    panel().show(col,|ui| {ui.set_width(ui.available_width());eyebrow(ui,label);ui.add_space(11.0);ui.label(RichText::new(value).size(28.0));ui.add_space(6.0);muted(ui,desc);});
+        let entries = self.entries();
+        let total_tools = self.registry.builtins.len();
+        let on_tools = (0..total_tools).filter(|&i| self.tool_enabled(i)).count();
+        let added = self.registry.packages.len();
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                Self::title(
+                    ui,
+                    "Your toolkit",
+                    &format!(
+                        "{on_tools} of {total_tools} built-in tools are on. {added} {} installed.",
+                        if added == 1 { "add-on" } else { "add-ons" }
+                    ),
+                );
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                if ui.button("Browse add-ons").clicked() {
+                    self.screen = Screen::Browser;
                 }
             });
-            ui.add_space(26.0);ui.horizontal(|ui|{ui.label(RichText::new("Your starting point").size(16.0));ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{if ui.link("Explore add-ons >").clicked(){self.screen=Screen::Browser;}});});ui.add_space(12.0);
-            let builtins=self.registry.builtins.clone();for (i,m) in builtins.iter().enumerate(){let on=self.tool_enabled(i);self.addon_card(ui,m,true,on);ui.add_space(12.0);}
-            ui.add_space(12.0);muted(ui,"Build a toolkit around the way you use your PC. Add-ons live right here, inside Toolboks.");
+        });
+        let selected = entries
+            .iter()
+            .position(|e| Some(&e.m.id) == self.home_selected.as_ref())
+            .unwrap_or(0);
+        let list_w = 280.0_f32.min(ui.available_width() * 0.45);
+        let height = ui.available_height();
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                Vec2::new(list_w, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(list_w);
+                    egui::ScrollArea::vertical()
+                        .id_salt("home-list")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            for (i, e) in entries.iter().enumerate() {
+                                let tint = if e.enabled && e.installed {
+                                    look::GREEN
+                                } else {
+                                    MUTED
+                                };
+                                if list_row(ui, &e.m, e.status(), tint, i == selected, accent(&e.m))
+                                    .clicked()
+                                {
+                                    self.home_selected = Some(e.m.id.clone());
+                                }
+                            }
+                        });
+                },
+            );
+            ui.add_space(look::GAP);
+            let Some(e) = entries.get(selected) else {
+                return;
+            };
+            ui.vertical(|ui| {
+                self.addon_detail_card(ui, e);
+            });
         });
     }
-    fn addon_card(&mut self, ui: &mut egui::Ui, m: &Manifest, verified: bool, enabled: bool) {
-        let installed = self.registry.builtin_index(&m.id).is_some()
-            || self.registry.packages.iter().any(|p| p.manifest.id == m.id);
+    /// The right side of Home: the chosen add-on, what it does, and the one thing to do next.
+    fn addon_detail_card(&mut self, ui: &mut egui::Ui, e: &Entry) {
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                egui::Frame::new()
-                    .fill(accent(m).gamma_multiply(0.10))
-                    .corner_radius(10)
-                    .inner_margin(13)
-                    .show(ui, |ui| glyph(ui, &m.icon, accent(m), 28.0));
-                ui.add_space(9.0);
+                ui.label(
+                    RichText::new(&e.m.title)
+                        .size(look::TEXT_TITLE)
+                        .strong()
+                        .color(TEXT),
+                );
+                if e.verified {
+                    verified_mark(ui);
+                }
+            });
+            let mut line = format!("{} · {} · v{}", e.m.publisher, e.m.category, e.m.version);
+            if let Some(byline) = &e.m.byline {
+                line = format!("{byline} · {line}");
+            }
+            caption(ui, line);
+            ui.add_space(look::GAP);
+            badge(
+                ui,
+                e.status(),
+                if e.enabled && e.installed {
+                    ACCENT_TEXT
+                } else {
+                    MUTED
+                },
+                false,
+            );
+            ui.add_space(look::GAP);
+            ui.label(&e.m.description);
+            ui.add_space(look::SPACE_L);
+            ui.horizontal_wrapped(|ui| {
+                if primary(ui, e.action()).clicked() {
+                    self.run_action(e);
+                }
+                if ui.button("View details").clicked() {
+                    self.detail = Some(e.m.id.clone());
+                }
+            });
+        });
+    }
+    /// The primary action of an add-on: install it, turn it on, or open it.
+    fn run_action(&mut self, e: &Entry) {
+        if !e.installed {
+            self.pending_package = Some(addons::official_disk_package());
+            return;
+        }
+        if !e.enabled && !self.set_addon_enabled(&e.m.id, true) {
+            return;
+        }
+        self.open_addon(&e.m.id);
+    }
+    /// One add-on in the browser: what it is, its state, and its actions.
+    fn browser_row(&mut self, ui: &mut egui::Ui, e: &Entry) {
+        panel().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                glyph(ui, &e.m.icon, accent(&e.m), 22.0);
+                let side = 190.0_f32.min(ui.available_width() * 0.4);
                 ui.vertical(|ui| {
+                    ui.set_width((ui.available_width() - side - look::GAP).max(120.0));
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&m.title).size(19.0));
-                        if let Some(byline) = &m.byline {
-                            ui.label(
-                                RichText::new(byline)
-                                    .size(11.0)
-                                    .color(Color32::from_rgb(112, 108, 121)),
-                            );
-                        }
-                        if verified {
+                        ui.label(
+                            RichText::new(&e.m.title)
+                                .size(look::TEXT_SECTION)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        if e.verified {
                             verified_mark(ui);
                         }
                     });
-                    muted(
+                    caption(
                         ui,
-                        format!("{}  ·  {}  ·  v{}", m.publisher, m.category, m.version),
+                        format!("{} · v{} · {}", e.m.category, e.m.version, e.status()),
                     );
+                    muted(ui, &e.m.description);
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    badge(
-                        ui,
-                        if !installed {
-                            "Available"
-                        } else if enabled {
-                            "Installed"
-                        } else {
-                            "Disabled"
-                        },
-                        if enabled { ACCENT } else { MUTED },
-                    );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    if ui.button("Details").clicked() {
+                        self.detail = Some(e.m.id.clone());
+                    }
+                    if ui.button(e.action()).clicked() {
+                        self.run_action(e);
+                    }
                 });
-            });
-            ui.add_space(14.0);
-            muted(ui, &m.description);
-            ui.add_space(17.0);
-            ui.horizontal(|ui| {
-                if primary(
-                    ui,
-                    if !installed {
-                        "Install add-on"
-                    } else if enabled {
-                        "Open add-on  →"
-                    } else {
-                        "Enable add-on"
-                    },
-                )
-                .clicked()
-                {
-                    if !installed {
-                        self.pending_package = Some(addons::official_disk_package());
-                        return;
-                    }
-                    if !enabled && !self.set_addon_enabled(&m.id, true) {
-                        return;
-                    }
-                    self.open_addon(&m.id);
-                }
-                if ui.button("View details").clicked() {
-                    self.detail = Some(m.id.clone());
-                }
             });
         });
     }
@@ -754,34 +960,34 @@ impl App {
     fn browser(&mut self, ui: &mut egui::Ui) {
         Self::title(
             ui,
-            "Make room for more",
-            "Tools that belong in your toolkit.",
-            "Discover your installed add-ons, or bring a new one into your workspace.",
+            "Add-ons",
+            "Turn tools on or off, or bring a new add-on into Toolboks.",
         );
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.search)
-                    .hint_text("Search add-ons…")
-                    .desired_width((ui.available_width() - 180.0).max(200.0)),
+                    .hint_text("Search add-ons")
+                    .desired_width((ui.available_width() - 150.0).max(120.0)),
             );
-            if primary(ui, "+ Install package").clicked() {
+            if primary(ui, "Install package").clicked() {
                 self.show_install = !self.show_install;
             }
         });
-        ui.add_space(13.0);
+        ui.add_space(look::GAP);
         if self.show_install {
             panel().show(ui, |ui| {
-                ui.label(RichText::new("Bring an add-on into Toolboks").size(16.0));
+                ui.set_width(ui.available_width());
+                section(ui, "Install a package");
                 muted(
                     ui,
-                    "Drop a .tbaddon package onto this window, or enter its full path below.",
+                    "Drop a .tbaddon file onto this window, or type where it is saved. You review it before anything is installed.",
                 );
-                ui.add_space(10.0);
+                ui.add_space(look::GAP);
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.install_path)
                             .hint_text("C:\\Downloads\\my-addon.tbaddon")
-                            .desired_width((ui.available_width() - 100.0).max(100.0)),
+                            .desired_width((ui.available_width() - 170.0).max(100.0)),
                     );
                     if ui.button("Review").clicked() {
                         let path =
@@ -789,33 +995,57 @@ impl App {
                         self.review_package(&path);
                     }
                 });
+                ui.add_space(look::GAP);
+                if ui.button("Try the example package").clicked() {
+                    match Package::parse(addons::SDK_EXAMPLE.as_bytes(), env!("CARGO_PKG_VERSION"))
+                    {
+                        Ok(p) => self.pending_package = Some(p),
+                        Err(e) => self.message = Some(e),
+                    }
+                }
             });
-            ui.add_space(15.0);
+            ui.add_space(look::GAP);
         }
         let needle = self.search.to_lowercase();
-        let matches = |m: &Manifest| {
-            format!("{} {} {} {}", m.title, m.description, m.author, m.category)
+        let entries: Vec<Entry> = self
+            .entries()
+            .into_iter()
+            .filter(|e| {
+                format!(
+                    "{} {} {} {}",
+                    e.m.title, e.m.description, e.m.author, e.m.category
+                )
                 .to_lowercase()
                 .contains(&needle)
-        };
-        let builtins = self.registry.builtins.clone();
-        let packages: Vec<_> = self
-            .registry
-            .packages
-            .iter()
-            .map(|p| p.manifest.clone())
-            .filter(&matches)
+            })
             .collect();
-        let disk = addons::official_disk_package().manifest;
-        egui::ScrollArea::vertical().id_salt("browser-scroll").show(ui,|ui|{
-            eyebrow(ui,"From Toolboks");ui.add_space(10.0);
-            for (i,m) in builtins.iter().enumerate(){if matches(m){let on=self.tool_enabled(i);self.addon_card(ui,m,true,on);ui.add_space(14.0);}}
-            if matches(&disk){let enabled=self.registry.enabled(&disk.id);self.addon_card(ui,&disk,true,enabled);ui.add_space(20.0);}
-            let third_party:Vec<_>=packages.into_iter().filter(|m|m.id!=toolboks_disk_manager::ID).collect();
-            if !third_party.is_empty(){eyebrow(ui,"Your installed add-ons");ui.add_space(10.0);for m in third_party{let enabled=self.registry.enabled(&m.id);self.addon_card(ui,&m,false,enabled);ui.add_space(12.0);}}
-            if !builtins.iter().any(&matches)&&!matches(&disk)&&!self.registry.packages.iter().any(|p|matches(&p.manifest)){muted(ui,"No add-ons match your search.");}
-            ui.add_space(8.0);panel().show(ui,|ui|{ui.set_width(ui.available_width());ui.label(RichText::new("A platform for your next tool.").size(18.0));ui.add_space(6.0);muted(ui,"Install local packages or try the SDK starter. Verified first-party add-ons are listed first.");ui.add_space(10.0);if ui.button("Install SDK example").clicked(){match Package::parse(addons::SDK_EXAMPLE.as_bytes(),env!("CARGO_PKG_VERSION")){Ok(p)=>self.pending_package=Some(p),Err(e)=>self.message=Some(e)}}});
-        });
+        egui::ScrollArea::vertical()
+            .id_salt("browser-scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = look::GAP;
+                if entries.is_empty() {
+                    muted(
+                        ui,
+                        "No add-ons match your search. Clear the search to see all of them.",
+                    );
+                    return;
+                }
+                let (official, other): (Vec<_>, Vec<_>) = entries.iter().partition(|e| e.verified);
+                for (heading, group) in [
+                    ("Included with Toolboks", official),
+                    ("Added by you", other),
+                ] {
+                    if group.is_empty() {
+                        continue;
+                    }
+                    ui.add_space(look::SPACE_XS);
+                    section(ui, heading);
+                    for e in group {
+                        self.browser_row(ui, e);
+                    }
+                }
+            });
     }
 
     fn tool_workspace(&mut self, ui: &mut egui::Ui, tool: usize) {
@@ -888,10 +1118,7 @@ impl App {
         ui.scope(|ui| {
             ui.visuals_mut().hyperlink_color = color;
             ui.visuals_mut().selection.bg_fill = color.gamma_multiply(0.25);
-            eyebrow(ui, &package.manifest.category);
-            ui.label(RichText::new(&package.manifest.title).size(28.0));
-            muted(ui, &package.manifest.description);
-            ui.add_space(look::SPACE_L);
+            Self::title(ui, &package.manifest.title, &package.manifest.description);
             toolboks_addon_sdk::tutorial::mark(ui, "page", ui.available_rect_before_wrap());
             egui::ScrollArea::vertical()
                 .id_salt(("addon", id, page))
@@ -900,7 +1127,7 @@ impl App {
                         let widget = ui.push_id((id, page, index), |ui| {
                             match w {
                                 Widget::Heading { text } => {
-                                    ui.label(RichText::new(text).size(25.0).color(color));
+                                    section(ui, text);
                                 }
                                 Widget::Text { text } => {
                                     muted(ui, text);
@@ -916,9 +1143,12 @@ impl App {
                                 Widget::Metric { label, binding } => {
                                     panel().show(ui, |ui| {
                                         ui.set_width(ui.available_width());
-                                        eyebrow(ui, label);
+                                        caption(ui, label);
                                         ui.label(
-                                            RichText::new(metric(*binding)).size(28.0).color(color),
+                                            RichText::new(metric(*binding))
+                                                .size(look::TEXT_TITLE)
+                                                .strong()
+                                                .color(TEXT),
                                         );
                                     });
                                     ui.request_repaint_after(Duration::from_secs(2));
@@ -938,7 +1168,7 @@ impl App {
                                         .get(key)
                                         .and_then(|v| v.as_bool())
                                         .unwrap_or(*default);
-                                    if ui.checkbox(&mut value, label).changed() {
+                                    if switch_row(ui, label, &mut value) {
                                         prefs.insert(key.clone(), serde_json::json!(value));
                                         self.preferences_dirty = Some(std::time::Instant::now());
                                         ui.request_repaint_after(Duration::from_millis(600));
@@ -965,7 +1195,7 @@ impl App {
                                         .add(
                                             egui::TextEdit::singleline(&mut value)
                                                 .char_limit(4000)
-                                                .desired_width(400.0),
+                                                .desired_width(400.0_f32.min(ui.available_width())),
                                         )
                                         .changed()
                                     {
@@ -975,7 +1205,7 @@ impl App {
                                     }
                                 }
                             }
-                            ui.add_space(15.0);
+                            ui.add_space(look::SPACE_M);
                         });
                         toolboks_addon_sdk::tutorial::mark(
                             ui,
@@ -989,16 +1219,79 @@ impl App {
     fn settings(&mut self, ui: &mut egui::Ui) {
         Self::title(
             ui,
-            "A workspace that fits",
-            "Make yourself at home.",
-            "Your preferences stay on this PC, separate from your add-on packages.",
+            "Settings",
+            "Your preferences stay on this PC, separate from your add-ons.",
         );
-        egui::ScrollArea::vertical().id_salt("settings-scroll").show(ui,|ui|{
-            panel().show(ui,|ui|{ui.set_width(ui.available_width());ui.label(RichText::new("App behavior").size(18.0));ui.add_space(15.0);if ui.checkbox(&mut self.keep_in_tray,"Keep Toolboks running in the tray when I close the window").changed(){self.registry.config.keep_in_tray=self.keep_in_tray;self.persist();}ui.add_space(6.0);muted(ui,"Background tools can keep working. Quit from the tray menu to close the app completely.");});ui.add_space(16.0);
-            panel().show(ui,|ui|{ui.set_width(ui.available_width());ui.label(RichText::new("Local storage").size(18.0));ui.add_space(9.0);muted(ui,"Installed packages and preferences are saved here:");ui.add_space(8.0);ui.label(RichText::new(self.registry.root.display().to_string()).monospace().size(11.0));ui.add_space(12.0);muted(ui,if cfg!(feature="preview"){"This preview has its own configuration folder. Your stable installation is separate."}else{"No account or cloud sync is required."});});ui.add_space(16.0);
-            panel().show(ui,|ui|{ui.set_width(ui.available_width());ui.label(RichText::new("About Toolboks").size(18.0));muted(ui,format!("Version {} · Add-on API 1",env!("CARGO_PKG_VERSION")));ui.add_space(10.0);self.update_ui(ui);});
-            if !self.registry.errors.is_empty(){ui.add_space(16.0);panel().show(ui,|ui|{ui.label(RichText::new("Items needing attention").color(look::AMBER));for e in &self.registry.errors{ui.label(e);}});}
-        });
+        egui::ScrollArea::vertical()
+            .id_salt("settings-scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = look::GAP;
+                panel().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    section(ui, "When I close the window");
+                    if switch_row(
+                        ui,
+                        "Keep Toolboks running in the tray",
+                        &mut self.keep_in_tray,
+                    ) {
+                        self.registry.config.keep_in_tray = self.keep_in_tray;
+                        self.persist();
+                    }
+                    caption(
+                        ui,
+                        "Background tools keep working. Choose Quit from the tray menu to close the app completely.",
+                    );
+                });
+                panel().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    section(ui, "Where things are saved");
+                    muted(
+                        ui,
+                        "Installed add-ons and preferences are saved in this folder.",
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(self.registry.root.display().to_string())
+                                .size(look::TEXT_CAPTION)
+                                .color(TEXT),
+                        )
+                        .wrap()
+                        .selectable(true),
+                    );
+                    caption(
+                        ui,
+                        if cfg!(feature = "preview") {
+                            "This preview has its own folder. Your stable installation is separate."
+                        } else {
+                            "No account or cloud sync is needed."
+                        },
+                    );
+                });
+                panel().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    section(ui, "About Toolboks");
+                    caption(
+                        ui,
+                        format!("Version {} · Add-on API 1", env!("CARGO_PKG_VERSION")),
+                    );
+                    ui.add_space(look::SPACE_XS);
+                    self.update_ui(ui);
+                });
+                if !self.registry.errors.is_empty() {
+                    panel().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(
+                            RichText::new("Some items need attention")
+                                .strong()
+                                .color(look::AMBER),
+                        );
+                        for e in &self.registry.errors {
+                            ui.label(e);
+                        }
+                    });
+                }
+            });
     }
     fn persist(&mut self) {
         if let Err(e) = self.registry.save() {
@@ -1014,22 +1307,39 @@ impl App {
     fn dialogs(&mut self, ctx: &egui::Context) {
         if let Some(p) = self.pending_package.clone() {
             let response = egui::Modal::new(egui::Id::unique("install-review"))
-                .frame(panel()).show(ctx, |ui| {
-                    ui.set_width(480.0);
-                    eyebrow(ui, "Review your add-on");
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(&p.manifest.title).size(26.0));
-                    muted(ui, format!("{} · Version {}",p.manifest.publisher,p.manifest.version));
-                    ui.add_space(16.0);
+                .frame(panel())
+                .show(ctx, |ui| {
+                    ui.set_width(modal_width(ctx, 480.0));
+                    section(ui, "Review before installing");
+                    ui.add_space(look::SPACE_XS);
+                    ui.label(
+                        RichText::new(&p.manifest.title)
+                            .size(look::TEXT_TITLE)
+                            .strong()
+                            .color(TEXT),
+                    );
+                    caption(
+                        ui,
+                        format!("{} · Version {}", p.manifest.publisher, p.manifest.version),
+                    );
+                    ui.add_space(look::GAP);
                     ui.label(&p.manifest.description);
-                    ui.add_space(14.0);
-                    if addons::trusted_native(&p){badge(ui,"✓ TOOLBOKS VERIFIED",ACCENT);}else{badge(ui,"LOCAL PACKAGE · NOT VERIFIED",look::AMBER);}
-                    ui.add_space(14.0);
-                    muted(ui,if p.manifest.native_provider.is_some(){"Folder scans read metadata. Reports are saved only when you choose. This update also adds administrator-only fragmentation analysis, HDD defrag and SSD TRIM; optimization modifies storage metadata only when you request it."}else{"This package uses Toolboks-rendered pages. It cannot run native code, open windows, or change system settings."});
-                    ui.add_space(12.0);
-                    ui.label("Requested access");
+                    ui.add_space(look::GAP);
+                    if addons::trusted_native(&p) {
+                        badge(ui, "Toolboks verified", ACCENT_TEXT, true);
+                    } else {
+                        badge(ui, "Local package, not verified", look::AMBER, false);
+                    }
+                    ui.add_space(look::GAP);
+                    muted(ui, if p.manifest.native_provider.is_some() {
+                        "Folder scans read metadata. Reports are saved only when you choose. This update also adds administrator-only fragmentation analysis, HDD defrag and SSD TRIM; optimization modifies storage metadata only when you request it."
+                    } else {
+                        "This package uses Toolboks-rendered pages. It cannot run native code, open windows, or change system settings."
+                    });
+                    ui.add_space(look::SPACE_M);
+                    section(ui, "It asks to");
                     for c in &p.manifest.capabilities {
-                        muted(ui,match c {
+                        muted(ui, match c {
                             toolboks_addon_sdk::Capability::HostMetrics => "Read basic memory and uptime readings",
                             toolboks_addon_sdk::Capability::LocalPreferences => "Save its own preferences locally",
                             toolboks_addon_sdk::Capability::FilesystemRead => "Read file and folder metadata for locations you select",
@@ -1037,17 +1347,28 @@ impl App {
                             toolboks_addon_sdk::Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
                         });
                     }
-                    ui.add_space(22.0);
+                    ui.add_space(look::SPACE_L);
                     ui.horizontal(|ui| {
-                        let updating=self.registry.packages.iter().any(|a|a.manifest.id==p.manifest.id);
-                        if primary(ui,if updating {"Install update"}else{"Install add-on"}).clicked() {
-                            self.pending_package=None;
+                        let updating = self
+                            .registry
+                            .packages
+                            .iter()
+                            .any(|a| a.manifest.id == p.manifest.id);
+                        if primary(ui, if updating { "Install update" } else { "Install add-on" })
+                            .clicked()
+                        {
+                            self.pending_package = None;
                             match self.registry.install(p.clone()) {
-                                Ok(())=>self.message=Some(format!("{} is ready in your sidebar.",p.manifest.title)),
-                                Err(e)=>self.message=Some(e),
+                                Ok(()) => {
+                                    self.message =
+                                        Some(format!("{} is ready in your sidebar.", p.manifest.title))
+                                }
+                                Err(e) => self.message = Some(e),
                             }
                         }
-                        if ui.button("Cancel").clicked(){self.pending_package=None;}
+                        if ui.button("Cancel").clicked() {
+                            self.pending_package = None;
+                        }
                     });
                 });
             if response.should_close() {
@@ -1071,20 +1392,27 @@ impl App {
                 let response = egui::Modal::new(egui::Id::unique("addon-detail"))
                     .frame(panel())
                     .show(ctx, |ui| {
-                        ui.set_width(500.0);
-                        ui.label(RichText::new(&m.title).size(26.0));
-                        if self.registry.verified(&id) {
-                            badge(ui, "✓ TOOLBOKS VERIFIED", ACCENT);
-                        }
-                        ui.add_space(15.0);
+                        ui.set_width(modal_width(ctx, 500.0));
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(&m.title)
+                                    .size(look::TEXT_TITLE)
+                                    .strong()
+                                    .color(TEXT),
+                            );
+                            if self.registry.verified(&id) {
+                                badge(ui, "Toolboks verified", ACCENT_TEXT, true);
+                            }
+                        });
+                        ui.add_space(look::GAP);
                         egui::ScrollArea::vertical()
-                            .max_height(380.0)
+                            .max_height((ctx.content_rect().height() - 260.0).clamp(120.0, 380.0))
                             .show(ui, |ui| {
                                 ui.label(&m.long_description);
-                                ui.add_space(18.0);
-                                egui::Grid::new("addon-metadata").spacing([25.0, 8.0]).show(
-                                    ui,
-                                    |ui| {
+                                ui.add_space(look::SPACE_M);
+                                egui::Grid::new("addon-metadata")
+                                    .spacing([look::SPACE_L, look::SPACE_XS])
+                                    .show(ui, |ui| {
                                         for (label, value) in [
                                             ("Author", m.author.as_str()),
                                             ("Publisher", m.publisher.as_str()),
@@ -1099,9 +1427,8 @@ impl App {
                                             ui.label(value);
                                             ui.end_row();
                                         }
-                                    },
-                                );
-                                ui.add_space(15.0);
+                                    });
+                                ui.add_space(look::GAP);
                                 if let Some(url) = &m.website {
                                     ui.hyperlink_to("Website", url);
                                 }
@@ -1112,15 +1439,15 @@ impl App {
                                     ui.hyperlink_to(format!("Screenshot {}", i + 1), url);
                                 }
                             });
-                        ui.add_space(18.0);
+                        ui.add_space(look::SPACE_M);
                         let builtin = self.registry.builtin_index(&id).is_some();
                         let package = self.registry.packages.iter().any(|p| p.manifest.id == id);
                         if builtin || package {
                             let mut enabled = self.registry.enabled(&id);
-                            if ui.checkbox(&mut enabled, "Show in sidebar").changed() {
+                            if switch_row(ui, "Show in sidebar", &mut enabled) {
                                 self.set_addon_enabled(&id, enabled);
                             }
-                            ui.add_space(14.0);
+                            ui.add_space(look::GAP);
                             if package {
                                 if ui
                                     .button(RichText::new("Remove add-on").color(look::RED))
@@ -1130,16 +1457,15 @@ impl App {
                                     self.remove_pending = Some(id.clone());
                                 }
                             } else {
-                                muted(
+                                caption(
                                     ui,
-                                    "Included with Toolboks. Updated together with the app. \
-                                     Turn it off to stop it running in the background.",
+                                    "Included with Toolboks and updated with the app. Turn it off to stop it running in the background.",
                                 );
                             }
                         } else {
-                            muted(ui, "Available in the add-on browser.");
+                            muted(ui, "Not installed yet. Install it from the add-ons page.");
                         }
-                        ui.add_space(12.0);
+                        ui.add_space(look::GAP);
                         if ui.button("Close").clicked() {
                             self.detail = None;
                         }
@@ -1164,14 +1490,19 @@ impl App {
             let response = egui::Modal::new(egui::Id::unique("remove-addon"))
                 .frame(panel())
                 .show(ctx, |ui| {
-                    ui.set_width(420.0);
-                    ui.label(RichText::new(format!("Remove {name}?")).size(23.0));
-                    ui.add_space(12.0);
+                    ui.set_width(modal_width(ctx, 420.0));
+                    ui.label(
+                        RichText::new(format!("Remove {name}?"))
+                            .size(look::TEXT_TITLE)
+                            .strong()
+                            .color(TEXT),
+                    );
+                    ui.add_space(look::GAP);
                     muted(
                         ui,
-                        "The installed package and its saved preferences will be removed.",
+                        "The add-on and its saved preferences will be removed from this PC.",
                     );
-                    ui.add_space(20.0);
+                    ui.add_space(look::SPACE_L);
                     ui.horizontal(|ui| {
                         if ui
                             .button(RichText::new("Remove add-on").color(look::RED))
