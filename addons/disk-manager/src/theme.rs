@@ -11,8 +11,6 @@ pub const HAIRLINE: Color32 = Color32::from_rgb(0x24, 0x26, 0x2c);
 pub const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe9, 0xec);
 pub const MUTED: Color32 = Color32::from_rgb(0x9a, 0x9e, 0xa8);
 pub const ACCENT: Color32 = Color32::from_rgb(0x8b, 0x5c, 0xf6);
-/// Text on a filled data colour (tiles, bars). Dark on every data colour, above 4.5:1.
-pub const ON_DATA: Color32 = WINDOW;
 
 /// Data colours used for ranked tiles and bars. Always shown next to a label.
 pub const DATA: [Color32; 6] = [
@@ -68,7 +66,7 @@ pub fn stat(ui: &mut egui::Ui, value: impl Into<String>, label: &str) {
 /// Primary button: accent fill, one per view.
 pub fn primary(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(RichText::new(label).color(Color32::WHITE).strong())
+        egui::Button::new(RichText::new(label).color(WINDOW).strong())
             .fill(ACCENT)
             .corner_radius(6)
             .min_size(Vec2::new(75.0, 28.0)),
@@ -101,6 +99,10 @@ pub fn banner(ui: &mut egui::Ui, text: &str) -> bool {
 /// Table header cell text: 11 px muted, sentence case.
 pub fn header_cell(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).size(11.0).color(MUTED));
+}
+
+pub fn number_cell(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), contents);
 }
 
 #[cfg(test)]

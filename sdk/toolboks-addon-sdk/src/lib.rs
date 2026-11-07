@@ -342,6 +342,9 @@ pub trait NativeAddon {
         None
     }
     fn navigate(&mut self, _page: &str) {}
+    fn page_index(&self) -> usize {
+        0
+    }
     /// Returns true when the add-on changed its namespaced persistent preferences.
     fn ui(
         &mut self,

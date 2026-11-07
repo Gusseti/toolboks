@@ -1,5 +1,4 @@
 use crate::scanner::Node;
-pub use crate::theme::DATA as COLORS;
 use egui::{Color32, Vec2};
 const MIN_SIDE: f32 = 48.0;
 const HEIGHT: f32 = 300.0;
@@ -55,7 +54,7 @@ impl MapLayout {
                     name: n.name.clone(),
                     bytes: n.bytes,
                     rect,
-                    color: COLORS[i % COLORS.len()],
+                    color: crate::theme::DATA[3].gamma_multiply([0.28, 0.22, 0.18, 0.15][i % 4]),
                 });
                 y += height + GAP;
             }
@@ -118,20 +117,26 @@ pub fn show(ui: &mut egui::Ui, layout: &MapLayout) -> Option<usize> {
         return None;
     }
     let mut clicked = None;
+    let scale = (ui.available_width() / layout.width).max(1.0);
     egui::ScrollArea::horizontal()
         .id_salt("disk-map-packed")
         .auto_shrink([false, true])
         .show_viewport(ui, |ui, viewport| {
-            let (r, _) =
-                ui.allocate_exact_size(Vec2::new(layout.width, HEIGHT), egui::Sense::hover());
+            let (r, _) = ui.allocate_exact_size(
+                Vec2::new(layout.width * scale, HEIGHT),
+                egui::Sense::hover(),
+            );
             let first = layout
                 .right_edges
-                .partition_point(|right| *right < viewport.left());
+                .partition_point(|right| *right * scale < viewport.left());
             for tile in layout.tiles[first..]
                 .iter()
-                .take_while(|t| t.rect.left() <= viewport.right())
+                .take_while(|t| t.rect.left() * scale <= viewport.right())
             {
-                let rect = tile.rect.translate(r.min.to_vec2());
+                let rect = egui::Rect::from_min_max(
+                    r.min + Vec2::new(tile.rect.left() * scale, tile.rect.top()),
+                    r.min + Vec2::new(tile.rect.right() * scale, tile.rect.bottom()),
+                );
                 if !ui.is_rect_visible(rect) {
                     continue;
                 }
@@ -140,12 +145,20 @@ pub fn show(ui: &mut egui::Ui, layout: &MapLayout) -> Option<usize> {
                     ui.scope_id().with(("disk-map", tile.id)),
                     egui::Sense::click(),
                 );
+                ui.painter().rect_filled(rect, 4, crate::theme::WINDOW);
                 ui.painter().rect_filled(rect, 4, tile.color);
-                if response.hovered() {
+                if response.hovered() || response.has_focus() {
                     ui.painter().rect_stroke(
                         rect,
                         4,
-                        egui::Stroke::new(2.0, crate::theme::TEXT),
+                        egui::Stroke::new(
+                            1.5,
+                            if response.has_focus() {
+                                crate::theme::ACCENT
+                            } else {
+                                crate::theme::TEXT
+                            },
+                        ),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -155,23 +168,32 @@ pub fn show(ui: &mut egui::Ui, layout: &MapLayout) -> Option<usize> {
                     egui::Align2::LEFT_TOP,
                     &tile.name,
                     egui::FontId::proportional(12.0),
-                    crate::theme::ON_DATA,
+                    crate::theme::TEXT,
                 );
                 painter.text(
                     rect.min + Vec2::new(7.0, 26.0),
                     egui::Align2::LEFT_TOP,
                     crate::size(tile.bytes),
                     egui::FontId::proportional(11.0),
-                    crate::theme::ON_DATA,
+                    crate::theme::TEXT,
                 );
                 if response.clicked() {
                     clicked = Some(tile.id);
                 }
-                response.on_hover_text(format!("{} · {}", tile.name, crate::size(tile.bytes)));
+                let label = format!("{} · {}", tile.name, crate::size(tile.bytes));
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label)
+                });
+                response.on_hover_text(label);
             }
         });
     ui.add_space(5.0);
-    crate::theme::caption(ui, "Tiles are sized by space used, and tiny items are enlarged so you can click them. Labels show the real sizes. Scroll sideways for more.");
+    let note = if scale == 1.0 && layout.width > ui.available_width() {
+        "Scroll sideways for more. Small entries are enlarged. Labels show actual sizes."
+    } else {
+        "Open a folder from the map. Small entries are enlarged. Labels show actual sizes."
+    };
+    crate::theme::caption(ui, note);
     clicked
 }
 #[cfg(test)]

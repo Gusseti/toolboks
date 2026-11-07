@@ -9,6 +9,20 @@ pub struct NativeHost {
 }
 
 impl NativeHost {
+    pub fn pages(provider: &str) -> &'static [&'static str] {
+        if provider == toolboks_disk_manager::PROVIDER {
+            &toolboks_disk_manager::PAGES
+        } else {
+            &[]
+        }
+    }
+
+    pub fn page_index(&self, provider: &str) -> usize {
+        self.active
+            .get(provider)
+            .map_or(0, |addon| addon.page_index())
+    }
+
     pub fn navigate(&mut self, provider: &str, page: &str) {
         if let Some(p) = self.provider(provider) {
             p.navigate(page);

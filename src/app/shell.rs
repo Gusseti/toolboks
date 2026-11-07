@@ -416,6 +416,7 @@ fn page_row(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
 /// What the header shows for the current screen.
 struct Crumb {
     root: String,
+    byline: Option<String>,
     leaf: Option<String>,
     pages: Vec<String>,
     page: usize,
@@ -427,6 +428,7 @@ impl Crumb {
     fn plain(root: &str) -> Self {
         Self {
             root: root.to_owned(),
+            byline: None,
             leaf: None,
             pages: Vec::new(),
             page: 0,
@@ -496,8 +498,12 @@ impl App {
                     .iter()
                     .filter(|p| self.registry.enabled(&p.manifest.id))
                     .map(|p| {
-                        let pages: Vec<String> = if p.manifest.native_provider.is_some() {
-                            Vec::new()
+                        let provider = p.manifest.native_provider.clone();
+                        let pages: Vec<String> = if let Some(provider) = &provider {
+                            crate::native::NativeHost::pages(provider)
+                                .iter()
+                                .map(|p| p.to_string())
+                                .collect()
                         } else {
                             p.pages.iter().map(|page| page.title.clone()).collect()
                         };
@@ -505,6 +511,7 @@ impl App {
                             p.manifest.id.clone(),
                             p.manifest.title.clone(),
                             p.manifest.icon.clone(),
+                            provider,
                             pages,
                         )
                     })
@@ -533,16 +540,23 @@ impl App {
                                 }
                             }
                         }
-                        for (id, title, icon, pages) in installed {
+                        for (id, title, icon, provider, pages) in installed {
                             let on = self.screen == Screen::External(id.clone());
                             if nav(ui, &title, &icon, on, expanded) {
                                 self.screen = Screen::External(id.clone());
                                 self.addon_page = 0;
                             }
                             if on && expanded && pages.len() > 1 {
+                                let page = provider
+                                    .as_deref()
+                                    .map_or(self.addon_page, |p| self.native.page_index(p));
                                 for (p, name) in pages.iter().enumerate() {
-                                    if page_row(ui, name, self.addon_page == p) {
-                                        self.addon_page = p;
+                                    if page_row(ui, name, page == p) {
+                                        if let Some(provider) = &provider {
+                                            self.native.navigate(provider, &p.to_string());
+                                        } else {
+                                            self.addon_page = p;
+                                        }
                                     }
                                 }
                             }
@@ -576,6 +590,7 @@ impl App {
                 let page = self.base.selected.1;
                 Crumb {
                     root: m.title.clone(),
+                    byline: None,
                     leaf: pages.get(page).filter(|_| pages.len() > 1).cloned(),
                     pages,
                     page,
@@ -585,13 +600,20 @@ impl App {
             }
             Screen::External(id) => {
                 let package = self.registry.packages.iter().find(|p| p.manifest.id == id);
+                let provider = package.and_then(|p| p.manifest.native_provider.as_deref());
                 let pages: Vec<String> = package
-                    .filter(|p| p.manifest.native_provider.is_none())
-                    .map(|p| p.pages.iter().map(|page| page.title.clone()).collect())
+                    .map(|p| match provider {
+                        Some(provider) => crate::native::NativeHost::pages(provider)
+                            .iter()
+                            .map(|page| page.to_string())
+                            .collect(),
+                        None => p.pages.iter().map(|page| page.title.clone()).collect(),
+                    })
                     .unwrap_or_default();
-                let page = self.addon_page;
+                let page = provider.map_or(self.addon_page, |p| self.native.page_index(p));
                 Crumb {
                     root: package.map_or_else(|| id.clone(), |p| p.manifest.title.clone()),
+                    byline: package.and_then(|p| p.manifest.byline.clone()),
                     leaf: pages.get(page).filter(|_| pages.len() > 1).cloned(),
                     pages,
                     page,
@@ -615,6 +637,11 @@ impl App {
                     match &crumb.leaf {
                         Some(leaf) => {
                             ui.label(RichText::new(&crumb.root).size(size).color(MUTED));
+                            if let Some(byline) = &crumb.byline {
+                                ui.label(
+                                    RichText::new(byline).size(look::TEXT_CAPTION).color(MUTED),
+                                );
+                            }
                             ui.label(RichText::new("/").size(size).color(MUTED));
                             ui.label(RichText::new(leaf).size(size).strong().color(TEXT));
                         }
@@ -633,7 +660,17 @@ impl App {
                         }
                         // With the rail collapsed the nested pages are out of sight, so the
                         // pages stay reachable here.
-                        if !expanded && crumb.pages.len() > 1 {
+                        if !expanded && crumb.byline.is_some() && crumb.pages.len() > 1 {
+                            egui::ComboBox::from_id_salt("addon-page-selector")
+                                .selected_text("Pages")
+                                .show_ui(ui, |ui| {
+                                    for (i, name) in crumb.pages.iter().enumerate() {
+                                        if ui.selectable_label(crumb.page == i, name).clicked() {
+                                            chosen_page = Some(i);
+                                        }
+                                    }
+                                });
+                        } else if !expanded && crumb.pages.len() > 1 {
                             for (i, name) in crumb.pages.iter().enumerate().rev() {
                                 if look::pill(ui, name, crumb.page == i).clicked() {
                                     chosen_page = Some(i);
@@ -646,7 +683,19 @@ impl App {
         if let Some(page) = chosen_page {
             match self.screen {
                 Screen::Tool(_) => self.base.selected.1 = page,
-                Screen::External(_) => self.addon_page = page,
+                Screen::External(ref id) => {
+                    let provider = self
+                        .registry
+                        .packages
+                        .iter()
+                        .find(|p| &p.manifest.id == id)
+                        .and_then(|p| p.manifest.native_provider.as_deref());
+                    if let Some(provider) = provider {
+                        self.native.navigate(provider, &page.to_string());
+                    } else {
+                        self.addon_page = page;
+                    }
+                }
                 _ => {}
             }
         }

@@ -15,14 +15,17 @@ Choose a drive, browse to a folder, or paste a folder path, then Analyze space. 
 runs on a worker thread, and continues when another add-on is selected. Stop scan
 keeps partial results. Disabling/removing the add-on cancels its active scan.
 
-- Overview: horizontally scrolling packed rectangle map, folders, breadcrumbs and root navigation.
+- Overview: the packed space map leads, with a folder list beside it on wider windows and below
+  it on narrower windows. Select a folder in either view to explore it. Use the path above the
+  map to return to an earlier folder.
   Tiles stretch into full-height columns to close unused pockets, with a 48-pixel minimum side. Tiny items are enlarged;
   labels show actual sizes, while larger tiles retain proportional areas.
 - Largest files: global ranking, search, size/age filters and sorting.
 - File types: extension totals and shares of the scan.
 - Scan details: skipped entries, access errors and measurement limitations.
 - Right-click a table entry to copy its path or reveal it in Explorer.
-- Export report: CSV/JSON of every discovered entry. Enter a full filename;
+- Open pages from the Toolboks sidebar, or from **Pages** when the sidebar is collapsed.
+- Export report: CSV/JSON of every discovered entry. Enter a full filename in the inline form;
   existing files are not overwritten. Export runs off the UI thread.
 
 Scan path, exclusions and filters persist in namespaced preferences. Results remain

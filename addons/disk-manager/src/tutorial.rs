@@ -10,10 +10,10 @@ pub(super) fn steps() -> Vec<S> {
         ("0", "disk-analyze", "Analyze space and stop", "Analyze space scans file and folder metadata in the background. You can use another add-on while it runs. Stop scan cancels the work and keeps partial results; it does not delete files. The tutorial never starts or stops a scan."),
         ("0/options", "disk-options", "Scan options and exclusions", "Enter folder names separated by semicolons to skip them. Matching ignores case and uses exact names. Exclusions affect scan coverage and can reduce totals. Leave this empty for the broadest scan; the tour changes no settings."),
         ("0", "disk-stats", "Understand the scan totals", "This bar shows discovered file bytes, file and folder counts, and elapsed time. A cancelled scan contains partial totals. Sizes are logical lengths and can differ from allocated disk space. If no scan is ready, this tour uses clearly labeled sample data."),
-        ("0", "disk-tabs", "Explore the five views", "Overview explores the folder tree. Largest files ranks files across the whole scan. File types groups bytes by extension, Scan details explains coverage, and Optimization analyzes fragmentation and maintains drives. Next will visit each view for you."),
+        ("0", "disk-workspace-title", "Explore the five views", "Use the Disk Manager pages in the Toolboks sidebar or the Pages menu when the sidebar is collapsed. Next will visit each view for you."),
         ("0", "disk-map", "Space map: find the largest folders", "Rectangles represent immediate children of the current folder. Larger entries have more area; tiny entries are enlarged so they remain clickable. Tiles stretch to fill gaps. Hover for full names and exact sizes, scroll sideways for more, and click a folder to drill down."),
         ("0", "disk-filters", "Search, size, age and sorting", "Search narrows scanned paths; size and age filters reduce the result list. Sort by size, name, file count or modification time. These filters affect the list, not what was scanned or the map's underlying totals."),
-        ("0", "disk-breadcrumbs", "Find your way back", "Breadcrumbs show the current folder's ancestry. Click one to return to that level, or use Back to root above the map. Changing folders only navigates the scan already in memory."),
+        ("0", "disk-breadcrumbs", "Find your way back", "The path above the map shows how you reached this folder. Select any earlier folder to return to it."),
         ("0", "disk-list", "Folder list and file actions", "The list reports entry sizes, share of the entire scan, and file counts. Click folders to explore them. Right-click an entry to copy its path or reveal it in Explorer. Pagination limits how many entries are drawn at once."),
         ("1", "disk-list", "Largest files · across the scan", "This view ranks individual files across all scanned folders. It is not limited to the folder you last explored. Use the filters and sorting to find large or old files, then inspect their paths before making any decisions."),
         ("1", "disk-filters", "Largest files · narrow the ranking", "Combine text, minimum size and age filters to find files that deserve attention. These are filters over the saved scan snapshot; they do not rescan or modify the files."),
@@ -125,6 +125,45 @@ pub(super) fn sample() -> (Progress, Arc<Vec<Node>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overview_keeps_map_first_when_the_folder_list_reflows() {
+        for width in [900.0, 620.0] {
+            let ctx = egui::Context::default();
+            let mut addon = DiskManager::default();
+            let (progress, nodes) = sample();
+            let mut anchors = Vec::new();
+            for target in ["disk-map", "disk-list"] {
+                for _ in 0..3 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                Vec2::new(width, 850.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            guide::prepare(ui.ctx(), Some(target), false);
+                            addon.overview(ui, &nodes, &progress);
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+                anchors.push(guide::anchor(&ctx).unwrap());
+            }
+            let [map, list] = anchors.as_slice() else {
+                unreachable!()
+            };
+            if width == 900.0 {
+                assert!(map.right() <= list.left(), "{map:?} overlaps {list:?}");
+                assert!((map.top() - list.top()).abs() <= 1.0);
+            } else {
+                assert!(map.bottom() <= list.top(), "{map:?} overlaps {list:?}");
+            }
+            assert!(list.right() <= width + 1.0, "{list:?} exceeds {width}");
+        }
+    }
     #[test]
     fn every_tour_step_resolves_without_a_scan_and_restores_state() {
         let ctx = egui::Context::default();
