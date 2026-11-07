@@ -62,6 +62,9 @@ pub struct RunSummary {
     pub failed: usize,
 }
 
+/// Said when a run found nothing to act on.
+pub const NOTHING_TO_TRIM: &str = "Nothing to trim right now. Your idle apps are already small.";
+
 fn apps(n: usize) -> String {
     format!("{n} {}", if n == 1 { "app" } else { "apps" })
 }
@@ -82,9 +85,7 @@ impl RunSummary {
     /// Plain words for what happened. Never says memory was freed.
     pub fn text(&self) -> String {
         if *self == Self::default() {
-            return "No app was a good candidate. The app in front, apps used in the last five \
-                    minutes, small apps and protected apps are always left alone."
-                .to_string();
+            return NOTHING_TO_TRIM.to_string();
         }
         let mut parts = Vec::new();
         if self.lowered > 0 {
@@ -212,6 +213,15 @@ pub fn candidates(
         .collect()
 }
 
+/// A manual run uses the looser policy, an automatic run the strict one.
+pub fn policy_for(trigger: Trigger, own_pid: u32, foreground_pid: Option<u32>) -> Policy {
+    if trigger == Trigger::Manual {
+        Policy::manual(own_pid, foreground_pid)
+    } else {
+        Policy::new(own_pid, foreground_pid)
+    }
+}
+
 /// "+120 MB/h", "-80 MB/h", or a note while there is not enough data yet.
 pub fn per_hour_text(per_hour: Option<i64>) -> String {
     match per_hour {
@@ -267,6 +277,7 @@ impl Memory {
     /// Background work: finish jobs, check pressure, run the scheduler, take settle readings.
     /// Called every frame by the host, also while the window is minimized or in the tray.
     pub(super) fn background(&mut self, ctx: &egui::Context) {
+        self.record_history();
         self.poll_purge(ctx);
         self.poll_run(ctx);
         self.poll_trim(ctx);
@@ -313,6 +324,7 @@ impl Memory {
         } else {
             0.0
         };
+        self.hard_faults = signals.hard_faults_per_sec;
         let decision = self.scheduler.tick(now, &assessment, commit_fraction);
         self.assessment = assessment;
         match decision {
@@ -347,9 +359,10 @@ impl Memory {
         };
 
         let now = Instant::now();
-        let mut policy = Policy::new(std::process::id(), actions::foreground_pid());
+        let mut policy = policy_for(trigger, std::process::id(), actions::foreground_pid());
         policy.exclusions = self.exclusions.clone();
-        self.cooldowns.prune(now, policy.trim_cooldown);
+        // Keep entries as long as the strictest (automatic) cooldown needs them.
+        self.cooldowns.prune(now, actions::AUTO_COOLDOWN);
         let inputs = Inputs {
             procs: &sampler.processes,
             parents: &sampler.parents,
@@ -643,7 +656,7 @@ mod tests {
     fn run_summary_wording_never_says_freed() {
         assert!(RunSummary::default()
             .text()
-            .contains("No app was a good candidate"));
+            .contains("Nothing to trim right now. Your idle apps are already small."));
         let s = RunSummary {
             lowered: 3,
             trimmed: 1,
@@ -656,6 +669,56 @@ mod tests {
              2 apps could not be changed."
         );
         assert!(!text.to_lowercase().contains("freed"));
+    }
+
+    #[test]
+    fn manual_runs_use_the_looser_policy_and_automatic_runs_the_strict_one() {
+        let manual = policy_for(Trigger::Manual, 1, None);
+        let auto = policy_for(Trigger::Pressure, 1, None);
+        assert_eq!(manual.min_idle, Duration::from_secs(60));
+        assert_eq!(manual.min_trim_bytes, 100 * MB);
+        assert_eq!(manual.min_priority_bytes, 25 * MB);
+        assert_eq!(manual.trim_cooldown, Duration::from_secs(600));
+        assert_eq!(auto.min_idle, Duration::from_secs(300));
+        assert_eq!(auto.min_trim_bytes, 200 * MB);
+        assert_eq!(auto.min_priority_bytes, 50 * MB);
+        assert_eq!(auto.trim_cooldown, Duration::from_secs(45 * 60));
+    }
+
+    #[test]
+    fn a_manual_run_finds_apps_the_automatic_one_skips() {
+        let procs = vec![proc(1, "idle.exe", 150), proc(2, "small.exe", 40)];
+        let parents = HashMap::new();
+        let activity = Activity::new(0);
+        // Both apps were last in front when the tool started: idle for 90 s.
+        let inputs = |min_bytes| Inputs {
+            procs: &procs,
+            parents: &parents,
+            activity: &activity,
+            now_ms: 90_000,
+            foreground_pid: None,
+            fullscreen: false,
+            system_idle: None,
+            min_bytes,
+        };
+        let now = Instant::now();
+        let plan_with = |p: &Policy| {
+            let cands = candidates(
+                &inputs(p.min_priority_bytes),
+                &|pid, n| ident(pid, n),
+                &|_| false,
+            );
+            actions::plan(&cands, p, &Cooldowns::new(), now)
+        };
+        let manual = plan_with(&policy_for(Trigger::Manual, 99, None));
+        let auto = plan_with(&policy_for(Trigger::Pressure, 99, None));
+        assert!(manual
+            .iter()
+            .any(|a| a.kind == Kind::Trim && a.identity.pid == 1));
+        assert!(manual
+            .iter()
+            .any(|a| a.kind == Kind::LowerPriority && a.identity.pid == 2));
+        assert!(auto.is_empty(), "{auto:?}");
     }
 
     #[test]

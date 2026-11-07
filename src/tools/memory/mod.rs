@@ -12,6 +12,7 @@ mod pressure;
 mod report;
 mod sampler;
 mod scheduler;
+mod series;
 mod stats;
 mod style;
 mod trim;
@@ -104,8 +105,14 @@ pub struct Memory {
     commit: Option<commit::Commit>,
     /// The last 20 honest run reports, newest last. In memory only.
     reports: VecDeque<report::HonestReport>,
-    /// The "used memory is not a problem" hint was dismissed (this session only).
-    hint_dismissed: bool,
+    /// Which resource the Home graph shows, how far back, and the measured history.
+    selected: home::Metric,
+    range: series::Range,
+    history: series::History,
+    /// Pages read from disk per second, from the latest pressure reading.
+    hard_faults: Option<f64>,
+    /// Home shows the Advanced tools instead of the overview.
+    advanced_open: bool,
 }
 
 impl Memory {
@@ -159,7 +166,11 @@ impl Memory {
             breakdown,
             commit: commit::query(),
             reports: VecDeque::new(),
-            hint_dismissed: false,
+            selected: home::Metric::Memory,
+            range: series::Range::default(),
+            history: series::History::new(),
+            hard_faults: None,
+            advanced_open: false,
         };
         memory.feed_growth();
         memory

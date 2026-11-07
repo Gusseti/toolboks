@@ -52,6 +52,9 @@ Windows system font (Segoe UI Variable). Sizes: 18 page title (once per page, 60
 
 - **Graph card**: the graph fills the whole card; title top left, detail top right, a slim bottom bar with the numbers (value then small label). Hover shows a guide line, a dot on every line, and a tooltip with the time ("2 min 10 s ago") and each value. Estimates are labelled "estimate" in the bar and the tooltip.
 - **Resource row** (master list): small line, name, one plain detail line, current value. Selected = lighter fill.
+- **Verdict row** (Memory Cleaner Home): a status dot, the verdict at 18 and one plain sentence, and at the right the page's one action with an honest sub-line. The action is outlined until the state is bad; then it takes the accent fill.
+- **Pressure line**: a dashed amber reference line on a percent graph, labelled in the title row ("Pressure starts here (90%)"), drawn over `graph_card`.
+- **Disclosure row**: a quiet row at the bottom of a master list (drawn chevron, lighter fill when open) that swaps the detail pane for the advanced tools. Selecting a resource closes it.
 - **Stat**: value in 600, label in muted 11, inline in the bar. No big-number-over-label hero blocks.
 - **Pill / segmented switch**: small choices of one group (the range switch). Selected = lighter fill and full-strength text.
 - **Switch**: on/off for settings. Accent when on.

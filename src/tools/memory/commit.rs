@@ -4,21 +4,11 @@
 
 use windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
 
-const WARN_PERCENT: f32 = 85.0;
-const HOT_PERCENT: f32 = 95.0;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Commit {
     pub total: u64,
     pub limit: u64,
     pub peak: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Level {
-    Calm,
-    Warn,
-    Hot,
 }
 
 /// Reads the commit charge; `None` if the call fails.
@@ -44,32 +34,6 @@ pub fn percent(c: &Commit) -> f32 {
     }
 }
 
-pub fn headroom_bytes(c: &Commit) -> u64 {
-    c.limit.saturating_sub(c.total)
-}
-
-pub fn level(c: &Commit) -> Level {
-    let p = percent(c);
-    if p >= HOT_PERCENT {
-        Level::Hot
-    } else if p >= WARN_PERCENT {
-        Level::Warn
-    } else {
-        Level::Calm
-    }
-}
-
-/// The plain sentence under the numbers; the warning replaces it when the limit is near.
-pub fn sentence(c: &Commit) -> String {
-    match level(c) {
-        Level::Calm => format!(
-            "Windows can promise {} more to programs before it runs out.",
-            crate::format::size_plain(headroom_bytes(c))
-        ),
-        _ => "Close big apps or add pagefile space. Cleaning memory will not help here.".into(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,32 +49,10 @@ mod tests {
     }
 
     #[test]
-    fn percent_and_headroom() {
+    fn percent_of_the_limit() {
         let c = commit(16.0, 32.0);
         assert_eq!(percent(&c), 50.0);
-        assert_eq!(headroom_bytes(&c), 16 * GB);
         assert_eq!(percent(&Commit::default()), 0.0);
-        assert_eq!(headroom_bytes(&commit(40.0, 32.0)), 0);
-    }
-
-    #[test]
-    fn level_thresholds() {
-        assert_eq!(level(&commit(84.9, 100.0)), Level::Calm);
-        assert_eq!(level(&commit(85.0, 100.0)), Level::Warn);
-        assert_eq!(level(&commit(94.9, 100.0)), Level::Warn);
-        assert_eq!(level(&commit(95.0, 100.0)), Level::Hot);
-    }
-
-    #[test]
-    fn sentences() {
-        assert_eq!(
-            sentence(&commit(18.3, 31.9)),
-            "Windows can promise 13.6 GB more to programs before it runs out."
-        );
-        assert_eq!(
-            sentence(&commit(90.0, 100.0)),
-            "Close big apps or add pagefile space. Cleaning memory will not help here."
-        );
     }
 
     #[test]

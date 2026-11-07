@@ -149,12 +149,33 @@ impl Policy {
             min_trim_bytes: 200 * MB,
             min_priority_bytes: 50 * MB,
             min_idle: Duration::from_secs(5 * 60),
-            trim_cooldown: Duration::from_secs(45 * 60),
+            trim_cooldown: AUTO_COOLDOWN,
             max_trims: 8,
             max_priority: 32,
         }
     }
+
+    /// The looser policy for "Trim idle apps" pressed by the user: apps idle for a minute, trims
+    /// from 100 MB, priority changes from 25 MB, and an app is only skipped when the user
+    /// trimmed it in the last ten minutes. Everything else (the app in front, audio, full
+    /// screen, launchers, protected and excluded apps) stays as protected as for the automatic
+    /// policy.
+    pub fn manual(own_pid: u32, foreground_pid: Option<u32>) -> Self {
+        Policy {
+            min_trim_bytes: 100 * MB,
+            min_priority_bytes: 25 * MB,
+            min_idle: Duration::from_secs(60),
+            trim_cooldown: MANUAL_COOLDOWN,
+            ..Policy::new(own_pid, foreground_pid)
+        }
+    }
 }
+
+/// The automatic policy's trim cooldown. The cooldown table is kept this long so an automatic
+/// run still honors it after manual runs used the shorter one.
+pub const AUTO_COOLDOWN: Duration = Duration::from_secs(45 * 60);
+/// How long a manual run leaves an app alone after trimming it.
+pub const MANUAL_COOLDOWN: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Skip {
@@ -755,6 +776,89 @@ mod tests {
             Err(Skip::TooSmall)
         );
         assert_eq!(check(&cand(10, "a.exe", 200), Kind::Trim), Ok(()));
+    }
+
+    #[test]
+    fn manual_policy_is_looser_than_automatic() {
+        let auto = policy();
+        let manual = Policy::manual(1, Some(2));
+        let mut c = cand(10, "a.exe", 150);
+        c.idle_for = Some(Duration::from_secs(90));
+        let now = Instant::now();
+        let cd = Cooldowns::new();
+        // 150 MB idle for 90 s: not idle long enough for automatic, fine for manual.
+        assert_eq!(
+            check_eligibility(&c, Kind::Trim, &auto, &cd, now),
+            Err(Skip::NotIdle)
+        );
+        assert_eq!(check_eligibility(&c, Kind::Trim, &manual, &cd, now), Ok(()));
+        c.idle_for = Some(Duration::from_secs(3600));
+        c.working_set = 120 * MB;
+        assert_eq!(
+            check_eligibility(&c, Kind::Trim, &auto, &cd, now),
+            Err(Skip::TooSmall)
+        );
+        assert_eq!(check_eligibility(&c, Kind::Trim, &manual, &cd, now), Ok(()));
+        c.working_set = 30 * MB;
+        assert_eq!(
+            check_eligibility(&c, Kind::LowerPriority, &auto, &cd, now),
+            Err(Skip::TooSmall)
+        );
+        assert_eq!(
+            check_eligibility(&c, Kind::LowerPriority, &manual, &cd, now),
+            Ok(())
+        );
+        // Below the manual minimums it is still left alone.
+        c.working_set = 20 * MB;
+        assert_eq!(
+            check_eligibility(&c, Kind::LowerPriority, &manual, &cd, now),
+            Err(Skip::TooSmall)
+        );
+        c.working_set = 90 * MB;
+        assert_eq!(
+            check_eligibility(&c, Kind::Trim, &manual, &cd, now),
+            Err(Skip::TooSmall)
+        );
+        c.working_set = 150 * MB;
+        c.idle_for = Some(Duration::from_secs(30));
+        assert_eq!(
+            check_eligibility(&c, Kind::LowerPriority, &manual, &cd, now),
+            Err(Skip::NotIdle)
+        );
+    }
+
+    #[test]
+    fn manual_policy_keeps_the_same_protections() {
+        let manual = Policy::manual(1, Some(2));
+        let cd = Cooldowns::new();
+        let now = Instant::now();
+        let check = |c: &Candidate| check_eligibility(c, Kind::Trim, &manual, &cd, now);
+        assert_eq!(check(&cand(2, "front.exe", 500)), Err(Skip::Foreground));
+        assert_eq!(check(&cand(1, "toolboks.exe", 500)), Err(Skip::Own));
+        assert_eq!(check(&cand(10, "msmpeng.exe", 500)), Err(Skip::Security));
+        let mut audio = cand(11, "music.exe", 500);
+        audio.plays_audio = true;
+        assert_eq!(check(&audio), Err(Skip::PlaysAudio));
+        let mut full = cand(12, "game.exe", 500);
+        full.is_fullscreen = true;
+        assert_eq!(check(&full), Err(Skip::Fullscreen));
+        assert_eq!(check(&cand(13, "steam.exe", 500)), Err(Skip::Launcher));
+    }
+
+    #[test]
+    fn manual_cooldown_is_ten_minutes_and_automatic_stays_45() {
+        let base = Instant::now();
+        let c = cand(10, "a.exe", 500);
+        let mut cd = Cooldowns::new();
+        cd.record(&c.identity, base);
+        let manual = Policy::manual(1, Some(2));
+        let at = |p: &Policy, m: u64| {
+            check_eligibility(&c, Kind::Trim, p, &cd, base + Duration::from_secs(m * 60))
+        };
+        assert_eq!(at(&manual, 9), Err(Skip::Cooldown));
+        assert_eq!(at(&manual, 10), Ok(()));
+        assert_eq!(at(&policy(), 10), Err(Skip::Cooldown));
+        assert_eq!(policy().trim_cooldown, AUTO_COOLDOWN);
     }
 
     #[test]
