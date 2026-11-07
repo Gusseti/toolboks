@@ -39,7 +39,7 @@ impl Bridge {
         }
     }
 
-    fn next(&mut self) -> [f32; 2] {
+    pub(super) fn next(&mut self) -> [f32; 2] {
         if !self.ready {
             if self.frames.len() < self.target {
                 return [0.0; 2];

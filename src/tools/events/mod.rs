@@ -25,14 +25,6 @@ impl EventWatch {
 }
 
 impl Tool for EventWatch {
-    fn name(&self) -> &'static str {
-        "Event Watch"
-    }
-
-    fn pages(&self) -> &'static [&'static str] {
-        &["Live", "Crashes", "Summary"]
-    }
-
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {
         self.page.ui(ui, page);
     }

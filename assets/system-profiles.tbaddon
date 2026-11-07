@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "manifest": {
+    "id": "toolboks.system-profiles",
+    "title": "System Profiles",
+    "native_provider": "toolboks.system-profiles",
+    "description": "Review and apply a Windows gaming profile with a restore point, registry backup, and activity log.",
+    "long_description": "Choose the Gaming profile changes to apply, follow guided Windows and NVIDIA settings, and restore the settings Toolboks applied.",
+    "version": "0.1.0",
+    "author": "Toolboks",
+    "publisher": "Toolboks",
+    "category": "System",
+    "icon": "activity",
+    "accent": "#8B5CF6",
+    "api_version": 2,
+    "min_toolboks_version": "0.12.0",
+    "license": "MIT",
+    "capabilities": ["system_tuning"]
+  },
+  "pages": []
+}

@@ -52,7 +52,7 @@ const CACHE_NOTE: &str = "Cache is memory Windows keeps ready to reuse. It is no
 /// Shown under the "Clean automatically" switch.
 const AUTO_DESCRIPTION: &str = "Off by default. When on, it only cleans after memory has been \
     under pressure for a minute, at most once an hour, and never touches the app you are using. \
-    It keeps working while the window is minimized or hidden in the tray.";
+    It pauses when you switch away from Memory Cleaner or hide Toolboks in the tray.";
 
 /// Colors of the "Where your memory goes" bar. The names sit next to them in the legend.
 const APPS_COLOR: Color32 = DATA_MEMORY;

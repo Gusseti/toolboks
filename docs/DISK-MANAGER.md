@@ -12,8 +12,9 @@ It appears in the sidebar with the Toolboks verified mark. Alternatively, instal
 `addons/disk-manager/disk-manager.tbaddon` through the local package installer.
 
 Choose a drive, browse to a folder, or paste a folder path, then Analyze space. Scanning is read-only,
-runs on a worker thread, and continues when another add-on is selected. Stop scan
-keeps partial results. Disabling/removing the add-on cancels its active scan.
+runs on a worker thread. Stop scan keeps partial results while Disk Manager is open.
+Leaving Disk Manager cancels a scan and releases its results from memory. Report exports and
+Windows drive optimizations already started can finish in the background.
 
 - Overview: the packed space map leads, with a folder list beside it on wider windows and below
   it on narrower windows. Select a folder in either view to explore it. Use the path above the

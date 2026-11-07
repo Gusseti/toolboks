@@ -138,6 +138,9 @@ Disk Manager 0.1 remains read-only until its approved 0.2 package update is inst
 `live_audio` is a native-only capability for microphone monitoring and routing to
 user-selected outputs. Audio Gainer opens audio streams only after an explicit action.
 
+`system_tuning` is a native-only capability for the System Profiles add-on. Applying
+or restoring a profile requires an explicit action and administrator rights.
+
 `take_host_request` can return `ReviewUpdate` or `RestartElevated { page }`. The host
 handles the package review or user-requested administrator restart. `navigate(page)`
 restores the requested native page after restart without automatically doing work.

@@ -571,6 +571,9 @@ impl Worker {
                 let mut ready = false;
                 loop {
                     std::thread::sleep(Duration::from_millis(250));
+                    if Arc::strong_count(&ping) == 1 {
+                        return;
+                    }
                     let now_ms = epoch.elapsed().as_millis() as u64;
                     if !visible(ping.load(Ordering::Relaxed), now_ms) {
                         // The CPU baseline goes stale while hidden.

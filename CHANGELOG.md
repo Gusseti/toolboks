@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Toolboks loads add-on workspaces on demand and releases their page data when you switch away. Audio Gainer keeps active routes running without collecting offscreen meter history.
+- Resource Monitor and Memory Cleaner pause sampling when you leave them. Leaving Disk Manager cancels its scan and releases scan results.
+
 ## [0.12.0] - 2026-11-07
 
 ### Added

@@ -36,7 +36,8 @@ pub fn official_disk_package() -> Package {
     serde_json::from_str(toolboks_disk_manager::PACKAGE).expect("bundled disk package")
 }
 pub const AURAL_ID: &str = "toolboks.aural";
-pub const OFFICIAL_ADDONS: [&str; 2] = [toolboks_disk_manager::ID, AURAL_ID];
+pub const PROFILES_ID: &str = "toolboks.system-profiles";
+pub const OFFICIAL_ADDONS: [&str; 3] = [toolboks_disk_manager::ID, AURAL_ID, PROFILES_ID];
 
 pub fn official_package(id: &str) -> Option<Package> {
     match id {
@@ -44,6 +45,10 @@ pub fn official_package(id: &str) -> Option<Package> {
         AURAL_ID => Some(
             serde_json::from_str(include_str!("../assets/aural.tbaddon"))
                 .expect("bundled Aural package"),
+        ),
+        PROFILES_ID => Some(
+            serde_json::from_str(include_str!("../assets/system-profiles.tbaddon"))
+                .expect("bundled System Profiles package"),
         ),
         _ => None,
     }
@@ -78,9 +83,31 @@ fn validate_provider(p: &Package) -> Result<(), String> {
         Ok(())
     }
 }
+#[derive(Default)]
 pub struct SystemAddon {
-    pub tools: Vec<Box<dyn crate::tools::Tool>>,
+    pub tools: [Option<Box<dyn crate::tools::Tool>>; crate::tools::COUNT],
     pub selected: (usize, usize),
+    pub active: Option<usize>,
+}
+
+impl SystemAddon {
+    pub fn show(&mut self, active: Option<usize>) {
+        if self.active == active {
+            return;
+        }
+        if let Some(old) = self.active {
+            if self.tools[old].as_mut().is_some_and(|tool| !tool.suspend()) {
+                self.tools[old] = None;
+            }
+        }
+        if let Some(index) = active {
+            match &mut self.tools[index] {
+                Some(tool) => tool.resume(),
+                slot @ None => *slot = Some(crate::tools::build(index)),
+            }
+        }
+        self.active = active;
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -308,6 +335,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn built_in_workspaces_load_on_demand_and_release_on_navigation() {
+        let mut session = SystemAddon::default();
+        assert!(session.tools.iter().all(Option::is_none));
+        session.show(Some(1));
+        assert!(session.tools[1].is_some());
+        assert_eq!(session.tools.iter().flatten().count(), 1);
+        session.show(Some(3));
+        assert!(session.tools[1].is_none());
+        assert!(session.tools[3].is_some());
+        session.show(None);
+        assert!(session.tools.iter().all(Option::is_none));
+    }
+
+    #[test]
     fn official_aural_package_cannot_be_impersonated() {
         let package = official_package(AURAL_ID).unwrap();
         package.validate(env!("CARGO_PKG_VERSION")).unwrap();
@@ -327,6 +368,20 @@ mod tests {
         spoof.manifest.native_provider = None;
         assert!(validate_provider(&spoof).is_err());
     }
+    #[test]
+    fn system_profiles_requires_the_exact_official_package() {
+        let package = official_package(PROFILES_ID).unwrap();
+        package.validate(env!("CARGO_PKG_VERSION")).unwrap();
+        assert!(validate_provider(&package).is_ok());
+        assert_eq!(
+            package.manifest.capabilities,
+            [toolboks_addon_sdk::Capability::SystemTuning]
+        );
+        let mut spoof = package;
+        spoof.manifest.native_provider = None;
+        assert!(validate_provider(&spoof).is_err());
+    }
+
     #[test]
     fn legacy_disk_package_keeps_read_only_permissions_until_update() {
         let legacy: Package = serde_json::from_str(toolboks_disk_manager::LEGACY_PACKAGE).unwrap();
@@ -426,10 +481,13 @@ mod tests {
     fn every_builtin_manifest_parses_and_validates() {
         let manifests = builtin_manifests();
         assert_eq!(manifests.len(), BUILTIN_IDS.len());
-        let tool_names: Vec<_> = crate::tools::all().iter().map(|t| t.name()).collect();
         for (i, m) in manifests.iter().enumerate() {
             assert_eq!(m.id, BUILTIN_IDS[i]);
-            assert_eq!(m.title, tool_names[i], "manifest order matches tool order");
+            assert_eq!(
+                m.title,
+                crate::tools::WORKSPACES[i].0,
+                "manifest order matches tool order"
+            );
             assert_eq!(m.version, env!("CARGO_PKG_VERSION"));
             assert_eq!(m.min_toolboks_version, env!("CARGO_PKG_VERSION"));
             let package = serde_json::json!({

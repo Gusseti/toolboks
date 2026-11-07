@@ -69,6 +69,7 @@ pub enum Capability {
     UserExports,
     DriveOptimize,
     LiveAudio,
+    SystemTuning,
 }
 
 #[cfg(feature = "native-ui")]
@@ -257,6 +258,7 @@ impl Package {
                         | Capability::UserExports
                         | Capability::DriveOptimize
                         | Capability::LiveAudio
+                        | Capability::SystemTuning
                 )
             })
         {
@@ -352,6 +354,12 @@ pub trait NativeAddon {
         preferences: &mut std::collections::BTreeMap<String, serde_json::Value>,
     ) -> bool;
     fn tick(&mut self, _ctx: &egui::Context) {}
+    fn suspend(&mut self) {}
+    fn resume(&mut self) {}
+    fn has_background_work(&self) -> bool {
+        false
+    }
+    fn tick_background(&mut self) {}
     fn cancel(&mut self) {}
     fn tutorial_steps(&self) -> Vec<TutorialStep> {
         Vec::new()
@@ -399,7 +407,7 @@ mod tests {
         let mut v = example();
         v["manifest"]["capabilities"] = serde_json::json!([]);
         assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
-        for capability in ["drive_optimize", "live_audio"] {
+        for capability in ["drive_optimize", "live_audio", "system_tuning"] {
             let mut v = example();
             v["manifest"]["capabilities"] =
                 serde_json::json!(["host_metrics", "local_preferences", capability]);

@@ -95,7 +95,11 @@ impl App {
         let locations = if let Some(p) = &provider {
             vec![self.native.tutorial_location(p)]
         } else if let Some(t) = tool {
-            vec![self.base.tools[t].tutorial_location()]
+            self.base.tools[t]
+                .as_ref()
+                .map(|tool| tool.tutorial_location())
+                .into_iter()
+                .collect()
         } else {
             Vec::new()
         };
@@ -126,7 +130,9 @@ impl App {
                 let mut parts = step.page.split('/');
                 if let Some(p) = parts.next().and_then(|s| s.parse::<usize>().ok()) {
                     self.base.selected = (t, p);
-                    self.base.tools[t].tutorial_navigate(parts.next().unwrap_or(""));
+                    if let Some(tool) = &mut self.base.tools[t] {
+                        tool.tutorial_navigate(parts.next().unwrap_or(""));
+                    }
                 }
             } else if let Some(provider) = &run.provider {
                 self.native.tutorial_navigate(provider, &step.page);
@@ -155,7 +161,9 @@ impl App {
                 }
                 self.native.tutorial_finish(&provider);
             } else if let (Some(t), Some(location)) = (run.tool, run.locations.first()) {
-                self.base.tools[t].tutorial_navigate(location);
+                if let Some(tool) = &mut self.base.tools[t] {
+                    tool.tutorial_navigate(location);
+                }
             }
         }
         anchors::prepare(ctx, None, false);
@@ -308,14 +316,13 @@ mod tests {
     }
     #[test]
     fn every_builtin_tool_has_its_own_tour_covering_every_page() {
-        for (t, tool) in tools::all().iter().enumerate() {
+        for (t, (name, pages)) in tools::WORKSPACES.iter().enumerate() {
             let steps = catalog::for_tool(t);
-            assert!(!steps.is_empty(), "{} has a tour", tool.name());
-            for p in 0..tool.pages().len() {
+            assert!(!steps.is_empty(), "{name} has a tour");
+            for p in 0..pages.len() {
                 assert!(
                     steps.iter().any(|s| chapter(&s.page) == p.to_string()),
-                    "{} page {p}",
-                    tool.name()
+                    "{name} page {p}"
                 );
             }
         }

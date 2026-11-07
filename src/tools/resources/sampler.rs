@@ -1,10 +1,10 @@
 //! Background sampler for the Resources page. A worker thread reads CPU, memory and uptime about
-//! once a second for as long as the app runs. The heavy process table is only read while the page
+//! once a second while Resource Monitor is active. The heavy process table is only read while the page
 //! is on screen (the UI calls `ping()` every frame).
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -150,9 +150,16 @@ pub enum Msg {
 
 pub struct Sampler {
     rx: Receiver<Msg>,
+    stop: Arc<AtomicBool>,
     /// Last ping as milliseconds since `epoch`, stored plus one (0 = never pinged).
     last_ping: Arc<AtomicU64>,
     epoch: Instant,
+}
+
+impl Drop for Sampler {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
 }
 
 /// `last_ping_plus_one` is 0 when never pinged, else the ping time in ms plus one.
@@ -622,6 +629,7 @@ fn spawn_process_worker(
     ping: Arc<AtomicU64>,
     top: Arc<Mutex<TopProcesses>>,
     gpu_pids: Arc<Mutex<Vec<(u32, f32)>>>,
+    stop: Arc<AtomicBool>,
 ) {
     let spawned = std::thread::Builder::new()
         .name("resource-procs".into())
@@ -635,7 +643,7 @@ fn spawn_process_worker(
             let mut primed = true;
             loop {
                 std::thread::sleep(TICK);
-                if Arc::strong_count(&top) == 1 {
+                if stop.load(Ordering::Relaxed) || Arc::strong_count(&top) == 1 {
                     // The main worker is gone, so nobody reads the lists any more.
                     return;
                 }
@@ -678,6 +686,8 @@ impl Sampler {
     /// Starts the worker thread. It wakes the UI with `ctx.request_repaint()` after each sample.
     pub fn start(ctx: &egui::Context) -> Sampler {
         let (tx, rx) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_worker = Arc::clone(&stop);
         let last_ping = Arc::new(AtomicU64::new(0));
         let epoch = Instant::now();
         let ping = Arc::clone(&last_ping);
@@ -718,6 +728,7 @@ impl Sampler {
                     Arc::clone(&ping),
                     Arc::clone(&top),
                     Arc::clone(&gpu_pids_shared),
+                    Arc::clone(&stop_worker),
                 );
 
                 let disk_kind = DiskRefreshKind::nothing()
@@ -732,11 +743,12 @@ impl Sampler {
                 let nvml = Nvml::open();
                 let mut last_tick = Instant::now();
 
-                // The thread was just primed above, so the first tick can already report. It keeps
-                // sampling whether or not the page is on screen, so the long graph ranges have no
-                // holes; only the process table (its own thread) waits for the page to be shown.
+                // The thread was primed above, so the first tick can already report.
                 loop {
                     std::thread::sleep(TICK);
+                    if stop_worker.load(Ordering::Relaxed) {
+                        return;
+                    }
                     sys.refresh_cpu_all();
                     sys.refresh_memory();
 
@@ -806,6 +818,7 @@ impl Sampler {
 
         Sampler {
             rx,
+            stop,
             last_ping,
             epoch,
         }

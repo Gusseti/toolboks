@@ -83,7 +83,7 @@ pub struct Memory {
     activity: Activity,
     /// Pressure verdict: the model, the Windows readings and the latest assessment.
     pressure: PressureModel,
-    signals: WindowsSignals,
+    signals: Option<WindowsSignals>,
     assessment: Assessment,
     /// Automatic mode (off by default) and the advice shown instead of a run.
     scheduler: Scheduler,
@@ -98,7 +98,7 @@ pub struct Memory {
     growth: GrowthTracker,
     last_growth: Option<Instant>,
     /// Reads the numbers a run report compares.
-    win_sampler: WindowsSampler,
+    win_sampler: Option<WindowsSampler>,
     /// "Where your memory goes" on Home; rebuilt with every refresh. Not stored anywhere.
     breakdown: groups::Breakdown,
     /// Commit charge on Home; refreshed with the sampler. `None` if the query fails.
@@ -149,7 +149,7 @@ impl Memory {
             cooldowns: Cooldowns::new(),
             activity: Activity::new(0),
             pressure: PressureModel::new(),
-            signals: WindowsSignals::new(),
+            signals: Some(WindowsSignals::new()),
             assessment: Assessment {
                 verdict: Verdict::Healthy,
                 reasons: Vec::new(),
@@ -162,7 +162,7 @@ impl Memory {
             last_ui: None,
             growth: GrowthTracker::new(),
             last_growth: None,
-            win_sampler: WindowsSampler::new(),
+            win_sampler: None,
             breakdown,
             commit: commit::query(),
             reports: VecDeque::new(),
@@ -221,16 +221,43 @@ impl Tool for Memory {
             _ => advanced::Tab::Selected,
         };
     }
-    fn name(&self) -> &'static str {
-        "Memory Cleaner"
-    }
-
-    fn pages(&self) -> &'static [&'static str] {
-        &["Home", "Advanced"]
-    }
-
     fn tick(&mut self, ctx: &egui::Context) {
         self.background(ctx);
+    }
+
+    fn suspend(&mut self) -> bool {
+        self.sampler = None;
+        self.signals = None;
+        self.last_ui = None;
+        self.breakdown = Default::default();
+        self.growth = GrowthTracker::new();
+        self.last_growth = None;
+        self.history = series::History::new();
+        self.pressure = PressureModel::new();
+        self.activity = Activity::new(self.now_ms());
+        self.selection = Selection::default();
+        if self.run.is_none() && self.settling.is_none() {
+            self.win_sampler = None;
+        }
+        true
+    }
+
+    fn resume(&mut self) {
+        self.sampler = Sampler::new();
+        self.signals = Some(WindowsSignals::new());
+        self.refresh_now();
+    }
+
+    fn finish_pending(&mut self, ctx: &egui::Context) {
+        self.poll_purge(ctx);
+        self.poll_run(ctx);
+        self.poll_trim(ctx);
+        self.settle_tick();
+        if self.settling.is_some() {
+            ctx.request_repaint_after(REFRESH);
+        } else if self.sampler.is_none() && self.run.is_none() {
+            self.win_sampler = None;
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {

@@ -221,14 +221,6 @@ impl crate::tools::Tool for Resources {
             .find(|r| r.key() == section)
             .unwrap_or_default();
     }
-    fn name(&self) -> &'static str {
-        "Resource Monitor"
-    }
-
-    fn pages(&self) -> &'static [&'static str] {
-        &["Overview", "Details", "Processes", "Connections"]
-    }
-
     fn status(&self) -> Vec<String> {
         let live = self.last_at.is_some_and(|t| t.elapsed() < LIVE_WITHIN);
         let (true, Some(sample)) = (live, &self.last) else {
@@ -244,8 +236,6 @@ impl crate::tools::Tool for Resources {
     fn tick(&mut self, ctx: &egui::Context) {
         self.processes.tick();
         self.connections.tick();
-        // Recording starts with the app, so every range is complete even when this tool is
-        // not on screen.
         let sampler = self.sampler.get_or_insert_with(|| Sampler::start(ctx));
         for msg in sampler.drain() {
             match msg {
