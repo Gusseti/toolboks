@@ -17,10 +17,6 @@ const PAIR_AFTER_MS: i64 = 15 * MINUTE_MS;
 const PAIR_BEFORE_MS: i64 = MINUTE_MS;
 /// Kernel-Power 41 events closer together than this are one crash.
 const DEDUPE_MS: i64 = 2 * MINUTE_MS;
-/// Records closer together than this belong to one burst. The boot burst after a crash is the
-/// chain of records ending at the 41; the first record before a longer gap is the best guess for
-/// "last thing the old session logged".
-const BURST_GAP_MS: i64 = 30 * SECOND_MS;
 
 // Digest thresholds. PROPOSALS, documented in docs/PLAN-event-watch.md; adjust after real use.
 /// A disk group with at least this many events in the period is reported as needing attention.
@@ -162,18 +158,18 @@ fn parse_1001_code(text: &str) -> Option<(u32, [u64; 4])> {
 /// Finds restarts that were not clean (Kernel-Power 41, with WER 1001 pairing) and attaches the
 /// warnings/errors in the `window_ms` before each one. Newest crash first.
 /// `events` may be unsorted and may include several channels.
-///
-/// `stopped_ms` rule (EventLog 6008 carries only localised text times, so it is not parsed): from
-/// the 41, walk back while the previous record is at most 30 s earlier (that chain is the boot
-/// burst of the new session); `stopped_ms` is the time of the first record before that gap, or
-/// `noticed_ms` when there is none.
-pub fn detect_crashes(events: &[Event], window_ms: i64) -> Vec<Crash> {
+/// `estimate_stop` supplies a stop time for each restart timestamp, if the logs support one.
+pub fn detect_crashes(
+    events: &[Event],
+    window_ms: i64,
+    mut estimate_stop: impl FnMut(i64) -> Option<i64>,
+) -> Vec<Crash> {
     let mut sorted: Vec<&Event> = events.iter().collect();
     sorted.sort_by_key(|e| (e.time_ms, e.record_id));
 
     let mut crashes: Vec<Crash> = Vec::new();
     let mut last_kept: Option<i64> = None;
-    for (idx, e) in sorted.iter().enumerate() {
+    for e in &sorted {
         if !(provider_key(&e.provider) == "kernel-power" && e.id == 41) {
             continue;
         }
@@ -210,22 +206,13 @@ pub fn detect_crashes(events: &[Event], window_ms: i64) -> Vec<Crash> {
             }
         }
 
-        let mut i = idx;
-        while i > 0 && sorted[i].time_ms - sorted[i - 1].time_ms <= BURST_GAP_MS {
-            i -= 1;
-        }
-        let stopped_ms = if i > 0 {
-            sorted[i - 1].time_ms
-        } else {
-            noticed_ms
-        };
+        let stopped_ms = estimate_stop(noticed_ms);
 
         let before: Vec<Event> = sorted
             .iter()
             .filter(|b| {
                 (1..=3).contains(&b.level)
-                    && b.time_ms >= stopped_ms - window_ms
-                    && b.time_ms <= stopped_ms
+                    && stopped_ms.is_some_and(|stop| (stop - window_ms..=stop).contains(&b.time_ms))
                     && !is_crash_marker(b)
             })
             .map(|b| (*b).clone())
@@ -505,11 +492,11 @@ mod tests {
             ev("EventLog", 6008, 2, boot + 12_000, &[]),
             ev("Service Control Manager", 7034, 2, T0 + 99 * MIN, &[]),
         ];
-        let crashes = detect_crashes(&events, 10 * MIN);
+        let crashes = detect_crashes(&events, 10 * MIN, |_| Some(T0 + 99 * MIN));
         assert_eq!(crashes.len(), 1);
         let c = &crashes[0];
         assert_eq!(c.noticed_ms, boot + 20_000);
-        assert_eq!(c.stopped_ms, T0 + 99 * MIN);
+        assert_eq!(c.stopped_ms, Some(T0 + 99 * MIN));
         assert_eq!(
             c.kind,
             CrashKind::BlueScreen {
@@ -530,7 +517,7 @@ mod tests {
         let t = T0 + 50 * MIN;
         let a = kp41(t, &[("BugcheckCode", "0x139")]);
         assert!(matches!(
-            detect_crashes(&[a], MIN)[0].kind,
+            detect_crashes(&[a], MIN, |_| None)[0].kind,
             CrashKind::BlueScreen { code: 0x139, .. }
         ));
         let z = kp41(t, &[("BugcheckCode", "0")]);
@@ -541,7 +528,7 @@ mod tests {
             t + 3 * MIN,
             &[("x", "0x000000D1 (0x1, 0x2, 0x0, 0x4)")],
         );
-        let c = &detect_crashes(&[z, w], MIN)[0];
+        let c = &detect_crashes(&[z, w], MIN, |_| None)[0];
         assert_eq!(
             c.kind,
             CrashKind::BlueScreen {
@@ -567,18 +554,18 @@ mod tests {
             &[("BugcheckCode", "0"), ("PowerButtonTimestamp", "0")],
         );
         let unknown = kp41(t + 120 * MIN, &[("BugcheckCode", "junk")]);
-        let c = detect_crashes(&[forced, loss, unknown], MIN);
+        let c = detect_crashes(&[forced, loss, unknown], MIN, |_| None);
         assert_eq!(c.len(), 3);
         // Newest first.
         assert_eq!(c[0].kind, CrashKind::Unknown);
         assert_eq!(c[1].kind, CrashKind::PowerLossOrHang);
         assert_eq!(c[2].kind, CrashKind::ForcedRestart);
-        // No earlier records: stopped falls back to noticed.
-        assert_eq!(c[2].stopped_ms, t);
+        assert_eq!(c[2].stopped_ms, None);
+        assert!(c[2].before.is_empty());
     }
 
     #[test]
-    fn dedupes_close_crashes_and_stops_before_boot_burst() {
+    fn dedupes_close_crashes_and_uses_each_stop_estimate() {
         let t = T0;
         let events = vec![
             ev("Last", 1, 2, t - 10 * MIN, &[]),
@@ -586,9 +573,12 @@ mod tests {
             kp41(t + MIN, &[("BugcheckCode", "0")]),
             kp41(t + 5 * MIN, &[("BugcheckCode", "0")]),
         ];
-        let c = detect_crashes(&events, MIN);
+        let c = detect_crashes(&events, MIN, |noticed| {
+            (noticed == t).then_some(t - 10 * MIN)
+        });
         assert_eq!(c.len(), 2);
-        assert_eq!(c[1].stopped_ms, t - 10 * MIN);
+        assert_eq!(c[1].stopped_ms, Some(t - 10 * MIN));
+        assert_eq!(c[0].stopped_ms, None);
         assert_eq!(c[1].before.len(), 1);
     }
 
@@ -607,7 +597,11 @@ mod tests {
         events.extend(mk("disk", 11, 4, Some("1")));
         events.extend(mk("Microsoft-Windows-WHEA-Logger", 17, 3, None));
         events.extend(mk("Display", 4101, 2, None));
-        let crash = detect_crashes(&[kp41(T0 + 10 * MIN, &[("BugcheckCode", "313")])], MIN);
+        let crash = detect_crashes(
+            &[kp41(T0 + 10 * MIN, &[("BugcheckCode", "313")])],
+            MIN,
+            |_| None,
+        );
         let lines = digest(&group(&events), &crash);
         let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
         assert!(texts[0].starts_with("1 bluescreen in this period, the latest on "));

@@ -200,6 +200,10 @@ impl Debloater {
     }
 
     pub(super) fn page_ui(&mut self, ui: &mut egui::Ui, page: usize) {
+        if page == 1 && !self.can_change_user_profile {
+            style::note(ui, elevation::USER_PROFILE_BLOCKED);
+            return;
+        }
         if !self.loaded {
             self.refresh();
         }
@@ -295,7 +299,14 @@ impl Debloater {
         }
         ui.add_space(GAP);
 
-        let (safe, careful) = group_by_risk(catalog::items());
+        let (mut safe, mut careful) = group_by_risk(catalog::items());
+        if !self.can_change_user_profile {
+            style::note(ui, elevation::USER_PROFILE_BLOCKED);
+            let machine_only =
+                |item: &&Item| item.settings.iter().all(|s| s.hive == Hive::LocalMachine);
+            safe.retain(machine_only);
+            careful.retain(machine_only);
+        }
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -940,11 +951,16 @@ impl Debloater {
         }
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
+        let can_change_user_profile = self.can_change_user_profile;
         std::thread::spawn(move || {
-            let _ = tx.send(startup::entries(
-                &startup::WinStartup,
-                &startup::publisher_of_command,
-            ));
+            let entries = startup::entries(&startup::WinStartup, &startup::publisher_of_command)
+                .map(|mut entries| {
+                    if !can_change_user_profile {
+                        entries.retain(|entry| entry.source.needs_admin());
+                    }
+                    entries
+                });
+            let _ = tx.send(entries);
             ctx.request_repaint();
         });
         self.startup.loading = Some(rx);
@@ -1008,6 +1024,9 @@ impl Debloater {
     }
 
     fn startup_page(&mut self, ui: &mut egui::Ui) {
+        if !self.can_change_user_profile {
+            style::note(ui, elevation::USER_PROFILE_BLOCKED);
+        }
         let admin = if self.env.elevated {
             "Running as administrator"
         } else {

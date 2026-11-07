@@ -87,9 +87,8 @@ pub enum CrashKind {
 pub struct Crash {
     /// When the system noticed (Kernel-Power 41 `TimeCreated`, i.e. at the next boot).
     pub noticed_ms: i64,
-    /// Best estimate of when it stopped (6008 time, else last record before the boot, else
-    /// `noticed_ms`).
-    pub stopped_ms: i64,
+    /// Last recent record before Windows started again, if the logs support an estimate.
+    pub stopped_ms: Option<i64>,
     pub kind: CrashKind,
     /// Dump path from event 1001 when present.
     pub dump_path: Option<String>,

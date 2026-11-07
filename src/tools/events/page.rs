@@ -545,9 +545,9 @@ fn crash_report(
     keep_names: bool,
 ) -> String {
     let mut t = format!(
-        "toolboks {version} - Event Watch crash report\n\n{}\nStopped (best estimate): {} UTC\nNoticed at next start: {} UTC\n",
+        "toolboks {version} - Event Watch crash report\n\n{}\nStopped (best estimate): {}\nNoticed at next start: {} UTC\n",
         crash_title(&crash.kind),
-        ms_to_text(crash.stopped_ms),
+        crash.stopped_ms.map_or_else(|| "unknown".into(), |ms| format!("{} UTC", ms_to_text(ms))),
         ms_to_text(crash.noticed_ms)
     );
     if let Some(d) = crash_detail(&crash.kind) {
@@ -559,20 +559,22 @@ fn crash_report(
     if let Some(Ok(h)) = header {
         t.push_str(&format!("{}\n", dump_header_text(h, &crash.kind)));
     }
-    t.push_str("\nEvents in the 10 minutes before (oldest first):\n");
-    if crash.before.is_empty() {
-        t.push_str("  none logged\n");
-    }
-    for e in &crash.before {
-        let info = catalog::classify(e);
-        t.push_str(&format!(
-            "  {}  [{}]  {}  ({} {})\n",
-            minutes_before(crash.stopped_ms, e.time_ms),
-            sev_label(info.severity),
-            info.headline,
-            e.provider,
-            e.id
-        ));
+    if let Some(stopped_ms) = crash.stopped_ms {
+        t.push_str("\nEvents in the 10 minutes before (oldest first):\n");
+        if crash.before.is_empty() {
+            t.push_str("  none logged\n");
+        }
+        for e in &crash.before {
+            let info = catalog::classify(e);
+            t.push_str(&format!(
+                "  {}  [{}]  {}  ({} {})\n",
+                minutes_before(stopped_ms, e.time_ms),
+                sev_label(info.severity),
+                info.headline,
+                e.provider,
+                e.id
+            ));
+        }
     }
     if keep_names {
         t
@@ -592,9 +594,14 @@ struct Analysis {
     digest: Vec<DigestLine>,
 }
 
-fn analyze(events: &[Event]) -> Analysis {
+fn analyze(events: &[Event], since_ms: i64, estimates: &HashMap<i64, Option<i64>>) -> Analysis {
     let groups = analysis::group(events);
-    let crashes = analysis::detect_crashes(events, analysis::DEFAULT_WINDOW_MS);
+    let crashes = analysis::detect_crashes(events, analysis::DEFAULT_WINDOW_MS, |noticed_ms| {
+        estimates
+            .get(&noticed_ms)
+            .copied()
+            .unwrap_or_else(|| source::estimate_stop(&WinEvents, since_ms, noticed_ms))
+    });
     let digest = analysis::digest(&groups, &crashes);
     Analysis {
         groups,
@@ -696,7 +703,7 @@ impl Page {
         std::thread::spawn(move || {
             let since_ms = now_ms() - LOOKBACK_MS;
             let (events, statuses) = source::load(&WinEvents, since_ms);
-            let analysis = analyze(&events);
+            let analysis = analyze(&events, since_ms, &Default::default());
             let _ = tx.send(Msg::Loaded {
                 events,
                 statuses,
@@ -738,10 +745,17 @@ impl Page {
         }
         self.analysis_busy = true;
         let events = self.events.clone();
+        let since_ms = self.since_ms;
+        let estimates = self
+            .analysis
+            .crashes
+            .iter()
+            .map(|crash| (crash.noticed_ms, crash.stopped_ms))
+            .collect();
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
             let n = events.len();
-            let _ = tx.send(Msg::Analyzed(analyze(&events), n));
+            let _ = tx.send(Msg::Analyzed(analyze(&events, since_ms, &estimates), n));
             ctx.request_repaint();
         });
     }
@@ -1090,9 +1104,14 @@ impl Page {
                                 .strong()
                                 .size(TEXT_SECTION),
                         );
-                        ui.label(muted(format!(
-                            "Stopped around {} UTC",
-                            ms_to_text(crash.stopped_ms)
+                        ui.label(muted(crash.stopped_ms.map_or_else(
+                            || {
+                                format!(
+                                    "Stop time unknown. Windows noticed at {} UTC.",
+                                    ms_to_text(crash.noticed_ms)
+                                )
+                            },
+                            |ms| format!("Stopped around {} UTC", ms_to_text(ms)),
                         )));
                         if let Some(d) = crash_detail(&crash.kind) {
                             ui.label(d);
@@ -1138,6 +1157,9 @@ impl Page {
                             ui.add_space(GAP);
                             ui.checkbox(&mut self.keep_names, "Keep names and paths");
                         });
+                        let Some(stopped_ms) = crash.stopped_ms else {
+                            return;
+                        };
                         ui.add_space(look::SPACE_XS);
                         ui.label(
                             RichText::new("What happened in the 10 minutes before")
@@ -1162,13 +1184,10 @@ impl Page {
                                     Layout::right_to_left(Align::Center),
                                     |ui| {
                                         ui.label(
-                                            RichText::new(minutes_before(
-                                                crash.stopped_ms,
-                                                e.time_ms,
-                                            ))
-                                            .monospace()
-                                            .size(TEXT_CAPTION)
-                                            .color(MUTED),
+                                            RichText::new(minutes_before(stopped_ms, e.time_ms))
+                                                .monospace()
+                                                .size(TEXT_CAPTION)
+                                                .color(MUTED),
                                         );
                                     },
                                 );
@@ -1618,7 +1637,7 @@ mod tests {
     fn crash_report_has_timeline() {
         let crash = Crash {
             noticed_ms: 2_000_000,
-            stopped_ms: 1_000_000,
+            stopped_ms: Some(1_000_000),
             kind: CrashKind::PowerLossOrHang,
             dump_path: None,
             before: vec![ev("System", 1, 800_000, "Prov", 7)],

@@ -143,6 +143,7 @@ struct ServicesState {
 
 pub struct Debloater {
     env: model::Env,
+    can_change_user_profile: bool,
     statuses: Vec<model::Status>,
     /// Ticked item ids.
     selected: HashSet<&'static str>,
@@ -168,6 +169,7 @@ impl Debloater {
     pub fn new() -> Self {
         Self {
             env: backend::detect_env(),
+            can_change_user_profile: crate::elevation::can_change_user_profile(),
             statuses: Vec::new(),
             selected: HashSet::new(),
             focus: None,

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::{Read, Seek, SeekFrom},
+    io::{self, Read},
     process::{Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
@@ -362,69 +362,75 @@ fn optimize(service: &Service, letter: &str, action: Action) -> Result<(), Strin
     let flag = action
         .flag()
         .ok_or("An analysis cannot start a write operation.")?;
-    let path = std::env::temp_dir().join(format!(
-        "toolboks-optimize-{}-{}.log",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    let result = (|| {
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|e| e.to_string())?;
-        let error = file.try_clone().map_err(|e| e.to_string())?;
-        let mut command = Command::new(system_exe("defrag.exe")?);
-        command
-            .args([letter, flag, "/U", "/V"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(file))
-            .stderr(Stdio::from(error));
-        hidden(&mut command);
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("Could not start Windows drive optimization: {e}"))?;
-        loop {
-            let status = child.try_wait().map_err(|e| e.to_string())?;
-            let output = read_tail(&path);
-            {
-                let mut s = service.lock().unwrap();
-                if let Some(job) = &mut s.job {
-                    job.phase_percent = phase_percent(&output);
-                    job.output = output.clone();
-                }
-            }
-            if let Some(status) = status {
-                if status.success() {
-                    return Ok(());
-                }
-                return Err(format!(
-                    "Windows could not complete {} (code {}). See Windows report below.",
-                    action.label(),
-                    status.code().unwrap_or(-1)
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(500));
+    let mut command = Command::new(system_exe("defrag.exe")?);
+    command.args([letter, flag, "/U", "/V"]);
+    hidden(&mut command);
+    let status = stream_output(command, |output| {
+        if let Some(job) = &mut service.lock().unwrap().job {
+            job.phase_percent = phase_percent(&output);
+            job.output = output;
         }
-    })();
-    let _ = std::fs::remove_file(path);
-    result
+    })
+    .map_err(|e| format!("Could not run Windows drive optimization: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Windows could not complete {} (code {}). See Windows report below.",
+            action.label(),
+            status.code().unwrap_or(-1)
+        ))
+    }
 }
-fn read_tail(path: &std::path::Path) -> String {
-    let Ok(mut f) = std::fs::File::open(path) else {
-        return String::new();
-    };
-    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    let _ = f.seek(SeekFrom::Start(len.saturating_sub(32768) & !1));
-    let mut bytes = Vec::new();
-    let _ = f.take(32768).read_to_end(&mut bytes);
-    decode(&bytes)
+
+const OUTPUT_LIMIT: usize = 32 * 1024;
+
+fn stream_output(
+    mut command: Command,
+    publish: impl FnMut(String),
+) -> io::Result<std::process::ExitStatus> {
+    let (reader, writer) = io::pipe()?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(writer.try_clone()?))
+        .stderr(Stdio::from(writer));
+    let mut child = command.spawn()?;
+    // Close the parent's write handles so the reader sees EOF when the child exits.
+    drop(command);
+    let output = read_output(reader, publish);
+    let status = child.wait()?;
+    output?;
+    Ok(status)
 }
-fn decode(bytes: &[u8]) -> String {
-    if bytes.starts_with(&[255, 254])
+
+fn read_output(mut reader: impl Read, mut publish: impl FnMut(String)) -> io::Result<()> {
+    let mut bytes = Vec::with_capacity(OUTPUT_LIMIT);
+    let mut chunk = [0; 4096];
+    let mut last_update = None::<Instant>;
+    let mut utf16 = false;
+    loop {
+        let count = match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        // Keep the UTF-16 code-unit boundary even when a pipe read returns an odd byte count.
+        let discard = (bytes.len() + count).saturating_sub(OUTPUT_LIMIT - 1) & !1;
+        bytes.drain(..discard);
+        bytes.extend_from_slice(&chunk[..count]);
+        utf16 |= is_utf16(&bytes);
+        if last_update.is_none_or(|time| time.elapsed() >= Duration::from_millis(200)) {
+            publish(decode_output(&bytes, utf16));
+            last_update = Some(Instant::now());
+        }
+    }
+    publish(decode_output(&bytes, utf16));
+    Ok(())
+}
+
+fn is_utf16(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[255, 254])
         || bytes
             .iter()
             .skip(1)
@@ -433,7 +439,14 @@ fn decode(bytes: &[u8]) -> String {
             .filter(|b| **b == 0)
             .count()
             > 8
-    {
+}
+
+fn decode(bytes: &[u8]) -> String {
+    decode_output(bytes, is_utf16(bytes))
+}
+
+fn decode_output(bytes: &[u8], utf16: bool) -> String {
+    if utf16 {
         return String::from_utf16_lossy(
             &bytes
                 .as_chunks::<2>()
@@ -452,10 +465,8 @@ fn decode(bytes: &[u8]) -> String {
 fn phase_percent(text: &str) -> Option<f32> {
     let end = text.rfind('%')?;
     let prefix = text[..end].trim_end();
-    let start = prefix
-        .rfind(|c: char| !c.is_ascii_digit())
-        .map_or(0, |i| i + 1);
-    let value = prefix[start..].parse::<f32>().ok()?;
+    let count = prefix.bytes().rev().take_while(u8::is_ascii_digit).count();
+    let value = prefix[prefix.len() - count..].parse::<f32>().ok()?;
     (0.0..=100.0).contains(&value).then_some(value)
 }
 #[cfg(windows)]
@@ -633,11 +644,47 @@ mod tests {
     #[test]
     fn progress_is_phase_only_and_decodes_unicode() {
         assert_eq!(phase_percent("Pass 2: 47% complete"), Some(47.0));
+        assert_eq!(phase_percent("進捗47% 完了"), Some(47.0));
+        assert_eq!(phase_percent("étape%"), None);
         assert_eq!(phase_percent("Done"), None);
         let bytes: Vec<u8> = "Windows 80%"
             .encode_utf16()
             .flat_map(u16::to_le_bytes)
             .collect();
         assert_eq!(decode(&bytes), "Windows 80%");
+    }
+
+    #[test]
+    fn output_keeps_a_bounded_utf16_tail() {
+        let tail = "進捗47%";
+        let bytes: Vec<u8> = std::iter::once(0xfeffu16)
+            .chain(std::iter::repeat_n(0x754cu16, OUTPUT_LIMIT))
+            .chain(tail.encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let mut output = String::new();
+        read_output(bytes.as_slice(), |text| output = text).unwrap();
+        assert!(output.ends_with(tail));
+        assert_eq!(output.encode_utf16().count(), OUTPUT_LIMIT / 2);
+        assert_eq!(phase_percent(&output), Some(47.0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn command_stream_collects_stdout_and_stderr_and_keeps_exit_status() {
+        use std::os::windows::process::CommandExt;
+
+        let mut command = Command::new(system_exe("cmd.exe").unwrap());
+        command
+            .args(["/d", "/c"])
+            .raw_arg("echo stdout & echo stderr 1>&2 & exit /b 7");
+        hidden(&mut command);
+        let mut output = String::new();
+        let status = stream_output(command, |text| output = text).unwrap();
+        assert_eq!(status.code(), Some(7));
+        assert_eq!(
+            output.lines().map(str::trim).collect::<Vec<_>>(),
+            ["stdout", "stderr"]
+        );
     }
 }

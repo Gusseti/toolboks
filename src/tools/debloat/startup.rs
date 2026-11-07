@@ -338,6 +338,9 @@ impl StartupStore for WinStartup {
         bytes: Option<&[u8]>,
     ) -> Result<(), String> {
         let (hive, path) = approval_target(source);
+        if hive == HKEY_CURRENT_USER {
+            crate::elevation::require_user_profile()?;
+        }
         let path_w = wide(&path);
         let name_w = wide(name);
         let mut key = HKEY::default();

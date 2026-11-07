@@ -180,22 +180,16 @@ impl DiskManager {
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .collect();
-        std::thread::spawn(move || {
-            let state = shared.clone();
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                scanner::scan(root, excludes, shared, cancel)
-            }))
-            .is_err()
-            {
-                let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-                s.progress.running = false;
-                s.progress.cancelled = true;
-                s.progress.errors.push(
-                    "The scan worker stopped unexpectedly. Start a new scan to retry.".into(),
-                );
+        match std::thread::Builder::new()
+            .name("disk-scan".into())
+            .spawn(move || scanner::scan(root, excludes, shared, cancel))
+        {
+            Ok(_) => self.message = None,
+            Err(error) => {
+                self.shared.lock().unwrap().progress.running = false;
+                self.message = Some(format!("Could not start the disk scan: {error}"));
             }
-        });
-        self.message = None;
+        }
     }
     fn progress(&self) -> (Progress, Arc<Vec<Node>>) {
         let s = self.shared.lock().unwrap();

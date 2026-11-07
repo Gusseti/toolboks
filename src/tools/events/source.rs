@@ -19,6 +19,9 @@ use super::model::{ChannelStatus, Event};
 /// Marker for `Query::levels`: instead of a level filter, select the crash marker events
 /// (Kernel-Power 41, EventLog 6008, WER-SystemErrorReporting 1001) at any level.
 pub const CRASH_MARKERS: u8 = 255;
+/// Marker for a System query that selects Kernel-General boot events.
+const BOOT_START: u8 = 254;
+const MINUTE_MS: i64 = 60_000;
 
 #[derive(Clone, Debug)]
 pub struct Query {
@@ -27,8 +30,8 @@ pub struct Query {
     pub since_ms: i64,
     /// Exclusive upper bound; None = now.
     pub until_ms: Option<i64>,
-    /// Only these levels (1 Critical .. 5 Verbose); empty = all. A `CRASH_MARKERS` entry selects
-    /// the crash marker event ids instead (any level).
+    /// Only these levels (1 Critical .. 5 Verbose); empty = all. `CRASH_MARKERS` and
+    /// `BOOT_START` select specific event IDs instead (any level).
     pub levels: Vec<u8>,
     pub max: usize,
     /// Newest first when true.
@@ -297,6 +300,38 @@ pub fn message_of(event: &Event) -> Option<String> {
 /// Channels Event Watch reads, in order.
 pub const CHANNELS: [&str; 2] = ["System", "Application"];
 
+/// Estimate the stop time from the last record of any level before Windows started.
+/// If there was a long gap or either log is unavailable, the stop time is unknown.
+pub fn estimate_stop(src: &dyn EventSource, since_ms: i64, noticed_ms: i64) -> Option<i64> {
+    let earliest = since_ms.max(noticed_ms - 30 * MINUTE_MS);
+    let mut query = Query {
+        channel: "System".into(),
+        since_ms: earliest.max(noticed_ms - 2 * MINUTE_MS),
+        // Windows can write the boot marker shortly after it logs the unexpected restart.
+        until_ms: Some(noticed_ms + 30_000),
+        levels: vec![BOOT_START],
+        max: 1,
+        newest_first: true,
+    };
+    let boot = src.query(&query).ok()?.into_iter().next()?;
+    let boot_ms = parse_iso_time(boot.value("StartTime")?)?;
+    if !(earliest < boot_ms && boot_ms <= noticed_ms) {
+        return None;
+    }
+
+    query.since_ms = earliest;
+    query.until_ms = Some(boot_ms);
+    query.levels.clear();
+    let mut latest = None;
+    for channel in CHANNELS {
+        query.channel = channel.into();
+        if let Some(event) = src.query(&query).ok()?.into_iter().next() {
+            latest = latest.max(Some(event.time_ms));
+        }
+    }
+    latest
+}
+
 const LOAD_MAX_PER_CHANNEL: usize = 20_000;
 const LOAD_MAX_MARKERS: usize = 5_000;
 
@@ -351,6 +386,8 @@ pub fn build_xpath(q: &Query) -> String {
             "((Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41) or (Provider[@Name='EventLog'] and EventID=6008) or (Provider[@Name='Microsoft-Windows-WER-SystemErrorReporting'] and EventID=1001))"
                 .to_string(),
         );
+    } else if q.levels.contains(&BOOT_START) {
+        conds.push("(Provider[@Name='Microsoft-Windows-Kernel-General'] and EventID=12)".into());
     } else if !q.levels.is_empty() {
         let l: Vec<String> = q.levels.iter().map(|l| format!("Level={l}")).collect();
         conds.push(format!("({})", l.join(" or ")));
@@ -835,17 +872,24 @@ mod tests {
             let mut v: Vec<Event> = self
                 .events
                 .iter()
-                .filter(|e| e.channel == q.channel && e.time_ms >= q.since_ms)
+                .filter(|e| {
+                    e.channel == q.channel
+                        && e.time_ms >= q.since_ms
+                        && q.until_ms.is_none_or(|until| e.time_ms < until)
+                })
                 .filter(|e| {
                     if q.levels.contains(&CRASH_MARKERS) {
                         [41, 6008, 1001].contains(&e.id)
+                    } else if q.levels.contains(&BOOT_START) {
+                        e.provider == "Microsoft-Windows-Kernel-General" && e.id == 12
                     } else {
-                        q.levels.contains(&e.level)
+                        q.levels.is_empty() || q.levels.contains(&e.level)
                     }
                 })
                 .cloned()
                 .collect();
             v.sort_by_key(|e| std::cmp::Reverse(e.time_ms));
+            v.truncate(q.max);
             Ok(v)
         }
         fn channel_status(&self, channel: &str) -> ChannelStatus {
@@ -910,6 +954,33 @@ mod tests {
         let (events, statuses) = load(&src, 0);
         assert_eq!(events.len(), 1);
         assert_eq!(statuses.len(), 2);
+    }
+
+    #[test]
+    fn stop_estimate_uses_all_levels_before_start_and_rejects_stale_records() {
+        let boot_time = "2026-01-01T14:00:30.000Z";
+        let boot_ms = parse_iso_time(boot_time).unwrap();
+        let noticed = boot_ms + 20_000;
+        let mut boot = ev("System", 5, boot_ms + 5_000, 12, 4);
+        boot.provider = "Microsoft-Windows-Kernel-General".into();
+        boot.data.push(("StartTime".into(), boot_time.into()));
+        let old = boot_ms - 5 * 60 * MINUTE_MS;
+        let last = boot_ms - 35_000;
+        let mut src = FakeSource {
+            events: vec![
+                ev("System", 1, old, 7, 3),
+                ev("System", 2, last - 1_000, 8, 4),
+                ev("Application", 3, last, 9, 4),
+                ev("System", 4, boot_ms + 2_000, 10, 4),
+                boot,
+            ],
+        };
+        assert_eq!(estimate_stop(&src, 0, noticed), Some(last));
+        src.events
+            .retain(|event| ![2, 3].contains(&event.record_id));
+        // Keep the Application log readable, with only a stale record.
+        src.events.push(ev("Application", 6, old, 7, 3));
+        assert_eq!(estimate_stop(&src, 0, noticed), None);
     }
 
     fn header_bytes() -> Vec<u8> {

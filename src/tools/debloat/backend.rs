@@ -74,6 +74,9 @@ impl Registry for WinRegistry {
         name: &str,
         value: &RegValue,
     ) -> Result<(), String> {
+        if hive == Hive::CurrentUser {
+            crate::elevation::require_user_profile()?;
+        }
         let path_w = wide(path);
         let name_w = wide(name);
         let mut key = HKEY::default();
@@ -115,6 +118,9 @@ impl Registry for WinRegistry {
     }
 
     fn delete(&mut self, hive: Hive, path: &str, name: &str) -> Result<(), String> {
+        if hive == Hive::CurrentUser {
+            crate::elevation::require_user_profile()?;
+        }
         let path_w = wide(path);
         let name_w = wide(name);
         let mut key = HKEY::default();

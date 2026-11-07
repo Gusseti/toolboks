@@ -6,25 +6,38 @@ use std::os::windows::ffi::OsStrExt;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::Security::{
+    EqualSid, GetTokenInformation, TokenElevation, TokenUser, SECURITY_MAX_SID_SIZE,
+    TOKEN_ELEVATION, TOKEN_QUERY, TOKEN_USER,
+};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetShellWindow, GetWindowThreadProcessId, SW_SHOWNORMAL,
+};
 
 use crate::win::Handle;
 
 pub fn is_elevated() -> bool {
+    token_elevated().unwrap_or(false)
+}
+
+fn process_token(process: HANDLE) -> Option<Handle> {
     let mut token = HANDLE::default();
     // SAFETY: `token` is a valid out-parameter; the handle is wrapped for closing right away.
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
-        return false;
-    }
-    let token = Handle(token);
+    unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }.ok()?;
+    Some(Handle(token))
+}
 
+fn token_elevated() -> Option<bool> {
+    // SAFETY: GetCurrentProcess returns the pseudo-handle for this process.
+    let token = process_token(unsafe { GetCurrentProcess() })?;
     let mut elevation = TOKEN_ELEVATION::default();
     let mut returned = 0u32;
     // SAFETY: the buffer is a `TOKEN_ELEVATION` and its exact size is passed.
-    let ok = unsafe {
+    unsafe {
         GetTokenInformation(
             token.0,
             TokenElevation,
@@ -33,8 +46,82 @@ pub fn is_elevated() -> bool {
             &mut returned,
         )
     }
-    .is_ok();
-    ok && elevation.TokenIsElevated != 0
+    .ok()?;
+    Some(elevation.TokenIsElevated != 0)
+}
+
+#[repr(C)]
+struct TokenUserBuffer {
+    user: TOKEN_USER,
+    sid: [u8; SECURITY_MAX_SID_SIZE as usize],
+}
+
+impl TokenUserBuffer {
+    fn new() -> Self {
+        Self {
+            user: TOKEN_USER::default(),
+            sid: [0; SECURITY_MAX_SID_SIZE as usize],
+        }
+    }
+
+    fn read(&mut self, token: &Handle) -> Option<()> {
+        let mut returned = 0;
+        // SAFETY: the aligned buffer has room for TOKEN_USER and the maximum SID length.
+        unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                Some((self as *mut Self).cast()),
+                size_of::<Self>() as u32,
+                &mut returned,
+            )
+        }
+        .ok()
+    }
+}
+
+fn same_token_user(first: &Handle, second: &Handle) -> Option<bool> {
+    let (mut first_user, mut second_user) = (TokenUserBuffer::new(), TokenUserBuffer::new());
+    first_user.read(first)?;
+    second_user.read(second)?;
+    // SAFETY: both SIDs point into their respective live buffers filled by GetTokenInformation.
+    Some(unsafe { EqualSid(first_user.user.User.Sid, second_user.user.User.Sid) }.is_ok())
+}
+
+fn same_shell_user() -> Option<bool> {
+    // SAFETY: these calls query the shell window on the current desktop without modifying it.
+    let shell = unsafe { GetShellWindow() };
+    let mut pid = 0;
+    if unsafe { GetWindowThreadProcessId(shell, Some(&mut pid)) } == 0 {
+        return None;
+    }
+    // SAFETY: OpenProcess validates the PID. Only query access is requested.
+    let process =
+        Handle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?);
+    let shell_token = process_token(process.0)?;
+    // SAFETY: GetCurrentProcess returns the pseudo-handle for this process.
+    let current_token = process_token(unsafe { GetCurrentProcess() })?;
+    same_token_user(&current_token, &shell_token)
+}
+
+fn allows_profile_changes(
+    elevated: Option<bool>,
+    same_user: impl FnOnce() -> Option<bool>,
+) -> bool {
+    elevated == Some(false) || same_user() == Some(true)
+}
+
+pub fn can_change_user_profile() -> bool {
+    allows_profile_changes(token_elevated(), same_shell_user)
+}
+
+pub const USER_PROFILE_BLOCKED: &str =
+    "Toolboks could not verify that it is running under your signed-in account. Reopen it without administrator rights to change your profile.";
+
+pub fn require_user_profile() -> Result<(), String> {
+    can_change_user_profile()
+        .then_some(())
+        .ok_or_else(|| USER_PROFILE_BLOCKED.into())
 }
 
 /// Starts a second, elevated copy of this exe through the UAC prompt.
@@ -128,5 +215,20 @@ mod tests {
     fn elevation_check_does_not_fail() {
         // The answer depends on how the tests are run; it just must not panic.
         let _ = is_elevated();
+    }
+
+    #[test]
+    fn elevated_profile_changes_require_a_matching_shell_user() {
+        assert!(allows_profile_changes(Some(false), || None));
+        assert!(allows_profile_changes(Some(true), || Some(true)));
+        assert!(!allows_profile_changes(Some(true), || Some(false)));
+        assert!(!allows_profile_changes(Some(true), || None));
+        assert!(!allows_profile_changes(None, || None));
+    }
+
+    #[test]
+    fn token_user_matches_itself() {
+        let token = process_token(unsafe { GetCurrentProcess() }).unwrap();
+        assert_eq!(same_token_user(&token, &token), Some(true));
     }
 }

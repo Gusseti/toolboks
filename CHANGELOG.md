@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Disk Manager streams Windows drive optimization output in memory and safely parses localized progress.
+- Event Watch uses recent records of any severity before Windows started to estimate when a crash occurred. It shows an unknown stop time when the logs cannot support an estimate.
+- Debloater blocks per-user changes when an elevated instance cannot verify that it belongs to the signed-in account.
+
 - Toolboks creates its local configuration only after a settings or add-on change.
 - Debloater preserves stricter diagnostic-data settings and no longer offers the Compatibility Appraiser, Flighting feature-configuration tasks or OneSettings download policy.
 - Debloater keeps privacy and ads undo history across Apply runs. Undo works newest first, and failed steps stay available to retry.

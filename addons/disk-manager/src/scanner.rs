@@ -174,9 +174,13 @@ pub fn scan(
         }
     }
     for id in (1..nodes.len()).rev() {
-        let parent = nodes[id].parent.unwrap();
-        nodes[parent].bytes = nodes[parent].bytes.saturating_add(nodes[id].bytes);
-        nodes[parent].files += nodes[id].files;
+        // The parent was added before this node, so its totals can be updated in place.
+        let (parents, children) = nodes.split_at_mut(id);
+        let child = &children[0];
+        if let Some(parent) = child.parent.and_then(|p| parents.get_mut(p)) {
+            parent.bytes = parent.bytes.saturating_add(child.bytes);
+            parent.files = parent.files.saturating_add(child.files);
+        }
     }
     p.running = false;
     p.elapsed = started.elapsed().as_secs_f64();

@@ -70,6 +70,7 @@ impl Packages for WinPackages {
     }
 
     fn remove(&mut self, full_name: &str) -> Result<(), String> {
+        crate::elevation::require_user_profile()?;
         let fail = |code: String| {
             format!("Windows could not remove this app (error {code}). It may be in use or managed by your organisation.")
         };

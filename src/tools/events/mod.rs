@@ -56,7 +56,9 @@ mod real_log_tests {
         };
         let (events, statuses) = load(&WinEvents, since);
         let groups = group(&events);
-        let crashes = detect_crashes(&events, DEFAULT_WINDOW_MS);
+        let crashes = detect_crashes(&events, DEFAULT_WINDOW_MS, |noticed| {
+            super::source::estimate_stop(&WinEvents, since, noticed)
+        });
         println!(
             "events={} groups={} crashes={}",
             events.len(),
@@ -73,9 +75,9 @@ mod real_log_tests {
         }
         for c in &crashes {
             println!(
-                "crash noticed={} stopped={} kind={:?} dump={:?} before={}",
+                "crash noticed={} stopped={:?} kind={:?} dump={:?} before={}",
                 ms_to_text(c.noticed_ms),
-                ms_to_text(c.stopped_ms),
+                c.stopped_ms.map(ms_to_text),
                 c.kind,
                 c.dump_path,
                 c.before.len()
