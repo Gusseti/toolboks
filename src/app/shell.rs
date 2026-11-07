@@ -84,44 +84,39 @@ fn brand_logo(ui: &mut egui::Ui, size: f32) {
     });
     ui.add(egui::Image::new((texture.id(), Vec2::splat(size))));
 }
-fn sidebar_toggle(ui: &mut egui::Ui, collapsed: bool) -> bool {
-    let label = if collapsed {
-        "Expand sidebar"
-    } else {
-        "Collapse sidebar"
-    };
-    let (_, response) = ui.allocate_exact_size(Vec2::splat(32.0), egui::Sense::click());
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let p = ui.painter();
-    let r = response.rect.shrink(7.0);
-    let stroke = egui::Stroke::new(1.7, if response.hovered() { ACCENT } else { TEXT });
-    p.rect_stroke(r, 2, stroke, egui::StrokeKind::Inside);
-    let divider = r.left() + 5.0;
-    p.line_segment(
-        [
-            egui::pos2(divider, r.top()),
-            egui::pos2(divider, r.bottom()),
-        ],
-        stroke,
-    );
-    let x = r.center().x + 2.0;
-    let y = r.center().y;
-    let direction = if collapsed { 1.0 } else { -1.0 };
-    p.line(
-        vec![
-            egui::pos2(x - direction * 2.0, y - 3.0),
-            egui::pos2(x + direction * 2.0, y),
-            egui::pos2(x - direction * 2.0, y + 3.0),
-        ],
-        stroke,
-    );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-    response.on_hover_text(label).clicked()
-}
 fn paint_glyph(p: &egui::Painter, r: egui::Rect, name: &str, color: Color32, size: f32) {
     let stroke = egui::Stroke::new(1.6, color);
     let pt = |x: f32, y: f32| egui::pos2(r.left() + x * size, r.top() + y * size);
-    if name == "layers" {
+    if name == "menu" {
+        for y in [0.25, 0.5, 0.75] {
+            p.line_segment([pt(0.12, y), pt(0.88, y)], stroke);
+        }
+    } else if name == "home" {
+        p.line(vec![pt(0.1, 0.48), pt(0.5, 0.12), pt(0.9, 0.48)], stroke);
+        p.line(
+            vec![
+                pt(0.22, 0.42),
+                pt(0.22, 0.88),
+                pt(0.78, 0.88),
+                pt(0.78, 0.42),
+            ],
+            stroke,
+        );
+        p.line(
+            vec![
+                pt(0.42, 0.88),
+                pt(0.42, 0.62),
+                pt(0.58, 0.62),
+                pt(0.58, 0.88),
+            ],
+            stroke,
+        );
+    } else if name == "sliders" {
+        for (y, x) in [(0.22, 0.65), (0.5, 0.35), (0.78, 0.6)] {
+            p.line_segment([pt(0.1, y), pt(0.9, y)], stroke);
+            p.circle_filled(pt(x, y), size * 0.1, color);
+        }
+    } else if name == "layers" {
         for y in [0.26, 0.5, 0.74] {
             p.line_segment([pt(0.1, y), pt(0.5, y + 0.18)], stroke);
             p.line_segment([pt(0.5, y + 0.18), pt(0.9, y)], stroke);
@@ -199,86 +194,134 @@ fn verified_mark(ui: &mut egui::Ui) {
     paint_verified(ui.painter(), r);
     response.on_hover_text("Toolboks verified - bundled publisher");
 }
-fn nav(ui: &mut egui::Ui, title: &str, kind: &str, on: bool, is_verified: bool) -> bool {
-    nav_label(ui, title, kind, on, is_verified, None)
-}
-fn nav_label(
-    ui: &mut egui::Ui,
-    title: &str,
-    kind: &str,
-    on: bool,
-    is_verified: bool,
-    byline: Option<&str>,
-) -> bool {
-    let response = ui.add_sized(
-        [ui.available_width(), 43.0],
-        egui::Button::new("")
-            .fill(if on {
-                Color32::from_rgb(42, 33, 56)
-            } else {
-                Color32::TRANSPARENT
-            })
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(7),
-    );
-    let r = response.rect;
-    if response.hovered() && !on {
-        ui.painter()
-            .rect_filled(r, 7, Color32::from_rgb(30, 34, 40));
-    }
-    let color = if on { ACCENT } else { MUTED };
-    paint_glyph(
-        ui.painter(),
-        egui::Rect::from_center_size(egui::pos2(r.left() + 21.0, r.center().y), Vec2::splat(18.0)),
-        kind,
-        color,
-        18.0,
-    );
-    if ui.available_width() < 80.0 {
-        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, title));
-        return response
-            .on_hover_text(match byline {
-                Some(byline) => format!("{title} {byline}"),
-                None => title.to_owned(),
-            })
-            .clicked();
-    }
-    let text_rect = egui::Rect::from_min_max(
-        egui::pos2(r.left() + 42.0, r.top()),
-        egui::pos2(r.right() - if is_verified { 25.0 } else { 5.0 }, r.bottom()),
-    );
-    ui.painter().with_clip_rect(text_rect).text(
-        egui::pos2(text_rect.left(), r.center().y),
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::FontId::proportional(14.0),
-        if on { ACCENT } else { TEXT },
-    );
-    if let Some(byline) = byline {
-        let width = ui
-            .painter()
-            .layout_no_wrap(title.into(), egui::FontId::proportional(14.0), TEXT)
-            .size()
-            .x;
-        ui.painter().with_clip_rect(text_rect).text(
-            egui::pos2(text_rect.left() + width + 4.0, r.center().y),
-            egui::Align2::LEFT_CENTER,
-            byline,
-            egui::FontId::proportional(9.0),
-            Color32::from_rgb(112, 108, 121),
+const RAIL_W: f32 = 52.0;
+const SIDEBAR_W: f32 = 204.0;
+const HEADER_H: f32 = 46.0;
+const STATUS_H: f32 = 24.0;
+const ROW_H: f32 = 32.0;
+const PAGE_ROW_H: f32 = 28.0;
+/// Where a sidebar row's label starts, measured from the row's left edge.
+const LABEL_X: f32 = 40.0;
+
+/// Paints the keyboard focus ring over a custom-drawn control.
+fn focus_ring(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response) {
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            look::CONTROL_RADIUS,
+            ui.visuals().selection.stroke,
+            egui::StrokeKind::Inside,
         );
     }
-    if is_verified {
-        paint_verified(
+}
+
+/// One row of the sidebar: an icon centred in the 36 px rail column and, when `show_label`, the
+/// name next to it. `label` is always the accessible name.
+fn nav_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: &str,
+    selected: bool,
+    show_label: bool,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let fill = if selected {
+            look::ACCENT_WASH
+        } else if response.hovered() {
+            look::SELECTED_BG
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, look::CONTROL_RADIUS, fill);
+        focus_ring(ui, rect, &response);
+        let icon_color = if selected { ACCENT } else { MUTED };
+        paint_glyph(
             ui.painter(),
             egui::Rect::from_center_size(
-                egui::pos2(r.right() - 13.0, r.center().y),
-                Vec2::splat(12.0),
+                egui::pos2(rect.left() + 18.0, rect.center().y),
+                Vec2::splat(18.0),
             ),
+            icon,
+            icon_color,
+            18.0,
+        );
+        if show_label {
+            ui.painter().with_clip_rect(rect).text(
+                egui::pos2(rect.left() + LABEL_X, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(look::TEXT_SECTION),
+                if selected { TEXT } else { MUTED },
+            );
+        }
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A navigation row; with the rail collapsed it shows its name as a tooltip. True when clicked.
+fn nav(ui: &mut egui::Ui, label: &str, icon: &str, selected: bool, expanded: bool) -> bool {
+    let response = nav_row(ui, label, icon, selected, expanded);
+    if expanded {
+        response.clicked()
+    } else {
+        response.on_hover_text(label).clicked()
+    }
+}
+
+/// A page nested under the active tool in the expanded sidebar; selected = lighter fill.
+fn page_row(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), PAGE_ROW_H),
+        egui::Sense::click(),
+    );
+    if ui.is_rect_visible(rect) {
+        let fill = if selected {
+            look::SELECTED_BG
+        } else if response.hovered() {
+            look::BAR_DIVIDER
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, look::CONTROL_RADIUS, fill);
+        focus_ring(ui, rect, &response);
+        ui.painter().with_clip_rect(rect).text(
+            egui::pos2(rect.left() + LABEL_X, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(look::TEXT_BODY),
+            if selected { TEXT } else { MUTED },
         );
     }
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, title));
-    response.clicked()
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+}
+
+/// What the header shows for the current screen.
+struct Crumb {
+    root: String,
+    leaf: Option<String>,
+    pages: Vec<String>,
+    page: usize,
+    help: Option<String>,
+    verified: bool,
+}
+
+impl Crumb {
+    fn plain(root: &str) -> Self {
+        Self {
+            root: root.to_owned(),
+            leaf: None,
+            pages: Vec::new(),
+            page: 0,
+            help: None,
+            verified: false,
+        }
+    }
 }
 
 impl App {
@@ -297,62 +340,37 @@ impl App {
         if let Some(path) = dropped.first() {
             self.review_package(path);
         }
-        let collapsed = self.registry.config.sidebar_collapsed;
+        let expanded = self.sidebar_expanded;
         egui::Panel::left("host-sidebar")
             .resizable(false)
-            .exact_size(if collapsed { 76.0 } else { 258.0 })
+            .exact_size(if expanded { SIDEBAR_W } else { RAIL_W })
             .frame(
                 egui::Frame::new()
                     .fill(SIDEBAR_BG)
-                    .inner_margin(egui::Margin::symmetric(17, 22)),
+                    .inner_margin(egui::Margin::symmetric(8, 8)),
             )
             .show(ui, |ui| {
-                if collapsed {
-                    ui.vertical_centered(|ui| {
-                        if sidebar_toggle(ui, true) {
-                            self.registry.config.sidebar_collapsed = false;
-                            self.persist();
-                        }
-                        ui.add_space(8.0);
-                        brand_logo(ui, 34.0);
-                    });
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let tip = if expanded {
+                    "Close sidebar"
                 } else {
-                    ui.horizontal(|ui| {
-                        brand_logo(ui, 34.0);
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("toolboks").size(25.0).strong());
-                            ui.label(
-                                RichText::new("YOUR SYSTEM. YOUR TOOLS.")
-                                    .size(8.0)
-                                    .color(MUTED),
-                            );
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if sidebar_toggle(ui, collapsed) {
-                                self.registry.config.sidebar_collapsed = !collapsed;
-                                self.persist();
-                            }
-                        });
-                    });
+                    "Open sidebar"
+                };
+                let response = nav_row(ui, tip, "menu", false, false);
+                if expanded {
+                    ui.painter().text(
+                        egui::pos2(response.rect.left() + LABEL_X, response.rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "Toolboks",
+                        egui::FontId::proportional(look::TEXT_SECTION),
+                        TEXT,
+                    );
                 }
-                ui.add_space(24.0);
-                if nav(ui, "Overview", "grid", self.screen == Screen::Home, false) {
-                    self.screen = Screen::Home;
+                if response.on_hover_text(tip).clicked() {
+                    self.sidebar_expanded = !expanded;
                 }
-                if nav(
-                    ui,
-                    "Add-on browser",
-                    "layers",
-                    self.screen == Screen::Browser,
-                    false,
-                ) {
-                    self.screen = Screen::Browser;
-                }
-                ui.add_space(25.0);
-                if !collapsed {
-                    eyebrow(ui, "Your add-ons");
-                }
-                ui.add_space(10.0);
+                ui.add_space(look::GAP);
+
                 let tools: Vec<_> = (0..self.registry.builtins.len())
                     .filter(|&i| self.tool_enabled(i))
                     .map(|i| {
@@ -360,101 +378,167 @@ impl App {
                         (i, m.title.clone(), m.icon.clone())
                     })
                     .collect();
-                for (i, title, icon) in tools {
-                    if nav(ui, &title, &icon, self.screen == Screen::Tool(i), true) {
-                        self.open_tool(i);
-                    }
-                }
                 let installed: Vec<_> = self
                     .registry
                     .packages
                     .iter()
                     .filter(|p| self.registry.enabled(&p.manifest.id))
                     .map(|p| {
+                        let pages: Vec<String> = if p.manifest.native_provider.is_some() {
+                            Vec::new()
+                        } else {
+                            p.pages.iter().map(|page| page.title.clone()).collect()
+                        };
                         (
                             p.manifest.id.clone(),
                             p.manifest.title.clone(),
                             p.manifest.icon.clone(),
-                            p.manifest.byline.clone(),
-                            self.registry.verified(&p.manifest.id),
+                            pages,
                         )
                     })
                     .collect();
                 egui::ScrollArea::vertical()
-                    .id_salt("sidebar-addons")
-                    .max_height(
-                        (ui.available_height() - if collapsed { 65.0 } else { 175.0 }).max(50.0),
-                    )
+                    .id_salt("sidebar-nav")
+                    .max_height((ui.available_height() - 2.0 * ROW_H - 8.0).max(50.0))
                     .show(ui, |ui| {
-                        for (id, title, kind, byline, verified) in installed {
-                            if nav_label(
-                                ui,
-                                &title,
-                                &kind,
-                                self.screen == Screen::External(id.clone()),
-                                verified,
-                                byline.as_deref(),
-                            ) {
-                                self.screen = Screen::External(id);
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        if nav(ui, "Home", "home", self.screen == Screen::Home, expanded) {
+                            self.screen = Screen::Home;
+                        }
+                        for (i, title, icon) in tools {
+                            let on = self.screen == Screen::Tool(i);
+                            if nav(ui, &title, &icon, on, expanded) {
+                                self.open_tool(i);
+                            }
+                            if on && expanded {
+                                let pages = self.base.tools[i].pages();
+                                if pages.len() > 1 {
+                                    for (p, name) in pages.iter().enumerate() {
+                                        if page_row(ui, name, self.base.selected.1 == p) {
+                                            self.base.selected.1 = p;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        for (id, title, icon, pages) in installed {
+                            let on = self.screen == Screen::External(id.clone());
+                            if nav(ui, &title, &icon, on, expanded) {
+                                self.screen = Screen::External(id.clone());
                                 self.addon_page = 0;
+                            }
+                            if on && expanded && pages.len() > 1 {
+                                for (p, name) in pages.iter().enumerate() {
+                                    if page_row(ui, name, self.addon_page == p) {
+                                        self.addon_page = p;
+                                    }
+                                }
                             }
                         }
                     });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    if !collapsed {
-                        ui.label(
-                            RichText::new(format!(
-                                "VERSION {}  ·  {}",
-                                env!("CARGO_PKG_VERSION"),
-                                if cfg!(feature = "preview") {
-                                    "LOCAL PREVIEW"
-                                } else {
-                                    "TOOLBOKS"
-                                }
-                            ))
-                            .size(9.0)
-                            .color(MUTED),
-                        );
-                        ui.add_space(14.0);
-                        muted(ui, "Your tools stay on your device.");
-                        ui.label(RichText::new("Local by design").size(11.0).color(ACCENT));
-                        ui.add_space(19.0);
-                        ui.separator();
-                        ui.add_space(10.0);
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let browser_on = self.screen == Screen::Browser;
+                    if nav(ui, "Add-ons", "grid", browser_on, expanded) {
+                        self.screen = Screen::Browser;
                     }
-                    if nav(
-                        ui,
-                        "Settings",
-                        "grid",
-                        self.screen == Screen::Settings,
-                        false,
-                    ) {
+                    let settings_on = self.screen == Screen::Settings;
+                    if nav(ui, "Settings", "sliders", settings_on, expanded) {
                         self.screen = Screen::Settings;
                     }
                 });
             });
+
+        // The header: breadcrumb at the left, page controls at the right.
+        let crumb = match self.screen.clone() {
+            Screen::Home => Crumb::plain("Home"),
+            Screen::Browser => Crumb::plain("Add-ons"),
+            Screen::Settings => Crumb::plain("Settings"),
+            Screen::Tool(i) => {
+                let m = &self.registry.builtins[i];
+                let pages: Vec<String> = self.base.tools[i]
+                    .pages()
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect();
+                let page = self.base.selected.1;
+                Crumb {
+                    root: m.title.clone(),
+                    leaf: pages.get(page).filter(|_| pages.len() > 1).cloned(),
+                    pages,
+                    page,
+                    help: Some(m.id.clone()),
+                    verified: true,
+                }
+            }
+            Screen::External(id) => {
+                let package = self.registry.packages.iter().find(|p| p.manifest.id == id);
+                let pages: Vec<String> = package
+                    .filter(|p| p.manifest.native_provider.is_none())
+                    .map(|p| p.pages.iter().map(|page| page.title.clone()).collect())
+                    .unwrap_or_default();
+                let page = self.addon_page;
+                Crumb {
+                    root: package.map_or_else(|| id.clone(), |p| p.manifest.title.clone()),
+                    leaf: pages.get(page).filter(|_| pages.len() > 1).cloned(),
+                    pages,
+                    page,
+                    verified: self.registry.verified(&id),
+                    help: Some(id),
+                }
+            }
+        };
+        let mut chosen_page = None;
         egui::Panel::top("host-header")
-            .exact_size(58.0)
+            .exact_size(HEADER_H)
             .resizable(false)
             .frame(
                 egui::Frame::new()
                     .fill(WINDOW_BG)
-                    .inner_margin(egui::Margin::symmetric(28, 12)),
+                    .inner_margin(egui::Margin::symmetric(16, 0)),
             )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(Vec2::splat(7.0), egui::Sense::hover());
-                    ui.painter().circle_filled(r.center(), 2.5, ACCENT);
-                    muted(ui, "Your space. A clearer view.");
+                ui.horizontal_centered(|ui| {
+                    let size = look::TEXT_SECTION;
+                    match &crumb.leaf {
+                        Some(leaf) => {
+                            ui.label(RichText::new(&crumb.root).size(size).color(MUTED));
+                            ui.label(RichText::new("/").size(size).color(MUTED));
+                            ui.label(RichText::new(leaf).size(size).strong().color(TEXT));
+                        }
+                        None => {
+                            ui.label(RichText::new(&crumb.root).size(size).strong().color(TEXT));
+                        }
+                    }
+                    if crumb.verified {
+                        verified_mark(ui);
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if cfg!(feature = "preview") {
-                            badge(ui, "LOCAL PREVIEW", ACCENT);
-                        } else {
-                            ui.small(format!("v{}", Version::current()));
+                        if let Some(id) = &crumb.help {
+                            if ui.button("Help").clicked() {
+                                self.help = Some(id.clone());
+                            }
+                        }
+                        // With the rail collapsed the nested pages are out of sight, so the
+                        // pages stay reachable here.
+                        if !expanded && crumb.pages.len() > 1 {
+                            for (i, name) in crumb.pages.iter().enumerate().rev() {
+                                if look::pill(ui, name, crumb.page == i).clicked() {
+                                    chosen_page = Some(i);
+                                }
+                            }
                         }
                     });
                 });
             });
+        if let Some(page) = chosen_page {
+            match self.screen {
+                Screen::Tool(_) => self.base.selected.1 = page,
+                Screen::External(_) => self.addon_page = page,
+                _ => {}
+            }
+        }
+
         let items = status_items(
             self.base
                 .tools
@@ -464,21 +548,26 @@ impl App {
                 .map(|(_, t)| t.status()),
         );
         egui::Panel::bottom("host-status")
-            .exact_size(28.0)
+            .exact_size(STATUS_H)
             .resizable(false)
             .frame(
                 egui::Frame::new()
                     .fill(look::STATUS_BG)
-                    .inner_margin(egui::Margin::symmetric(20, 5)),
+                    .inner_margin(egui::Margin::symmetric(16, 0)),
             )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("On-device workspace").size(10.0).color(MUTED));
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = 16.0;
+                    for item in &items {
+                        ui.label(RichText::new(item).size(look::TEXT_CAPTION).color(MUTED));
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        for item in items.iter().rev() {
-                            ui.label(RichText::new(item).size(10.0).color(MUTED));
-                            ui.add_space(10.0);
-                        }
+                        let version = if cfg!(feature = "preview") {
+                            format!("v{} local preview", Version::current())
+                        } else {
+                            format!("v{}", Version::current())
+                        };
+                        ui.label(RichText::new(version).size(look::TEXT_CAPTION).color(MUTED));
                     });
                 });
             });
@@ -486,7 +575,7 @@ impl App {
             .frame(
                 egui::Frame::new()
                     .fill(WINDOW_BG)
-                    .inner_margin(egui::Margin::symmetric(28, 22)),
+                    .inner_margin(egui::Margin::symmetric(16, 16)),
             )
             .show(ui, |ui| {
                 if let Some(message) = self.message.clone() {
@@ -737,31 +826,6 @@ impl App {
         if self.base.selected.0 != tool {
             self.base.selected = (tool, 0);
         }
-        let manifest = self.registry.builtins[tool].clone();
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                eyebrow(ui, "Your system, in perspective");
-                ui.label(RichText::new(&manifest.title).size(27.0));
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Help").clicked() {
-                    self.help = Some(manifest.id.clone());
-                }
-                badge(ui, "✓  TOOLBOKS VERIFIED", ACCENT)
-            });
-        });
-        ui.add_space(15.0);
-        let pages = self.base.tools[tool].pages();
-        if pages.len() > 1 {
-            ui.horizontal_wrapped(|ui| {
-                for (i, p) in pages.iter().enumerate() {
-                    if look::pill(ui, p, self.base.selected.1 == i).clicked() {
-                        self.base.selected.1 = i;
-                    }
-                }
-            });
-            ui.add_space(16.0);
-        }
         let page = self.base.selected.1;
         self.base.tools[tool].ui(ui, page);
     }
@@ -781,17 +845,6 @@ impl App {
             return;
         };
         let color = accent(&package.manifest);
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Help").clicked() {
-                    self.help = Some(id.into());
-                }
-                if self.registry.verified(id) {
-                    badge(ui, "✓ TOOLBOKS VERIFIED", ACCENT);
-                }
-            });
-        });
-        ui.add_space(8.0);
         if let Some(provider) = &package.manifest.native_provider {
             let preferences = self
                 .registry
@@ -838,15 +891,7 @@ impl App {
             eyebrow(ui, &package.manifest.category);
             ui.label(RichText::new(&package.manifest.title).size(28.0));
             muted(ui, &package.manifest.description);
-            ui.add_space(18.0);
-            ui.horizontal(|ui| {
-                for (i, p) in package.pages.iter().enumerate() {
-                    if ui.selectable_label(i == page, &p.title).clicked() {
-                        self.addon_page = i;
-                    }
-                }
-            });
-            ui.add_space(20.0);
+            ui.add_space(look::SPACE_L);
             toolboks_addon_sdk::tutorial::mark(ui, "page", ui.available_rect_before_wrap());
             egui::ScrollArea::vertical()
                 .id_salt(("addon", id, page))

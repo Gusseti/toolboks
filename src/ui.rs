@@ -1,58 +1,126 @@
-//! The look shared by every tool: the dark graphite style, cards on an 8 px grid, tabs, a switch,
-//! stat blocks and line graphs.
+//! The look shared by every tool: the dark graphite tokens of DESIGN.md, cards on an 8 px grid,
+//! a segmented switch, a toggle, stat bars and line graphs.
 
 use eframe::egui::{self, Color32, Mesh, Pos2, RichText, Sense, Shape, Stroke, Vec2};
 
-/// Space between cards, and the padding inside them.
+/// Spacing scale (DESIGN.md: 4, 8, 12, 16). `GAP` is the space between cards.
+pub const SPACE_XS: f32 = 4.0;
 pub const GAP: f32 = 8.0;
+#[allow(dead_code)] // used by the next slices
+pub const SPACE_M: f32 = 12.0;
+pub const SPACE_L: f32 = 16.0;
 pub const CARD_PAD: f32 = 10.0;
 
-pub const ACCENT: Color32 = Color32::from_rgb(59, 130, 246);
-pub const HOST_ACCENT: Color32 = Color32::from_rgb(164, 138, 202);
-pub const HOST_ACCENT_FILL: Color32 = Color32::from_rgb(105, 68, 158);
-pub const GREEN: Color32 = Color32::from_rgb(52, 168, 107);
-pub const AMBER: Color32 = Color32::from_rgb(232, 163, 23);
-pub const RED: Color32 = Color32::from_rgb(214, 69, 65);
+/// Radii: cards 10, controls 6.
+pub const CARD_RADIUS: u8 = 10;
+pub const CONTROL_RADIUS: u8 = 6;
 
-/// Graphite surfaces and text of the dark theme.
-pub const WINDOW_BG: Color32 = Color32::from_rgb(0x10, 0x12, 0x15);
-pub const PANEL_BG: Color32 = Color32::from_rgb(0x19, 0x1d, 0x22);
-pub const SIDEBAR_BG: Color32 = Color32::from_rgb(0x14, 0x17, 0x1b);
-pub const STATUS_BG: Color32 = Color32::from_rgb(0x0f, 0x10, 0x12);
-pub const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2d, 0x33);
-pub const TEXT: Color32 = Color32::from_rgb(0xec, 0xec, 0xf1);
-pub const MUTED: Color32 = Color32::from_rgb(0xa4, 0xa8, 0xb2);
+/// Type scale: page title, section, body, caption.
+#[allow(dead_code)] // used by the next slices
+pub const TEXT_TITLE: f32 = 18.0;
+pub const TEXT_SECTION: f32 = 14.0;
+pub const TEXT_BODY: f32 = 12.0;
+pub const TEXT_CAPTION: f32 = 11.0;
+
+/// Surfaces and text.
+pub const WINDOW_BG: Color32 = Color32::from_rgb(0x0e, 0x0f, 0x11);
+/// Sidebar, title bar and status bar.
+pub const BAR_BG: Color32 = Color32::from_rgb(0x0a, 0x0b, 0x0c);
+pub const SIDEBAR_BG: Color32 = BAR_BG;
+pub const STATUS_BG: Color32 = BAR_BG;
+/// Cards and panels.
+pub const PANEL_BG: Color32 = Color32::from_rgb(0x15, 0x16, 0x1a);
+pub const SELECTED_BG: Color32 = Color32::from_rgb(0x1b, 0x1c, 0x21);
+/// Card borders and dividers.
+pub const BORDER: Color32 = Color32::from_rgb(0x24, 0x26, 0x2c);
+/// Divider between a bar and the content.
+pub const BAR_DIVIDER: Color32 = Color32::from_rgb(0x1c, 0x1e, 0x22);
+pub const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe9, 0xec);
+/// 6.2:1 on a card; never go darker.
+pub const MUTED: Color32 = Color32::from_rgb(0x9a, 0x9e, 0xa8);
+
+/// The one accent: selection and the CPU. `ACCENT_WASH` is 20 % of it (premultiplied).
+pub const ACCENT: Color32 = Color32::from_rgb(0x8b, 0x5c, 0xf6);
+pub const ACCENT_WASH: Color32 = Color32::from_rgba_premultiplied(28, 18, 49, 51);
+pub const HOST_ACCENT: Color32 = ACCENT;
+pub const HOST_ACCENT_FILL: Color32 = Color32::from_rgb(0x6d, 0x45, 0xc4);
+
+/// Data colours, one per resource; always shown next to a label.
+#[allow(dead_code)] // used by the next slices
+pub const DATA_CPU: Color32 = ACCENT;
+#[allow(dead_code)] // used by the next slices
+pub const DATA_MEMORY: Color32 = Color32::from_rgb(0xb3, 0x9d, 0xfa);
+#[allow(dead_code)] // used by the next slices
+pub const DATA_GPU: Color32 = Color32::from_rgb(0x3e, 0xcf, 0x8e);
+#[allow(dead_code)] // used by the next slices
+pub const DATA_DISK: Color32 = Color32::from_rgb(0xf0, 0xa8, 0x3a);
+#[allow(dead_code)] // used by the next slices
+pub const DATA_NETWORK: Color32 = Color32::from_rgb(0x45, 0xb8, 0xf0);
+/// A second line (write, up, estimate).
+#[allow(dead_code)] // used by the next slices
+pub const DATA_SECOND: Color32 = MUTED;
+
+/// Status colours; always with a word.
+pub const GREEN: Color32 = Color32::from_rgb(0x3e, 0xcf, 0x8e);
+pub const AMBER: Color32 = Color32::from_rgb(0xf0, 0xa8, 0x3a);
+pub const RED: Color32 = Color32::from_rgb(0xe5, 0x53, 0x4b);
+
+/// Puts the Windows UI font first if it can be read from the system font folder (read only,
+/// nothing is written). Otherwise egui's bundled font stays.
+fn install_system_font(ctx: &egui::Context) {
+    let Some(dir) = std::env::var_os("WINDIR").or_else(|| std::env::var_os("SystemRoot")) else {
+        return;
+    };
+    let fonts_dir = std::path::Path::new(&dir).join("Fonts");
+    // Static Segoe UI: the variable font is not worth the risk of a parse failure at start-up.
+    let Ok(bytes) = std::fs::read(fonts_dir.join("segoeui.ttf")) else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "segoe-ui".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+    );
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        family.insert(0, "segoe-ui".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
 
 /// Sets fonts sizes, spacing, rounding and the dark visuals. Call once at start-up.
 pub fn apply_style(ctx: &egui::Context) {
     use egui::{FontFamily, FontId, TextStyle};
 
+    install_system_font(ctx);
     ctx.set_theme(egui::Theme::Dark);
     ctx.all_styles_mut(|style| {
         style.text_styles = [
             (
                 TextStyle::Small,
-                FontId::new(12.0, FontFamily::Proportional),
+                FontId::new(TEXT_CAPTION, FontFamily::Proportional),
             ),
-            (TextStyle::Body, FontId::new(14.0, FontFamily::Proportional)),
+            (
+                TextStyle::Body,
+                FontId::new(TEXT_BODY, FontFamily::Proportional),
+            ),
             (
                 TextStyle::Button,
-                FontId::new(14.0, FontFamily::Proportional),
+                FontId::new(TEXT_BODY, FontFamily::Proportional),
             ),
             (
                 TextStyle::Heading,
-                FontId::new(15.0, FontFamily::Proportional),
+                FontId::new(TEXT_SECTION, FontFamily::Proportional),
             ),
             (
                 TextStyle::Monospace,
-                FontId::new(13.0, FontFamily::Monospace),
+                FontId::new(TEXT_BODY, FontFamily::Monospace),
             ),
         ]
         .into();
 
         let sp = &mut style.spacing;
-        sp.item_spacing = Vec2::new(6.0, 4.0);
-        sp.button_padding = Vec2::new(9.0, 4.0);
+        sp.item_spacing = Vec2::new(GAP, SPACE_XS);
+        sp.button_padding = Vec2::new(GAP, SPACE_XS);
         sp.interact_size.y = 24.0;
         sp.slider_width = 110.0;
         sp.indent = 14.0;
@@ -60,37 +128,38 @@ pub fn apply_style(ctx: &egui::Context) {
         let v = &mut style.visuals;
         v.dark_mode = true;
         v.panel_fill = WINDOW_BG;
-        v.window_fill = WINDOW_BG;
+        v.window_fill = PANEL_BG;
         v.window_stroke = Stroke::new(1.0, BORDER);
-        v.extreme_bg_color = STATUS_BG;
+        v.extreme_bg_color = BAR_BG;
         v.faint_bg_color = PANEL_BG;
-        v.code_bg_color = Color32::from_rgb(0x1b, 0x1d, 0x21);
+        v.code_bg_color = SELECTED_BG;
         v.hyperlink_color = ACCENT;
         v.weak_text_color = Some(MUTED);
         v.selection.bg_fill = ACCENT.gamma_multiply(0.45);
-        v.selection.stroke = Stroke::new(1.0, ACCENT);
-        v.window_corner_radius = 6.0.into();
-        v.menu_corner_radius = 4.0.into();
+        // Also the keyboard focus ring.
+        v.selection.stroke = Stroke::new(1.5, ACCENT);
+        v.window_corner_radius = CARD_RADIUS.into();
+        v.menu_corner_radius = 8.0.into();
 
         let w = &mut v.widgets;
         w.noninteractive.bg_fill = WINDOW_BG;
         w.noninteractive.weak_bg_fill = WINDOW_BG;
         w.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
         w.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
-        w.inactive.bg_fill = Color32::from_rgb(0x2a, 0x2d, 0x33);
-        w.inactive.weak_bg_fill = Color32::from_rgb(0x23, 0x26, 0x2b);
+        w.inactive.bg_fill = BORDER;
+        w.inactive.weak_bg_fill = SELECTED_BG;
         w.inactive.bg_stroke = Stroke::new(1.0, BORDER);
         w.inactive.fg_stroke = Stroke::new(1.0, TEXT);
-        w.hovered.bg_fill = Color32::from_rgb(0x34, 0x38, 0x40);
-        w.hovered.weak_bg_fill = Color32::from_rgb(0x2c, 0x30, 0x37);
-        w.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x42, 0x47, 0x50));
+        w.hovered.bg_fill = Color32::from_rgb(0x2c, 0x2f, 0x36);
+        w.hovered.weak_bg_fill = BORDER;
+        w.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x3a, 0x3d, 0x45));
         w.hovered.fg_stroke = Stroke::new(1.0, Color32::WHITE);
         w.active.bg_fill = ACCENT;
         w.active.weak_bg_fill = ACCENT.gamma_multiply(0.6);
         w.active.bg_stroke = Stroke::new(1.0, ACCENT);
         w.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-        w.open.bg_fill = Color32::from_rgb(0x2c, 0x30, 0x37);
-        w.open.weak_bg_fill = Color32::from_rgb(0x2c, 0x30, 0x37);
+        w.open.bg_fill = BORDER;
+        w.open.weak_bg_fill = BORDER;
         for wv in [
             &mut w.noninteractive,
             &mut w.inactive,
@@ -98,24 +167,21 @@ pub fn apply_style(ctx: &egui::Context) {
             &mut w.active,
             &mut w.open,
         ] {
-            wv.corner_radius = 4.0.into();
+            wv.corner_radius = CONTROL_RADIUS.into();
         }
     });
 }
 
 /// A rounded card of exactly `width` (including its border), at least `min_height` tall.
 pub fn card(ui: &mut egui::Ui, width: f32, min_height: f32, add: impl FnOnce(&mut egui::Ui)) {
-    let visuals = ui.visuals();
-    let fill = visuals
-        .panel_fill
-        .lerp_to_gamma(visuals.strong_text_color(), 0.05);
-    let stroke = visuals.widgets.noninteractive.bg_stroke;
+    let stroke = Stroke::new(1.0, BORDER);
+    let fill = PANEL_BG;
     let inset = 2.0 * (CARD_PAD + stroke.width);
 
     egui::Frame::new()
         .fill(fill)
         .stroke(stroke)
-        .corner_radius(4.0)
+        .corner_radius(CARD_RADIUS)
         .inner_margin(CARD_PAD)
         .show(ui, |ui| {
             ui.set_width(width - inset);
@@ -150,26 +216,30 @@ pub fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     response
 }
 
-/// A fully rounded chip that acts as one choice of a group; `selected` tints it with the accent.
+/// One choice of a segmented group; `selected` gets the lighter fill and full-strength text.
 pub fn pill(ui: &mut egui::Ui, text: &str, selected: bool) -> egui::Response {
     let font = egui::TextStyle::Body.resolve(ui.style());
-    let color = if selected {
-        ui.visuals().strong_text_color()
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = if selected { TEXT } else { MUTED };
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     let size = Vec2::new(galley.size().x + 18.0, 20.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
         let fill = if selected {
-            Color32::from_rgba_unmultiplied(ACCENT.r(), ACCENT.g(), ACCENT.b(), 70)
+            SELECTED_BG
         } else if response.hovered() {
-            ui.visuals().widgets.hovered.weak_bg_fill
+            BAR_DIVIDER
         } else {
             Color32::TRANSPARENT
         };
-        ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
+        ui.painter().rect_filled(rect, CONTROL_RADIUS, fill);
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect,
+                CONTROL_RADIUS,
+                ui.visuals().selection.stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
         let pos = rect.center() - galley.size() / 2.0;
         ui.painter().galley(pos, galley, color);
     }
@@ -304,15 +374,11 @@ pub fn graph_card(ui: &mut egui::Ui, width: f32, height: f32, g: &GraphCard) {
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let visuals = ui.visuals();
-    let fill = visuals
-        .panel_fill
-        .lerp_to_gamma(visuals.strong_text_color(), 0.05);
-    let stroke = visuals.widgets.noninteractive.bg_stroke;
-    let grid_color = stroke.color.gamma_multiply(0.6);
+    let stroke = Stroke::new(1.0, BORDER);
+    let grid_color = BAR_DIVIDER;
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, fill);
-    painter.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
+    painter.rect_filled(rect, CARD_RADIUS, PANEL_BG);
+    painter.rect_stroke(rect, CARD_RADIUS, stroke, egui::StrokeKind::Inside);
 
     let inner = rect.shrink(stroke.width);
     let bar = egui::Rect::from_min_max(
@@ -344,10 +410,10 @@ pub fn graph_card(ui: &mut egui::Ui, width: f32, height: f32, g: &GraphCard) {
         egui::CornerRadius {
             nw: 0,
             ne: 0,
-            sw: 3,
-            se: 3,
+            sw: CARD_RADIUS - 1,
+            se: CARD_RADIUS - 1,
         },
-        STATUS_BG,
+        BAR_BG,
     );
     painter.line_segment(
         [bar.left_top(), bar.right_top()],

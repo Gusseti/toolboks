@@ -34,6 +34,8 @@ pub struct App {
     native: crate::native::NativeHost,
     registry: Registry,
     screen: Screen,
+    /// The sidebar shows names (204 px) instead of icons only (52 px). Memory only.
+    sidebar_expanded: bool,
     addon_page: usize,
     search: String,
     install_path: String,
@@ -159,6 +161,7 @@ impl App {
             base: SystemAddon { tools, selected },
             registry,
             screen,
+            sidebar_expanded: false,
             addon_page: 0,
             search: String::new(),
             install_path: String::new(),
