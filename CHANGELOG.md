@@ -4,7 +4,7 @@
 
 ### Added
 
-- Aural, a verified add-on for live microphone levels, input gain, headphone monitoring and routing audio to other apps through a virtual cable.
+- Audio Gainer by aural, a verified add-on for live microphone levels, input gain, headphone monitoring and routing audio to other apps through a virtual cable.
 
 ### Fixed
 

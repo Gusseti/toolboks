@@ -53,8 +53,15 @@ pub fn trusted_native(p: &Package) -> bool {
     let Ok(value) = serde_json::to_value(p) else {
         return false;
     };
-    let official = official_package(&p.manifest.id).and_then(|p| serde_json::to_value(p).ok());
+    let package = official_package(&p.manifest.id);
+    let official = package.as_ref().and_then(|p| serde_json::to_value(p).ok());
     official.as_ref() == Some(&value)
+        || (p.manifest.id == AURAL_ID
+            && package.is_some_and(|mut previous| {
+                previous.manifest.title = "Aural".into();
+                previous.manifest.byline = None;
+                serde_json::to_value(previous).ok().as_ref() == Some(&value)
+            }))
         || (p.manifest.id == toolboks_disk_manager::ID
             && serde_json::from_str::<Package>(toolboks_disk_manager::LEGACY_PACKAGE)
                 .ok()
@@ -156,6 +163,10 @@ fn read_package(path: &Path) -> Result<Package, String> {
     validate_provider(&p)?;
     if reserved(&p.manifest.id) {
         return Err("A bundled add-on cannot be replaced by a local package.".into());
+    }
+    if p.manifest.id == AURAL_ID {
+        // Use the current display metadata after validating the exact installed package.
+        return Ok(official_package(AURAL_ID).expect("bundled Audio Gainer package"));
     }
     Ok(p)
 }
@@ -301,12 +312,18 @@ mod tests {
         let package = official_package(AURAL_ID).unwrap();
         package.validate(env!("CARGO_PKG_VERSION")).unwrap();
         assert!(trusted_native(&package));
+        assert_eq!(package.manifest.title, "Audio Gainer");
+        assert_eq!(package.manifest.byline.as_deref(), Some("by aural"));
         assert_eq!(
             package.manifest.capabilities,
             [toolboks_addon_sdk::Capability::LiveAudio]
         );
 
-        let mut spoof = package;
+        let mut previous = package.clone();
+        previous.manifest.title = "Aural".into();
+        previous.manifest.byline = None;
+        assert!(trusted_native(&previous));
+        let mut spoof = previous;
         spoof.manifest.native_provider = None;
         assert!(validate_provider(&spoof).is_err());
     }

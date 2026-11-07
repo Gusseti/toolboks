@@ -136,7 +136,7 @@ its exact first-party providers; adding a capability to a manifest does not gran
 Disk Manager 0.1 remains read-only until its approved 0.2 package update is installed.
 
 `live_audio` is a native-only capability for microphone monitoring and routing to
-user-selected outputs. Aural opens audio streams only after an explicit action.
+user-selected outputs. Audio Gainer opens audio streams only after an explicit action.
 
 `take_host_request` can return `ReviewUpdate` or `RestartElevated { page }`. The host
 handles the package review or user-requested administrator restart. `navigate(page)`

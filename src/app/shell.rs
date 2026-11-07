@@ -647,6 +647,9 @@ impl App {
                         }
                         None => {
                             ui.label(RichText::new(&crumb.root).size(size).strong().color(TEXT));
+                            if let Some(byline) = &crumb.byline {
+                                caption(ui, byline);
+                            }
                         }
                     }
                     if crumb.verified {
@@ -958,6 +961,9 @@ impl App {
                         );
                         if e.verified {
                             verified_mark(ui);
+                        }
+                        if let Some(byline) = &e.m.byline {
+                            caption(ui, byline);
                         }
                     });
                     caption(
@@ -1481,6 +1487,9 @@ impl App {
                             );
                             if self.registry.verified(&id) {
                                 badge(ui, "Toolboks verified", ACCENT_TEXT, true);
+                            }
+                            if let Some(byline) = &m.byline {
+                                caption(ui, byline);
                             }
                         });
                         ui.add_space(look::GAP);
