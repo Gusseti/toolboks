@@ -2,8 +2,11 @@
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-09
+
 ### Changed
 
+- Disk Manager scans much faster: it reads file sizes from the folder listing instead of asking for each file, and walks folders on several threads, fewer on a hard disk or network drive. A test folder of about 100,000 files went from about 14 seconds to under one second.
 - Toolboks loads add-on workspaces on demand and releases their page data when you switch away. Audio Gainer keeps active routes running without collecting offscreen meter history.
 - Resource Monitor and Memory Cleaner pause sampling when you leave them. Leaving Disk Manager cancels its scan and releases scan results.
 
