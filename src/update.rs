@@ -1,7 +1,7 @@
 //! Manual self-update from GitHub Releases.
 //!
 //! The exe is downloaded into memory, checked against the release's SHA-256 file, and swapped
-//! in by renaming the running exe aside and writing the new one in its place. The renamed
+//! in using Windows file replacement with a backup. The renamed
 //! `<exe>.old` is deleted by the next start. Nothing else is ever written.
 //!
 //! The checksum comes from the same release as the exe, so it guards against corruption, not
@@ -9,10 +9,11 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::time::Duration;
-use std::{fs, thread};
 
 use sha2::{Digest, Sha256};
 
@@ -27,6 +28,15 @@ const MIN_EXE_BYTES: usize = 100_000;
 /// Whole-transfer limits; a server that drips bytes forever cannot stall the app.
 const JSON_DEADLINE: Duration = Duration::from_secs(30);
 const EXE_DEADLINE: Duration = Duration::from_secs(300);
+static INSTALLING: AtomicBool = AtomicBool::new(false);
+
+pub fn set_installing(installing: bool) {
+    INSTALLING.store(installing, AtomicOrdering::Relaxed);
+}
+
+pub fn is_installing() -> bool {
+    INSTALLING.load(AtomicOrdering::Relaxed)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
@@ -117,17 +127,20 @@ pub struct Release {
     pub version: Version,
     pub exe_url: String,
     pub sha_url: String,
-    /// Release notes from the GitHub `body`, raw Markdown; empty when missing.
+    /// Short, plain release notes prepared once from the GitHub response.
     pub notes: String,
     /// Size of the exe asset in bytes, when GitHub reports it.
     pub size: Option<u64>,
 }
 
 const NOTES_MAX_CHARS: usize = 700;
+const NOTES_INPUT_BYTES: usize = 8 * 1024;
 
 /// Release notes without Markdown noise, collapsed and cut to about 700 characters at a line
 /// boundary (with an ellipsis line when cut).
 pub fn plain_notes(markdown: &str) -> String {
+    let truncated = markdown.len() > NOTES_INPUT_BYTES;
+    let markdown = &markdown[..markdown.floor_char_boundary(markdown.len().min(NOTES_INPUT_BYTES))];
     let mut text = String::new();
     let mut rest = markdown;
     while let Some(start) = rest.find("<!--") {
@@ -177,6 +190,12 @@ pub fn plain_notes(markdown: &str) -> String {
             out.push('\n');
         }
         out.push_str(line);
+    }
+    if truncated {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push('…');
     }
     out
 }
@@ -291,7 +310,7 @@ pub fn parse_release(json: &[u8]) -> Result<Release, UpdateError> {
         .iter()
         .find(|a| a["name"].as_str() == Some(EXE_ASSET))
         .and_then(|a| a["size"].as_u64());
-    let notes = value["body"].as_str().unwrap_or("").to_string();
+    let notes = plain_notes(value["body"].as_str().unwrap_or(""));
     Ok(Release {
         version,
         exe_url,
@@ -411,55 +430,52 @@ fn write_and_sync(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Puts `new_exe` in place of `current`, which may be running:
-/// 1. write and flush `<current>.new`, so `current` is never half-written,
-/// 2. rename `current` to `<current>.old` (allowed for a running exe),
-/// 3. rename `<current>.new` to `current`.
-///
-/// Any failure restores the original exe.
+/// Replaces the running image and keeps a backup using a single Windows API operation.
 fn replace_exe(current: &Path, new_exe: &[u8]) -> std::io::Result<()> {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::{ReplaceFileW, REPLACE_FILE_FLAGS};
+
     let (old, new) = (old_path(current), new_path(current));
-    let _ = fs::remove_file(&old);
     if let Err(e) = write_and_sync(&new, new_exe) {
         let _ = fs::remove_file(&new);
         return Err(e);
     }
-    if let Err(e) = fs::rename(current, &old) {
+    // SAFETY: all three NUL-terminated paths live through the call and name sibling files.
+    let result = unsafe {
+        ReplaceFileW(
+            &HSTRING::from(current.as_os_str()),
+            &HSTRING::from(new.as_os_str()),
+            &HSTRING::from(old.as_os_str()),
+            REPLACE_FILE_FLAGS(0),
+            None,
+            None,
+        )
+    };
+    if let Err(error) = result {
+        // Windows can report a failure after moving the original to the backup name.
+        if matches!(current.try_exists(), Ok(false)) && old.is_file() {
+            if let Err(restore) = fs::rename(&old, current) {
+                return Err(std::io::Error::other(format!(
+                    "{error}. Could not restore the previous executable ({restore}). It is still available at {}.",
+                    old.display()
+                )));
+            }
+        }
         let _ = fs::remove_file(&new);
-        return Err(e);
-    }
-    if let Err(e) = fs::rename(&new, current) {
-        let _ = fs::rename(&old, current);
-        let _ = fs::remove_file(&new);
-        return Err(e);
+        return Err(std::io::Error::other(error));
     }
     Ok(())
 }
 
 /// After an update the previous exe is still on disk as `<exe>.old` (and a crash mid-update
-/// could leave `<exe>.new`). Deletes them once the old process has exited. Does nothing, and
-/// touches nothing, in the normal case.
+/// could leave `<exe>.new`). Called once the new app has rendered and no install is running.
 pub fn cleanup_old_exe() {
     let Ok(current) = std::env::current_exe() else {
         return;
     };
-    let leftovers: Vec<PathBuf> = [old_path(&current), new_path(&current)]
-        .into_iter()
-        .filter(|p| p.exists())
-        .collect();
-    if leftovers.is_empty() {
-        return;
+    for path in [old_path(&current), new_path(&current)] {
+        let _ = fs::remove_file(path);
     }
-    thread::spawn(move || {
-        for path in leftovers {
-            for _ in 0..30 {
-                if fs::remove_file(&path).is_ok() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(500));
-            }
-        }
-    });
 }
 
 #[cfg(test)]

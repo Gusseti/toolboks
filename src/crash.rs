@@ -25,13 +25,16 @@ static IN_HOOK: AtomicBool = AtomicBool::new(false);
 /// Installs the hook. Call first thing in `main`.
 pub fn install() {
     std::panic::set_hook(Box::new(|info| {
-        // A panic while handling a panic (or a second thread panicking meanwhile) must not
-        // recurse; the default abort follows either way.
+        // The first panicking thread owns the dialog. A second one must not abort the process
+        // while the user is reading it. Rust aborts recursive panics on the same thread itself.
         if IN_HOOK.swap(true, Ordering::SeqCst) {
-            return;
+            loop {
+                std::thread::park();
+            }
         }
         // Any failure in here is swallowed; the process aborts right after anyway.
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(info)));
+        std::process::abort();
     }));
 }
 

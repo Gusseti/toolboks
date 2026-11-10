@@ -23,11 +23,6 @@ fn main() -> eframe::Result {
     let Some(_instance) = instance::acquire(&args) else {
         return Ok(());
     };
-    // Removes the previous exe left behind by an update; does nothing otherwise.
-    if !cfg!(feature = "preview") {
-        update::cleanup_old_exe();
-    }
-
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!(

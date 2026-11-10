@@ -1170,6 +1170,12 @@ impl App {
                         self.pending_package = Some(addons::official_disk_package())
                     }
                     toolboks_addon_sdk::HostRequest::RestartElevated { page } => {
+                        if self.install_in_progress() {
+                            self.message = Some(
+                                "Wait for the update to finish before restarting Toolboks.".into(),
+                            );
+                            return;
+                        }
                         if crate::elevation::relaunch_elevated_with_args(&[
                             "--open-addon",
                             id,
