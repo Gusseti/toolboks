@@ -452,7 +452,10 @@ fn set_priority(identity: ProcessIdentity, name: &str, class: u32) -> Result<u32
 fn open_location(path: &str) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let _ = std::process::Command::new("explorer.exe")
+    let Ok(windows) = crate::win::windows_dir() else {
+        return;
+    };
+    let _ = std::process::Command::new(windows.join("explorer.exe"))
         .raw_arg(format!("/select,\"{path}\""))
         .creation_flags(CREATE_NO_WINDOW)
         .spawn();

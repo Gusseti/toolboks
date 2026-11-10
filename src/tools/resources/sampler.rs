@@ -27,6 +27,17 @@ const TICK: Duration = Duration::from_millis(1000);
 /// Rows kept per top-processes list.
 const TOP_ROWS: usize = 8;
 
+/// Keep ordinary sampling work inside the tick interval. After a missed interval, resume
+/// at normal speed instead of running a burst of samples to catch up.
+fn next_deadline(deadline: Instant, now: Instant) -> Instant {
+    let next = deadline + TICK;
+    if next <= now {
+        now + TICK
+    } else {
+        next
+    }
+}
+
 /// Facts that do not change while the app runs. Sent once, before the first sample.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Info {
@@ -742,18 +753,21 @@ impl Sampler {
                 let mut gpu_reader = GpuReader::new();
                 let nvml = Nvml::open();
                 let mut last_tick = Instant::now();
+                let mut deadline = last_tick + TICK;
 
                 // The thread was primed above, so the first tick can already report.
                 loop {
-                    std::thread::sleep(TICK);
+                    std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
                     if stop_worker.load(Ordering::Relaxed) {
                         return;
                     }
+                    let now = Instant::now();
+                    let secs = now.duration_since(last_tick).as_secs_f64();
+                    last_tick = now;
+                    deadline = next_deadline(deadline, now);
                     sys.refresh_cpu_all();
                     sys.refresh_memory();
 
-                    let secs = last_tick.elapsed().as_secs_f64();
-                    last_tick = Instant::now();
                     let (read, written, drives) = match disks.as_mut() {
                         Some(d) => {
                             d.refresh_specifics(true, disk_kind);
@@ -839,6 +853,18 @@ impl Sampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sample_deadlines_do_not_accumulate_work_time_or_catch_up_in_a_burst() {
+        let scheduled = Instant::now();
+        let work_delay = Duration::from_millis(150);
+        assert_eq!(
+            next_deadline(scheduled, scheduled + work_delay),
+            scheduled + TICK
+        );
+        let resumed = scheduled + TICK * 4;
+        assert_eq!(next_deadline(scheduled, resumed), resumed + TICK);
+    }
 
     #[test]
     fn never_pinged_is_not_visible() {

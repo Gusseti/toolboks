@@ -4,9 +4,11 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use windows::core::{PCSTR, PCWSTR};
+use windows::core::{w, PCSTR};
 use windows::Win32::Foundation::FreeLibrary;
-use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use windows::Win32::System::LibraryLoader::{
+    GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+};
 
 use super::backend::{Registry, WinRegistry};
 use super::model::{Hive, RegValue};
@@ -60,6 +62,7 @@ const FREQ_VALUE: &str = "SystemRestorePointCreationFrequency";
 const BEGIN_SYSTEM_CHANGE: u32 = 100;
 const END_SYSTEM_CHANGE: u32 = 101;
 const MODIFY_SETTINGS: u32 = 12;
+const MAX_DESC_W: usize = 256;
 
 /// RESTOREPOINTINFOW (Microsoft docs: 1-byte packing).
 #[repr(C, packed(1))]
@@ -67,7 +70,7 @@ struct RestorePointInfoW {
     event_type: u32,
     restore_point_type: u32,
     sequence_number: i64,
-    description: [u16; 64],
+    description: [u16; MAX_DESC_W],
 }
 
 /// STATEMGRSTATUS (Microsoft docs: 1-byte packing).
@@ -89,26 +92,37 @@ fn read_dword(path: &str, name: &str) -> Option<u32> {
     }
 }
 
+fn restore_info(event: u32, sequence: i64, description: &str) -> RestorePointInfoW {
+    let mut wide = [0; MAX_DESC_W];
+    let mut used = 0;
+    for ch in description.chars().take_while(|&ch| ch != '\0') {
+        let end = used + ch.len_utf16();
+        if end >= wide.len() {
+            break;
+        }
+        ch.encode_utf16(&mut wide[used..end]);
+        used = end;
+    }
+    RestorePointInfoW {
+        event_type: event,
+        restore_point_type: MODIFY_SETTINGS,
+        sequence_number: sequence,
+        description: wide,
+    }
+}
+
 fn call_sr(event: u32, sequence: i64, description: &str) -> Result<u64, String> {
-    // SAFETY: plain LoadLibraryW/GetProcAddress with NUL-terminated names; the function pointer is
+    // SAFETY: LoadLibraryExW/GetProcAddress use NUL-terminated names; the function pointer is
     // transmuted to the documented SRSetRestorePointW signature and used while the DLL stays loaded.
     unsafe {
-        let name: Vec<u16> = "srclient.dll".encode_utf16().chain(Some(0)).collect();
-        let lib = LoadLibraryW(PCWSTR(name.as_ptr())).map_err(|_| OFF_TEXT.to_string())?;
+        let lib = LoadLibraryExW(w!("srclient.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32)
+            .map_err(|_| OFF_TEXT.to_string())?;
         let Some(proc) = GetProcAddress(lib, PCSTR(c"SRSetRestorePointW".as_ptr().cast())) else {
             let _ = FreeLibrary(lib);
             return Err(OFF_TEXT.to_string());
         };
         let func: SetRestorePointFn = std::mem::transmute(proc);
-        let mut info = RestorePointInfoW {
-            event_type: event,
-            restore_point_type: MODIFY_SETTINGS,
-            sequence_number: sequence,
-            description: [0; 64],
-        };
-        for (i, ch) in description.encode_utf16().take(63).enumerate() {
-            info.description[i] = ch;
-        }
+        let info = restore_info(event, sequence, description);
         let mut status = StateMgrStatus {
             status: 0,
             sequence_number: 0,
@@ -421,8 +435,21 @@ mod tests {
 
     #[test]
     fn struct_sizes_match_docs() {
-        assert_eq!(std::mem::size_of::<RestorePointInfoW>(), 144);
+        assert_eq!(std::mem::size_of::<RestorePointInfoW>(), 528);
+        assert_eq!(std::mem::offset_of!(RestorePointInfoW, description), 16);
         assert_eq!(std::mem::size_of::<StateMgrStatus>(), 12);
+    }
+
+    #[test]
+    fn description_stays_terminated_without_splitting_a_surrogate_pair() {
+        let prefix = "a".repeat(MAX_DESC_W - 2);
+        let info = restore_info(BEGIN_SYSTEM_CHANGE, 0, &format!("{prefix}😀"));
+        let description = info.description;
+        assert_eq!(&description[MAX_DESC_W - 2..], &[0, 0]);
+        assert_eq!(
+            String::from_utf16(&description[..MAX_DESC_W - 2]).unwrap(),
+            prefix
+        );
     }
 
     #[test]
