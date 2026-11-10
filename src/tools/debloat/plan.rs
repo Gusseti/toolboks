@@ -117,7 +117,11 @@ fn restore(op: &UndoOp, reg: &mut dyn Registry) -> Result<(), String> {
     match &op.previous {
         Some(v) => reg.write(op.hive, op.path, op.name, v),
         None => reg.delete(op.hive, op.path, op.name),
+    }?;
+    if reg.read(op.hive, op.path, op.name)? != op.previous {
+        return Err("Windows did not keep the previous value".into());
     }
+    Ok(())
 }
 
 /// Writes one item. On error, the item's already-written values are rolled back.
@@ -126,7 +130,7 @@ fn apply_item(item: &Item, reg: &mut dyn Registry, ops: &mut Vec<UndoOp>) -> Out
     for s in item.settings {
         let previous = match reg.read(s.hive, s.path, s.name) {
             Ok(p) => p,
-            Err(e) => return fail(e, written, reg),
+            Err(e) => return rollback(Outcome::Failed(e), written, reg, ops),
         };
         if s.off_at_or_below && s.is_off(previous.as_ref()) {
             continue;
@@ -138,10 +142,10 @@ fn apply_item(item: &Item, reg: &mut dyn Registry, ops: &mut Vec<UndoOp>) -> Out
             name: s.name,
             previous,
         };
-        if let Err(e) = reg.write(s.hive, s.path, s.name, &RegValue::Dword(s.off_value)) {
-            return fail(e, written, reg);
-        }
         written.push(op);
+        if let Err(e) = reg.write(s.hive, s.path, s.name, &RegValue::Dword(s.off_value)) {
+            return rollback(Outcome::Failed(e), written, reg, ops);
+        }
     }
 
     let effective = item.settings.iter().all(|s| {
@@ -150,22 +154,32 @@ fn apply_item(item: &Item, reg: &mut dyn Registry, ops: &mut Vec<UndoOp>) -> Out
             Ok(value) if s.is_off(value.as_ref())
         )
     });
-    ops.extend(written);
     if effective {
+        ops.extend(written);
         Outcome::Done
     } else {
-        Outcome::NotEffective
+        rollback(Outcome::NotEffective, written, reg, ops)
     }
 }
 
-fn fail(error: String, written: Vec<UndoOp>, reg: &mut dyn Registry) -> Outcome {
-    let mut message = error;
-    for op in written.iter().rev() {
-        if let Err(e) = restore(op, reg) {
-            message.push_str(&format!(" (could not put {} back: {e})", op.name));
-        }
+fn rollback(
+    outcome: Outcome,
+    mut written: Vec<UndoOp>,
+    reg: &mut dyn Registry,
+    ops: &mut Vec<UndoOp>,
+) -> Outcome {
+    undo(&mut written, reg);
+    if written.is_empty() {
+        return outcome;
     }
-    Outcome::Failed(message)
+    ops.extend(written);
+    let reason = match outcome {
+        Outcome::Failed(error) => error,
+        _ => "Windows did not keep the requested change".into(),
+    };
+    Outcome::Failed(format!(
+        "{reason}. Could not verify rollback for all values. Use Undo to retry."
+    ))
 }
 
 /// Applies the ticked items (only those that are `Active` and applicable), recording the previous
@@ -191,8 +205,19 @@ pub fn apply(items: &[Item], selected: &[&str], reg: &mut dyn Registry, env: Env
 
 /// Restores the recorded previous values (newest first), keeping failures for retry.
 pub fn undo(steps: &mut Vec<UndoOp>, reg: &mut dyn Registry) {
+    let mut blocked = std::collections::HashSet::new();
     steps.reverse();
-    steps.retain(|op| restore(op, reg).is_err());
+    steps.retain(|op| {
+        let key = (op.hive, op.path, op.name);
+        if blocked.contains(&key) {
+            return true;
+        }
+        if restore(op, reg).is_err() {
+            blocked.insert(key);
+            return true;
+        }
+        false
+    });
     steps.reverse();
 }
 
@@ -500,7 +525,22 @@ mod tests {
         };
         let run = apply(&items, &["b"], &mut reg, PRO);
         assert_eq!(run.applied[0].outcome, Outcome::NotEffective);
+        assert!(run.undo.is_empty());
+    }
+
+    #[test]
+    fn undo_keeps_a_value_when_windows_ignores_the_restore() {
+        let mut reg = FakeRegistry::default();
+        reg.set(Hive::CurrentUser, "B1", RegValue::Dword(1));
+        let mut run = apply(&test_items(), &["b"], &mut reg, PRO);
+        reg.ignore_writes = true;
+        undo(&mut run.undo, &mut reg);
         assert_eq!(run.undo.len(), 1);
+        assert_eq!(reg.get(Hive::CurrentUser, "B1"), Some(RegValue::Dword(0)));
+        reg.ignore_writes = false;
+        undo(&mut run.undo, &mut reg);
+        assert!(run.undo.is_empty());
+        assert_eq!(reg.get(Hive::CurrentUser, "B1"), Some(RegValue::Dword(1)));
     }
 
     #[test]

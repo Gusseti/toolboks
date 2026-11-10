@@ -644,13 +644,18 @@ fn read_start(svc: &dyn Services, name: &str) -> Result<StartType, String> {
 /// type we never write, and a Disabled target while a dependent service is running. Re-reads the
 /// state to confirm; if it did not stick, the previous start type is put back and an error returned.
 /// Undo with `undo`, which puts `UndoStep::previous` back.
-pub fn set_off(svc: &mut dyn Services, def: &ServiceDef) -> Result<UndoStep, String> {
+pub(super) fn set_off(
+    svc: &mut dyn Services,
+    def: &ServiceDef,
+) -> Result<UndoStep, super::ChangeError<UndoStep>> {
     let known = catalog()
         .iter()
         .find(|d| d.name.eq_ignore_ascii_case(def.name) && d.id == def.id)
         .ok_or_else(|| "That service is not on the list this tool may change".to_string())?;
     if is_never_offered(known.name) {
-        return Err("That service is never changed by this tool".to_string());
+        return Err("That service is never changed by this tool"
+            .to_string()
+            .into());
     }
     let (previous, dependents) = match svc.state(known.name) {
         ServiceState::Present {
@@ -658,15 +663,19 @@ pub fn set_off(svc: &mut dyn Services, def: &ServiceDef) -> Result<UndoStep, Str
             active_dependents,
             ..
         } => (start, active_dependents),
-        ServiceState::NotPresent => return Err("That service is not on this PC".to_string()),
-        ServiceState::Locked => return Err("Protected by Windows".to_string()),
-        ServiceState::Unknown(e) => return Err(format!("Could not read the service: {e}")),
+        ServiceState::NotPresent => {
+            return Err("That service is not on this PC".to_string().into())
+        }
+        ServiceState::Locked => return Err("Protected by Windows".to_string().into()),
+        ServiceState::Unknown(e) => return Err(format!("Could not read the service: {e}").into()),
     };
     if let StartType::Other(_) = previous {
-        return Err("This service starts with Windows itself and is left alone".to_string());
+        return Err("This service starts with Windows itself and is left alone"
+            .to_string()
+            .into());
     }
     if known.is_off(previous) {
-        return Err(format!("Already set to {}", previous.label()));
+        return Err(format!("Already set to {}", previous.label()).into());
     }
     if known.target == StartType::Disabled && !dependents.is_empty() {
         let shown: Vec<&str> = dependents.iter().take(3).map(String::as_str).collect();
@@ -679,27 +688,29 @@ pub fn set_off(svc: &mut dyn Services, def: &ServiceDef) -> Result<UndoStep, Str
             "Other running services need it: {}{}",
             shown.join(", "),
             more
-        ));
+        )
+        .into());
     }
-    svc.set_start(known.name, known.target)?;
-    match read_start(svc, known.name) {
-        Ok(now) if now == known.target => Ok(UndoStep {
-            id: known.id,
-            name: known.name,
-            previous,
-        }),
+    let step = UndoStep {
+        id: known.id,
+        name: known.name,
+        previous,
+    };
+    match svc
+        .set_start(known.name, known.target)
+        .and_then(|()| read_start(svc, known.name))
+    {
+        Ok(now) if now == known.target => Ok(step),
         other => {
-            let _ = svc.set_start(known.name, previous);
-            Err(match other {
+            let message = match other {
                 Ok(now) => format!(
-                    "Windows kept it at {} instead of {}; the old setting was put back",
+                    "Windows kept it at {} instead of {}",
                     now.label(),
                     known.target.label()
                 ),
-                Err(e) => {
-                    format!("Could not confirm the change ({e}); the old setting was put back")
-                }
-            })
+                Err(e) => format!("Could not confirm the change ({e})"),
+            };
+            Err(super::rollback(message, step, |step| undo(svc, step)))
         }
     }
 }
@@ -887,7 +898,7 @@ mod tests {
         assert!(set_off(&mut f, &d).is_err());
         let mut f = FakeServices::with("SysMain", StartType::Disabled);
         assert_eq!(
-            set_off(&mut f, &find("SysMain")).unwrap_err(),
+            set_off(&mut f, &find("SysMain")).unwrap_err().message,
             "Already set to Disabled"
         );
         assert!(f.writes.is_empty());
@@ -900,7 +911,7 @@ mod tests {
             "DiagTrack".into(),
             present(StartType::Auto, vec!["A", "B", "C", "D"]),
         );
-        let e = set_off(&mut f, &d).unwrap_err();
+        let e = set_off(&mut f, &d).unwrap_err().message;
         assert!(e.contains("A, B, C") && !e.contains('D'));
         assert!(f.writes.is_empty());
         // Dependents do not block a Manual target.

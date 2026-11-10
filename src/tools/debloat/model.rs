@@ -16,7 +16,7 @@ pub enum Edition {
     Enterprise,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Hive {
     CurrentUser,
     LocalMachine,

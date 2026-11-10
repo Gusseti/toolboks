@@ -30,6 +30,13 @@ pub enum RestoreStatus {
     Failed(String),
 }
 
+pub fn has_restore_point(status: &RestoreStatus) -> bool {
+    matches!(
+        status,
+        RestoreStatus::Created { .. } | RestoreStatus::SkippedRecent { .. }
+    )
+}
+
 /// System Restore access behind a trait so the logic is tested with a fake.
 pub trait RestoreApi {
     /// `Some(true/false)` if System Protection state could be read, `None` if unknown.

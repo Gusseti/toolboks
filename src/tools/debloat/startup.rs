@@ -465,7 +465,20 @@ const DENY_SUBSTR: &[&str] = &[
     "appcontrol",
 ];
 /// Short names that must start a word (so "Navigator" does not match "avg").
-const DENY_WORD: &[&str] = &["avg", "eset"];
+const DENY_WORD: &[&str] = &[
+    "avg",
+    "eset",
+    "avira",
+    "g data",
+    "gdata",
+    "panda security",
+    "panda antivirus",
+    "comodo",
+    "emsisoft",
+    "zonealarm",
+    "check point",
+    "checkpoint",
+];
 
 const SUGGEST_SUBSTR: &[&str] = &[
     "onedrive",
@@ -503,9 +516,14 @@ pub fn classify(name: &str, command: &str, publisher: Option<&str>) -> Class {
     let name = name.to_lowercase();
     let command = command.to_lowercase();
     let hay = format!("{name}\n{command}");
+    let publisher = publisher.unwrap_or_default().to_lowercase();
     if name == "sense"
         || DENY_SUBSTR.iter().any(|k| hay.contains(k))
         || DENY_WORD.iter().any(|k| has_word_start(&hay, k))
+        || DENY_SUBSTR.iter().any(|k| publisher.contains(k))
+        || DENY_WORD.iter().any(|k| has_word_start(&publisher, k))
+        || has_word_start(&name, "panda")
+        || has_word_start(&publisher, "panda")
     {
         return Class::Never;
     }
@@ -513,7 +531,7 @@ pub fn classify(name: &str, command: &str, publisher: Option<&str>) -> Class {
         || command.contains(r"\syswow64\")
         || command.contains(r"%systemroot%\system32")
         || command.contains(r"%windir%\system32");
-    let ms = publisher.is_some_and(|p| p.to_lowercase().contains("microsoft"));
+    let ms = publisher.contains("microsoft");
     if in_system && ms {
         return Class::Never;
     }
@@ -689,17 +707,18 @@ pub fn publisher_of_command(command: &str) -> Option<String> {
 
 /// Switches an entry on or off. Refuses `Class::Never`. Reads the approval back and fails if it
 /// does not show the new state (the previous value is then put back). Returns the undo step.
-pub fn set_enabled(
+pub(super) fn set_enabled(
     store: &mut dyn StartupStore,
     entry: &Entry,
     enable: bool,
     now_filetime: u64,
-) -> Result<UndoStep, String> {
+) -> Result<UndoStep, super::ChangeError<UndoStep>> {
     if entry.class == Class::Never {
         return Err(format!(
             "{} is a security or system component and cannot be changed here",
             entry.name
-        ));
+        )
+        .into());
     }
     let previous = store.approval(entry.source, &entry.name)?;
     let bytes = if enable {
@@ -707,30 +726,33 @@ pub fn set_enabled(
     } else {
         disabled_bytes(now_filetime)
     };
-    if let Err(e) = store.set_approval(entry.source, &entry.name, Some(&bytes)) {
-        let _ = store.set_approval(entry.source, &entry.name, previous.as_deref());
-        return Err(e);
-    }
-    let verified = match store.approval(entry.source, &entry.name) {
-        Ok(now) => now.is_some() && is_enabled(now.as_deref()) == enable,
-        Err(_) => false,
-    };
-    if !verified {
-        let _ = store.set_approval(entry.source, &entry.name, previous.as_deref());
-        return Err(format!(
-            "Windows did not keep the change for {}; it was put back",
-            entry.name
-        ));
-    }
-    Ok(UndoStep {
+    let step = UndoStep {
         source: entry.source,
         name: entry.name.clone(),
         previous,
-    })
+    };
+    let result = store
+        .set_approval(entry.source, &entry.name, Some(&bytes))
+        .and_then(|()| {
+            let now = store.approval(entry.source, &entry.name)?;
+            if now.is_some() && is_enabled(now.as_deref()) == enable {
+                Ok(())
+            } else {
+                Err("Windows did not keep the change".into())
+            }
+        });
+    match result {
+        Ok(()) => Ok(step),
+        Err(error) => Err(super::rollback(error, step, |step| undo(store, step))),
+    }
 }
 
 pub fn undo(store: &mut dyn StartupStore, step: &UndoStep) -> Result<(), String> {
-    store.set_approval(step.source, &step.name, step.previous.as_deref())
+    store.set_approval(step.source, &step.name, step.previous.as_deref())?;
+    if store.approval(step.source, &step.name)? != step.previous {
+        return Err("Windows did not keep the previous startup setting".into());
+    }
+    Ok(())
 }
 
 /// Plain text of the steps for the clipboard (one line per step).
@@ -836,6 +858,23 @@ mod tests {
         assert!(is_enabled(Some(&[6, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8])));
         assert!(!is_enabled(Some(&[3, 0, 0, 0])));
         assert!(!is_enabled(Some(&[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])));
+    }
+
+    #[test]
+    fn startup_undo_requires_the_exact_approval_bytes() {
+        let entry = entry(Class::Suggest, "App");
+        let mut store = FakeStore::default();
+        store
+            .approvals
+            .insert(k(entry.source, &entry.name), enabled_bytes().to_vec());
+        let step = set_enabled(&mut store, &entry, false, 9).unwrap();
+        store.corrupt_next_write = true;
+        assert!(undo(&mut store, &step).is_err());
+        undo(&mut store, &step).unwrap();
+        assert_eq!(
+            store.approval(entry.source, &entry.name).unwrap(),
+            step.previous
+        );
     }
 
     #[test]
@@ -968,7 +1007,7 @@ mod tests {
         let mut s = FakeStore::default();
         let err =
             set_enabled(&mut s, &entry(Class::Never, "SecurityHealth"), false, 1).unwrap_err();
-        assert!(err.contains("cannot be changed"));
+        assert!(err.message.contains("cannot be changed"));
         assert!(s.approvals.is_empty());
     }
 

@@ -519,7 +519,7 @@ fn summarize(run: &plan::Run) -> String {
     let ineffective = count(|o| matches!(o, plan::Outcome::NotEffective));
     let failed = count(|o| matches!(o, plan::Outcome::Failed(_)));
     format!(
-        "Done: {done}, not effective: {ineffective} (Windows ignores it on this edition), \
+        "Done: {done}, restored after a mismatch: {ineffective}, \
          failed: {failed}"
     )
 }
@@ -550,7 +550,7 @@ fn run_notes(run: &plan::Run) -> Vec<String> {
         .filter_map(|a| match &a.outcome {
             plan::Outcome::Done => None,
             plan::Outcome::NotEffective => Some(format!(
-                "{}: saved, but Windows ignores it on this edition.",
+                "{}: Windows did not keep the change. The previous setting was restored.",
                 title_of(a.id)
             )),
             plan::Outcome::Failed(e) => {
@@ -1009,7 +1009,11 @@ impl Debloater {
                     if enable { "on" } else { "off" }
                 )
             }
-            Err(e) => format!("Could not change {}: {e}", entry.name),
+            Err(e) => {
+                let message = format!("Could not change {}: {e}", entry.name);
+                self.startup.steps.extend(e.recovery);
+                message
+            }
         });
         self.startup.started = false;
     }
@@ -1321,6 +1325,7 @@ impl Debloater {
         self.tasks.message = Some(match job {
             Some(TaskJob::Set(title, result, point)) => {
                 if let Some(status) = &point {
+                    self.restore.tasks_done = restore::has_restore_point(status);
                     self.restore.status = Some(restore::status_text(status));
                 }
                 match result {
@@ -1329,7 +1334,11 @@ impl Debloater {
                         self.tasks.steps.push(step);
                         format!("{title} is now {now}.")
                     }
-                    Err(e) => format!("Could not change {title}: {e}"),
+                    Err(e) => {
+                        let message = format!("Could not change {title}: {e}");
+                        self.tasks.steps.extend(e.recovery);
+                        message
+                    }
                 }
             }
             Some(TaskJob::Undo {
@@ -1350,9 +1359,6 @@ impl Debloater {
             return;
         }
         let make_point = should_create(self.restore.on, self.env.elevated, self.restore.tasks_done);
-        if make_point {
-            self.restore.tasks_done = true;
-        }
         self.restore.status = None;
         let elevated = self.env.elevated;
         let (tx, rx) = mpsc::channel();
@@ -1366,7 +1372,9 @@ impl Debloater {
                 )
             });
             let result = match &point {
-                Some(status) if restore::is_blocking(status) => Err(restore::status_text(status)),
+                Some(status) if restore::is_blocking(status) => {
+                    Err(restore::status_text(status).into())
+                }
                 _ => tasks::set_enabled(&mut tasks::WinTasks, &def, enable),
             };
             let _ = tx.send(TaskJob::Set(def.title.to_string(), result, point));
@@ -1730,6 +1738,7 @@ impl Debloater {
         self.services.message = Some(match job {
             Some(ServiceJob::Set(title, result, point)) => {
                 if let Some(status) = &point {
+                    self.restore.services_done = restore::has_restore_point(status);
                     self.restore.status = Some(restore::status_text(status));
                 }
                 match result {
@@ -1737,7 +1746,11 @@ impl Debloater {
                         self.services.steps.push(step);
                         format!("{title} is now switched off.")
                     }
-                    Err(e) => format!("Could not change {title}: {e}"),
+                    Err(e) => {
+                        let message = format!("Could not change {title}: {e}");
+                        self.services.steps.extend(e.recovery);
+                        message
+                    }
                 }
             }
             Some(ServiceJob::Undo {
@@ -1762,9 +1775,6 @@ impl Debloater {
             self.env.elevated,
             self.restore.services_done,
         );
-        if make_point {
-            self.restore.services_done = true;
-        }
         self.restore.status = None;
         let elevated = self.env.elevated;
         let (tx, rx) = mpsc::channel();
@@ -1778,7 +1788,9 @@ impl Debloater {
                 )
             });
             let result = match &point {
-                Some(status) if restore::is_blocking(status) => Err(restore::status_text(status)),
+                Some(status) if restore::is_blocking(status) => {
+                    Err(restore::status_text(status).into())
+                }
                 _ => services::set_off(&mut services::WinServices, &def),
             };
             let _ = tx.send(ServiceJob::Set(def.title.to_string(), result, point));
@@ -2289,7 +2301,7 @@ mod tests {
         let run = run_with(&[Done, Done, NotEffective, Failed("no".into())]);
         assert_eq!(
             summarize(&run),
-            "Done: 2, not effective: 1 (Windows ignores it on this edition), failed: 1"
+            "Done: 2, restored after a mismatch: 1, failed: 1"
         );
         assert_eq!(run_notes(&run).len(), 2);
         assert!(summarize(&plan::Run::default()).starts_with("Done: 0"));
