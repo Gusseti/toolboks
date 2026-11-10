@@ -322,7 +322,12 @@ fn paint_spark(
             Pos2::new(x.max(rect.left()), y)
         })
         .collect();
-    painter.add(Shape::line(points, Stroke::new(1.5, color)));
+    for segment in points
+        .split(|point| !point.y.is_finite())
+        .filter(|segment| segment.len() >= 2)
+    {
+        painter.add(Shape::line(segment.to_vec(), Stroke::new(1.5, color)));
+    }
 }
 
 #[cfg(test)]

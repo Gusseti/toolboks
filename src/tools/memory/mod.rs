@@ -19,6 +19,7 @@ mod trim;
 mod workbench;
 
 use std::collections::{HashSet, VecDeque};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -32,19 +33,36 @@ use self::memlist::Lists;
 use self::pressure::{Assessment, PressureModel, Verdict, WindowsSignals};
 use self::sampler::WindowsSampler;
 use self::scheduler::Scheduler;
-use self::stats::{Sampler, SortKey};
+use self::stats::{Sampler, Snapshot, SortKey};
 use self::workbench::Selection;
 use super::Tool;
 use crate::elevation;
 
 const REFRESH: Duration = Duration::from_secs(2);
 
+enum RefreshAction {
+    Optimize(report::Trigger),
+    Trim {
+        selection: HashSet<String>,
+        grouped: bool,
+    },
+}
+
+struct RefreshWorker {
+    request: Sender<Option<RefreshAction>>,
+    result: Receiver<(Option<Snapshot>, Option<RefreshAction>)>,
+}
+
 /// Live RAM usage, a per-process table, manual per-process trimming, a pressure verdict, the
 /// safe optimize run and an automatic mode that only acts under real memory pressure.
 /// Nothing is stored anywhere: exclusions and filters reset when the app closes.
 pub struct Memory {
     /// `None` if the platform refused to provide system info.
-    sampler: Option<Sampler>,
+    sampler: Option<Snapshot>,
+    refresh_worker: Option<RefreshWorker>,
+    refresh_in_flight: usize,
+    refresh_action_pending: bool,
+    active: bool,
     /// Free/modified/standby sizes; `None` if the query is unavailable.
     lists: Option<Lists>,
     elevated: bool,
@@ -117,14 +135,13 @@ pub struct Memory {
 
 impl Memory {
     pub fn new() -> Self {
-        let sampler = Sampler::new();
-        let breakdown = sampler
-            .as_ref()
-            .map(|s| groups::breakdown(&s.processes, s.totals.used))
-            .unwrap_or_default();
         let epoch = Instant::now();
-        let mut memory = Self {
-            sampler,
+        Self {
+            sampler: None,
+            refresh_worker: None,
+            refresh_in_flight: 0,
+            refresh_action_pending: false,
+            active: true,
             lists: memlist::query(),
             elevated: elevation::is_elevated(),
             last_refresh: Instant::now(),
@@ -163,7 +180,7 @@ impl Memory {
             growth: GrowthTracker::new(),
             last_growth: None,
             win_sampler: None,
-            breakdown,
+            breakdown: Default::default(),
             commit: commit::query(),
             reports: VecDeque::new(),
             selected: home::Metric::Memory,
@@ -171,20 +188,106 @@ impl Memory {
             history: series::History::new(),
             hard_faults: None,
             advanced_open: false,
-        };
-        memory.feed_growth();
-        memory
+        }
     }
 
-    fn refresh_now(&mut self) {
-        if let Some(sampler) = self.sampler.as_mut() {
-            sampler.refresh();
-            self.breakdown = groups::breakdown(&sampler.processes, sampler.totals.used);
+    fn request_refresh(&mut self, ctx: &egui::Context, action: Option<RefreshAction>) -> bool {
+        if !self.active || (action.is_none() && self.refresh_in_flight != 0) {
+            return false;
         }
-        self.lists = memlist::query();
-        self.commit = commit::query();
-        self.last_refresh = Instant::now();
-        self.feed_growth();
+        if self.refresh_worker.is_none() {
+            let (request, requests) = mpsc::channel();
+            let (result, results) = mpsc::channel();
+            let ctx = ctx.clone();
+            let thread = std::thread::Builder::new()
+                .name("memory-processes".into())
+                .spawn(move || {
+                    let mut sampler = None;
+                    for action in requests {
+                        if sampler.is_none() {
+                            sampler = Sampler::new();
+                        }
+                        let snapshot = sampler.as_mut().map(Sampler::refresh);
+                        if result.send((snapshot, action)).is_err() {
+                            break;
+                        }
+                        ctx.request_repaint();
+                    }
+                });
+            if thread.is_err() {
+                self.status = Some("Could not start memory sampling.".into());
+                return false;
+            }
+            self.refresh_worker = Some(RefreshWorker {
+                request,
+                result: results,
+            });
+        }
+        let worker = self.refresh_worker.as_ref().unwrap();
+        let is_action = action.is_some();
+        if worker.request.send(action).is_err() {
+            self.refresh_worker = None;
+            self.refresh_in_flight = 0;
+            self.refresh_action_pending = false;
+            return false;
+        }
+        self.refresh_in_flight += 1;
+        self.refresh_action_pending |= is_action;
+        true
+    }
+
+    fn refresh_now(&mut self, ctx: &egui::Context) {
+        let _ = self.request_refresh(ctx, None);
+    }
+
+    fn poll_refresh(&mut self, ctx: &egui::Context) {
+        while let Some(worker) = &self.refresh_worker {
+            let (snapshot, action) = match worker.result.try_recv() {
+                Ok(result) => result,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.refresh_worker = None;
+                    self.refresh_in_flight = 0;
+                    self.refresh_action_pending = false;
+                    self.status = Some("Memory sampling stopped. Try again.".into());
+                    break;
+                }
+            };
+            self.refresh_in_flight -= 1;
+            self.last_refresh = Instant::now();
+            let available = snapshot.is_some();
+            if let Some(snapshot) = snapshot.filter(|_| self.active || action.is_some()) {
+                if self.active {
+                    self.breakdown = groups::breakdown(&snapshot.processes, snapshot.totals.used);
+                }
+                self.sampler = Some(snapshot);
+                if self.active {
+                    self.lists = memlist::query();
+                    self.commit = commit::query();
+                    self.feed_growth();
+                }
+            }
+            if let Some(action) = action {
+                self.refresh_action_pending = false;
+                if !available {
+                    self.status = Some("Could not read a fresh process list. Try again.".into());
+                } else {
+                    match action {
+                        RefreshAction::Optimize(trigger) => {
+                            self.run_from_snapshot(ctx, trigger);
+                        }
+                        RefreshAction::Trim { selection, grouped } => {
+                            self.trim_from_snapshot(ctx, &selection, grouped);
+                        }
+                    }
+                }
+                if !self.active {
+                    self.sampler = None;
+                    self.refresh_worker = None;
+                    self.refresh_in_flight = 0;
+                }
+            }
+        }
     }
 
     /// Clicking the active column flips the order; a new column starts in its natural order.
@@ -222,11 +325,20 @@ impl Tool for Memory {
         };
     }
     fn tick(&mut self, ctx: &egui::Context) {
+        self.poll_refresh(ctx);
+        if self.refresh_worker.is_none() {
+            self.refresh_now(ctx);
+        }
         self.background(ctx);
     }
 
     fn suspend(&mut self) -> bool {
+        self.active = false;
         self.sampler = None;
+        if !self.refresh_action_pending {
+            self.refresh_worker = None;
+            self.refresh_in_flight = 0;
+        }
         self.signals = None;
         self.last_ui = None;
         self.breakdown = Default::default();
@@ -243,12 +355,14 @@ impl Tool for Memory {
     }
 
     fn resume(&mut self) {
-        self.sampler = Sampler::new();
+        self.active = true;
         self.signals = Some(WindowsSignals::new());
-        self.refresh_now();
     }
 
     fn finish_pending(&mut self, ctx: &egui::Context) {
+        if !self.active && self.refresh_action_pending {
+            self.poll_refresh(ctx);
+        }
         self.poll_purge(ctx);
         self.poll_run(ctx);
         self.poll_trim(ctx);
@@ -262,13 +376,21 @@ impl Tool for Memory {
 
     fn ui(&mut self, ui: &mut egui::Ui, page: usize) {
         if self.sampler.is_none() {
-            ui.label("Memory information is not available on this system.");
+            if self.refresh_in_flight > 0 {
+                ui.label("Collecting memory information…");
+            } else {
+                ui.label("Memory information is not available. Toolboks will try again.");
+                if self.last_refresh.elapsed() >= REFRESH {
+                    self.refresh_now(ui.ctx());
+                }
+                ui.request_repaint_after(REFRESH);
+            }
             return;
         }
 
         self.last_ui = Some(Instant::now());
         if self.last_refresh.elapsed() >= REFRESH {
-            self.refresh_now();
+            self.refresh_now(ui.ctx());
         }
         ui.request_repaint_after(REFRESH);
 

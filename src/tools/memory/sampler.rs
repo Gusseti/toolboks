@@ -5,8 +5,10 @@
 //! `GetProcessMemoryInfo`, and the two page rates from PDH. The rates need a baseline read, so
 //! one sampler is created early and kept; a rate is `None` until PDH has two readings.
 
+use std::collections::HashMap;
 use windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
 
+use super::actions::{identity_of, Identity};
 use super::growth::{PrivateMemory, WindowsPrivateMemory};
 use super::memlist;
 use super::pressure::{RateCounter, PAGES_INPUT_PATH, PAGE_FAULTS_PATH};
@@ -17,12 +19,37 @@ pub struct WindowsSampler {
     page_faults: Option<RateCounter>,
 }
 
+pub(super) type WorkingSets = HashMap<Identity, u64>;
+
 impl WindowsSampler {
     pub fn new() -> Self {
         Self {
             pages_input: RateCounter::new(PAGES_INPUT_PATH),
             page_faults: RateCounter::new(PAGE_FAULTS_PATH),
         }
+    }
+
+    /// Keep each reading tied to the original process, even if Windows reuses its PID.
+    pub(super) fn sample_verified(
+        &mut self,
+        processes: &[Identity],
+    ) -> Option<(RunMeasurement, WorkingSets)> {
+        let reading = self.sample(&[])?;
+        let sets = processes
+            .iter()
+            .filter_map(|id| {
+                let matches = || {
+                    identity_of(id.pid, &id.name)
+                        .is_some_and(|current| current.created == id.created)
+                };
+                if !matches() {
+                    return None;
+                }
+                let bytes = WindowsPrivateMemory.private_working_set(id.pid)?;
+                matches().then(|| (id.clone(), bytes))
+            })
+            .collect();
+        Some((reading, sets))
     }
 }
 

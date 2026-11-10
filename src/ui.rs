@@ -352,7 +352,10 @@ fn paint_lines(
             // The area under a line is not convex, so build it from one quad per segment.
             let tint = line.color.gamma_multiply(0.22);
             let mut mesh = Mesh::default();
-            for pair in points.windows(2) {
+            for pair in points
+                .windows(2)
+                .filter(|pair| pair.iter().all(|p| p.y.is_finite()))
+            {
                 let base = mesh.vertices.len() as u32;
                 mesh.colored_vertex(pair[0], tint);
                 mesh.colored_vertex(pair[1], tint);
@@ -363,7 +366,17 @@ fn paint_lines(
             }
             painter.add(Shape::mesh(mesh));
         }
-        painter.add(Shape::line(points, Stroke::new(1.8, line.color)));
+        for segment in points.split(|point| !point.y.is_finite()) {
+            match segment {
+                [] => {}
+                [point] => {
+                    painter.circle_filled(*point, 1.0, line.color);
+                }
+                _ => {
+                    painter.add(Shape::line(segment.to_vec(), Stroke::new(1.8, line.color)));
+                }
+            }
+        }
     }
 }
 
@@ -493,6 +506,9 @@ pub fn graph_card(ui: &mut egui::Ui, width: f32, height: f32, g: &GraphCard) {
             continue;
         }
         let v = line.values[n - 1 - k];
+        if !v.is_finite() {
+            continue;
+        }
         painter.circle_filled(Pos2::new(x, point_y(data, v, max)), 3.0, line.color);
         rows.push((line.color, line.label, (line.fmt)(v)));
     }

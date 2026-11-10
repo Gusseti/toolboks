@@ -355,12 +355,22 @@ fn unreadable_warnings(statuses: &[ChannelStatus]) -> Vec<String> {
         .collect()
 }
 
-fn no_crashes_text(statuses: &[ChannelStatus]) -> String {
-    if statuses.is_empty() || statuses.iter().any(|s| !s.readable) {
-        "No crashes found in the part of the log toolboks could read.".to_string()
-    } else {
-        "No crashes found in the last 30 days.".to_string()
+fn no_crashes_text(statuses: &[ChannelStatus], since_ms: i64) -> String {
+    if !statuses.is_empty() && statuses.iter().all(|s| s.readable && s.oldest_ms.is_some()) {
+        let oldest = statuses
+            .iter()
+            .filter_map(|s| s.oldest_ms)
+            .max()
+            .unwrap_or(since_ms);
+        if oldest <= since_ms {
+            return "No crashes found in the last 30 days.".into();
+        }
+        return format!(
+            "No crashes found in the log since {} UTC.",
+            &ms_to_text(oldest)[..16]
+        );
     }
+    "No crashes found in the part of the log Toolboks could read.".into()
 }
 
 fn count_text(rows: usize, events: usize, grouped: bool) -> String {
@@ -1078,7 +1088,7 @@ impl Page {
             return;
         }
         if self.analysis.crashes.is_empty() {
-            ui.label(muted(no_crashes_text(&self.statuses)));
+            ui.label(muted(no_crashes_text(&self.statuses, self.since_ms)));
             return;
         }
         let crashes = std::mem::take(&mut self.analysis.crashes);
@@ -1572,9 +1582,12 @@ mod tests {
             unreadable_warnings(&[ok.clone(), bad.clone()]),
             vec!["Windows did not let toolboks read the Application log."]
         );
-        assert!(no_crashes_text(std::slice::from_ref(&ok)).contains("last 30 days"));
-        assert!(!no_crashes_text(&[ok, bad]).contains("last 30 days"));
-        assert!(!no_crashes_text(&[]).contains("last 30 days"));
+        assert!(no_crashes_text(std::slice::from_ref(&ok), 0).contains("since 2023-11-14"));
+        assert!(
+            no_crashes_text(std::slice::from_ref(&ok), 1_800_000_000_000).contains("last 30 days")
+        );
+        assert!(!no_crashes_text(&[ok, bad], 0).contains("last 30 days"));
+        assert!(!no_crashes_text(&[], 0).contains("last 30 days"));
     }
 
     #[test]

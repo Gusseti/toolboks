@@ -580,16 +580,29 @@ impl Memory {
         if self.busy() || self.selection.len() == 0 {
             return;
         }
-        // Plan from fresh numbers, then re-check each process again at execution time.
-        self.refresh_now();
+        self.request_refresh(
+            ctx,
+            Some(super::RefreshAction::Trim {
+                selection: self.selection.keys().clone(),
+                grouped: self.grouped,
+            }),
+        );
+    }
+
+    pub(super) fn trim_from_snapshot(
+        &mut self,
+        ctx: &egui::Context,
+        selection: &std::collections::HashSet<String>,
+        grouped: bool,
+    ) {
         let Some(sampler) = self.sampler.as_ref() else {
             return;
         };
         let own_pid = std::process::id();
         let plan = plan_trim(
             &sampler.processes,
-            self.selection.keys(),
-            self.grouped,
+            selection,
+            grouped,
             own_pid,
             &self.exclusions,
         );
@@ -654,6 +667,6 @@ impl Memory {
         };
         self.trim_job = None;
         self.last_trim = Some(text);
-        self.refresh_now();
+        self.refresh_now(ctx);
     }
 }
