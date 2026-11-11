@@ -1240,12 +1240,7 @@ impl Page {
             return;
         }
         if self.analysis.digest.is_empty() {
-            let text = if self.statuses.is_empty() || self.statuses.iter().any(|s| !s.readable) {
-                "No summary is available because part of the log could not be read."
-            } else {
-                "Nothing notable was found in the last 30 days."
-            };
-            ui.label(muted(text));
+            ui.label(muted(no_crashes_text(&self.statuses, self.since_ms)));
             return;
         }
         egui::ScrollArea::vertical()
@@ -1267,6 +1262,10 @@ impl Page {
                         }
                         ui.add_space(look::SPACE_XS);
                     });
+                }
+                if self.analysis.crashes.is_empty() {
+                    ui.add_space(look::GAP);
+                    ui.label(muted(no_crashes_text(&self.statuses, self.since_ms)));
                 }
                 ui.add_space(look::SPACE_L);
                 ui.label(

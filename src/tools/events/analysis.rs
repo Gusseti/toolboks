@@ -357,13 +357,6 @@ pub fn digest(groups: &[Group], crashes: &[Crash]) -> Vec<DigestLine> {
         });
     }
 
-    if crashes.is_empty() {
-        lines.push(DigestLine {
-            severity: Severity::Info,
-            text: "No crashes found in the log.".to_string(),
-        });
-    }
-
     lines.sort_by_key(|l| l.severity);
     lines
 }
@@ -617,14 +610,13 @@ mod tests {
     }
 
     #[test]
-    fn digest_no_crashes_and_display() {
+    fn digest_leaves_no_crash_claims_to_the_coverage_aware_page() {
         let events: Vec<Event> = (0..3)
             .map(|i| ev("Display", 4101, 3, T0 + i, &[]))
             .collect();
         let lines = digest(&group(&events), &[]);
-        assert_eq!(lines.len(), 2);
+        assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].severity, Severity::WorthWatching);
-        assert_eq!(lines[1].text, "No crashes found in the log.");
-        assert_eq!(lines[1].severity, Severity::Info);
+        assert!(digest(&[], &[]).is_empty());
     }
 }
