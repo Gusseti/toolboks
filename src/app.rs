@@ -207,6 +207,9 @@ impl App {
             return;
         }
         self.prompt_open = false;
+        // This process must never clean up the backup produced by the install it is starting.
+        self.update_cleanup_done = true;
+        self.first_frame = None;
         self.update = UpdateState::Installing;
         update::set_installing(true);
         self.spawn_update_job(ctx, move || UpdateMsg::Installed(update::install(&release)));

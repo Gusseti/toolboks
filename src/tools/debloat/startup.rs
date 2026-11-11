@@ -16,7 +16,7 @@ use windows::Win32::System::Registry::{
     KEY_SET_VALUE, REG_BINARY, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Source {
     /// HKCU\Software\Microsoft\Windows\CurrentVersion\Run
     UserRun,
