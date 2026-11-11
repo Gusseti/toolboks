@@ -389,7 +389,7 @@ impl Gaming {
                 if guide.title == "Temporary files and Disk Cleanup"
                     && ui.button("Open Disk Cleanup").clicked()
                 {
-                    self.message = engine::windows_dir()
+                    self.message = crate::win::windows_dir()
                         .and_then(|dir| open(dir.join("System32/cleanmgr.exe").as_os_str()))
                         .err();
                 }

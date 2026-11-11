@@ -132,6 +132,9 @@ pub fn relaunch_elevated() -> bool {
 
 /// Like [`relaunch_elevated`], passing command-line arguments to the new copy.
 pub fn relaunch_elevated_with_args(args: &[&str]) -> bool {
+    if crate::update::is_installing() {
+        return false;
+    }
     let Ok(exe) = std::env::current_exe() else {
         return false;
     };

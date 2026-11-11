@@ -18,9 +18,10 @@ use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, FILETIME, HANDLE};
 use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
 use windows::Win32::System::Threading::{
     GetPriorityClass, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, SetPriorityClass,
-    TerminateProcess, BELOW_NORMAL_PRIORITY_CLASS, PROCESS_ACCESS_RIGHTS, PROCESS_CREATION_FLAGS,
+    TerminateProcess, ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS,
+    HIGH_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, PROCESS_ACCESS_RIGHTS, PROCESS_CREATION_FLAGS,
     PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
-    PROCESS_TERMINATE,
+    PROCESS_TERMINATE, REALTIME_PRIORITY_CLASS,
 };
 
 use crate::format::{friendly_name, size_plain, uptime};
@@ -71,6 +72,7 @@ struct Proc {
     pid: u32,
     identity: Option<ProcessIdentity>,
     name: String,
+    lower_name: String,
     /// Percent of the whole machine.
     cpu: f32,
     /// Working set in bytes.
@@ -84,6 +86,7 @@ struct Proc {
 struct Row {
     key: String,
     name: String,
+    lower_name: String,
     /// The pid, or the lowest pid of a group.
     pid: u32,
     pids: Vec<u32>,
@@ -103,25 +106,27 @@ enum SortKey {
     Memory,
 }
 
-/// True for processes Windows needs, this app itself, and any that refused an action before.
-pub(super) fn is_protected(pid: u32, name: &str, own_pid: u32, denied: &HashSet<u32>) -> bool {
+/// True for processes Windows needs and this app itself.
+pub(super) fn is_protected(pid: u32, name: &str, own_pid: u32) -> bool {
     pid == own_pid
         || pid == 0
         || pid == 4
-        || denied.contains(&pid)
-        || PROTECTED.contains(&name.to_lowercase().as_str())
+        || PROTECTED
+            .iter()
+            .any(|protected| name.eq_ignore_ascii_case(protected))
 }
 
 /// Stable key of a row: lowercase name when grouped, process identity when not.
 fn row_key(grouped: bool, p: &Proc) -> String {
     if grouped {
-        p.name.to_lowercase()
+        p.lower_name.clone()
     } else {
         format!("pid:{}:{}", p.pid, p.identity.map_or(0, |id| id.created))
     }
 }
 
 /// The processes to show: the frozen snapshot while paused, else the live list.
+#[cfg(test)]
 fn shown<'a>(live: &'a [Proc], frozen: Option<&'a [Proc]>) -> &'a [Proc] {
     frozen.unwrap_or(live)
 }
@@ -151,6 +156,7 @@ fn build_rows(procs: &[Proc], grouped: bool, protected: &dyn Fn(&Proc) -> bool) 
                 rows.push(Row {
                     key,
                     name: p.name.clone(),
+                    lower_name: p.lower_name.clone(),
                     pid: p.pid,
                     pids: vec![p.pid],
                     cpu: p.cpu,
@@ -169,13 +175,13 @@ fn build_rows(procs: &[Proc], grouped: bool, protected: &dyn Fn(&Proc) -> bool) 
 fn sort_rows(rows: &mut [Row], key: SortKey, descending: bool) {
     rows.sort_by(|a, b| {
         let ord = match key {
-            SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortKey::Name => a.lower_name.cmp(&b.lower_name),
             SortKey::Pid => a.pid.cmp(&b.pid),
             SortKey::Cpu => a.cpu.total_cmp(&b.cpu),
             SortKey::Memory => a.mem.cmp(&b.mem),
         };
         let ord = if descending { ord.reverse() } else { ord };
-        ord.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        ord.then_with(|| a.lower_name.cmp(&b.lower_name))
             .then(a.pid.cmp(&b.pid))
     });
 }
@@ -188,8 +194,7 @@ fn filter_rows(rows: Vec<Row>, filter: &str) -> Vec<Row> {
     }
     rows.into_iter()
         .filter(|r| {
-            r.name.to_lowercase().contains(&needle)
-                || r.pids.iter().any(|p| p.to_string().contains(&needle))
+            r.lower_name.contains(&needle) || r.pids.iter().any(|p| p.to_string().contains(&needle))
         })
         .collect()
 }
@@ -322,6 +327,7 @@ pub(super) fn result_line(
     match result {
         Ok(()) => format!("{done} {name} (pid {pid})"),
         Err(ActionError::AccessDenied) => format!("{name} (pid {pid}): Access denied"),
+        Err(ActionError::AlreadyLow) => format!("{name} (pid {pid}): Priority is already low"),
         Err(ActionError::IdentityChanged) => {
             format!("{name} (pid {pid}): Windows could not verify the selected process")
         }
@@ -337,6 +343,7 @@ pub(super) fn result_line(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActionError {
+    AlreadyLow,
     AccessDenied,
     IdentityChanged,
     Failed,
@@ -421,7 +428,7 @@ fn action_handle(
     let image = String::from_utf16_lossy(&image[..len as usize]);
     let name = image.rsplit('\\').next().unwrap_or_default();
     if !name.eq_ignore_ascii_case(expected_name)
-        || is_protected(identity.pid, name, std::process::id(), &HashSet::new())
+        || is_protected(identity.pid, name, std::process::id())
     {
         return Err(ActionError::IdentityChanged);
     }
@@ -435,12 +442,41 @@ pub(super) fn end_process(identity: ProcessIdentity, name: &str) -> Result<(), A
 }
 
 /// Sets the priority class and returns the previous one.
-fn set_priority(identity: ProcessIdentity, name: &str, class: u32) -> Result<u32, ActionError> {
+fn can_lower_priority(class: u32) -> bool {
+    [
+        NORMAL_PRIORITY_CLASS,
+        ABOVE_NORMAL_PRIORITY_CLASS,
+        HIGH_PRIORITY_CLASS,
+        REALTIME_PRIORITY_CLASS,
+    ]
+    .iter()
+    .any(|candidate| candidate.0 == class)
+}
+
+#[cfg(test)]
+#[test]
+fn lowering_keeps_idle_and_below_normal_priorities() {
+    use windows::Win32::System::Threading::IDLE_PRIORITY_CLASS;
+    assert!(!can_lower_priority(IDLE_PRIORITY_CLASS.0));
+    assert!(!can_lower_priority(BELOW_NORMAL_PRIORITY_CLASS.0));
+    assert!(can_lower_priority(NORMAL_PRIORITY_CLASS.0));
+    assert!(can_lower_priority(HIGH_PRIORITY_CLASS.0));
+}
+
+fn set_priority(
+    identity: ProcessIdentity,
+    name: &str,
+    class: u32,
+    lower_only: bool,
+) -> Result<u32, ActionError> {
     let handle = action_handle(identity, name, PROCESS_SET_INFORMATION)?;
     // SAFETY: the handle is valid and was opened with the needed access.
     let previous = unsafe { GetPriorityClass(handle.0) };
     if previous == 0 {
         return Err(ActionError::Failed);
+    }
+    if lower_only && !can_lower_priority(previous) {
+        return Err(ActionError::AlreadyLow);
     }
     // SAFETY: as above.
     unsafe { SetPriorityClass(handle.0, PROCESS_CREATION_FLAGS(class)) }
@@ -452,7 +488,10 @@ fn set_priority(identity: ProcessIdentity, name: &str, class: u32) -> Result<u32
 fn open_location(path: &str) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let _ = std::process::Command::new("explorer.exe")
+    let Ok(windows) = crate::win::windows_dir() else {
+        return;
+    };
+    let _ = std::process::Command::new(windows.join("explorer.exe"))
         .raw_arg(format!("/select,\"{path}\""))
         .creation_flags(CREATE_NO_WINDOW)
         .spawn();
@@ -468,8 +507,8 @@ enum Action {
 #[derive(Default)]
 struct Done {
     lines: Vec<String>,
-    /// Pids that refused: treated as protected from now on.
-    denied: Vec<u32>,
+    /// Access results keyed to the exact process that was acted on.
+    access: Vec<(ProcessIdentity, bool)>,
     lowered: Vec<(ProcessIdentity, u32)>,
     restored: Vec<ProcessIdentity>,
 }
@@ -477,8 +516,13 @@ struct Done {
 fn run_action(action: Action) -> Done {
     let mut done = Done::default();
     let note = |done: &mut Done, p: &Proc, ok: &str, r: Result<(), ActionError>| {
-        if r == Err(ActionError::AccessDenied) {
-            done.denied.push(p.pid);
+        if let Some(id) = p.identity {
+            if matches!(
+                r,
+                Ok(()) | Err(ActionError::AccessDenied | ActionError::AlreadyLow)
+            ) {
+                done.access.push((id, r == Err(ActionError::AccessDenied)));
+            }
         }
         done.lines.push(result_line(ok, &p.name, p.pid, r));
     };
@@ -498,7 +542,7 @@ fn run_action(action: Action) -> Done {
                     .identity
                     .ok_or(ActionError::IdentityChanged)
                     .and_then(|id| {
-                        set_priority(id, &p.name, BELOW_NORMAL_PRIORITY_CLASS.0)
+                        set_priority(id, &p.name, BELOW_NORMAL_PRIORITY_CLASS.0, true)
                             .map(|prev| (id, prev))
                     });
                 match result {
@@ -518,7 +562,7 @@ fn run_action(action: Action) -> Done {
                     .identity
                     .ok_or(ActionError::IdentityChanged)
                     .and_then(|id| {
-                        set_priority(id, &p.name, *prev)?;
+                        set_priority(id, &p.name, *prev, false)?;
                         done.restored.push(id);
                         Ok(())
                     });
@@ -592,14 +636,18 @@ impl Worker {
                     let procs = sys
                         .processes()
                         .values()
-                        .map(|p| Proc {
-                            pid: p.pid().as_u32(),
-                            identity: sampled_identity(p, sample_start),
-                            name: p.name().to_string_lossy().into_owned(),
-                            cpu: (p.cpu_usage() / logical).clamp(0.0, 100.0),
-                            mem: p.memory(),
-                            run_secs: p.run_time(),
-                            exe: p.exe().map(|e| e.display().to_string()),
+                        .map(|p| {
+                            let name = p.name().to_string_lossy().into_owned();
+                            Proc {
+                                pid: p.pid().as_u32(),
+                                identity: sampled_identity(p, sample_start),
+                                lower_name: name.to_lowercase(),
+                                name,
+                                cpu: (p.cpu_usage() / logical).clamp(0.0, 100.0),
+                                mem: p.memory(),
+                                run_secs: p.run_time(),
+                                exe: p.exe().map(|e| e.display().to_string()),
+                            }
                         })
                         .collect();
                     ready = was_primed;
@@ -653,9 +701,11 @@ enum Intent {
 
 pub(super) struct Page {
     worker: Option<Worker>,
-    live: Vec<Proc>,
+    live: Arc<Vec<Proc>>,
     cpu_ready: bool,
-    frozen: Option<Vec<Proc>>,
+    frozen: Option<Arc<Vec<Proc>>>,
+    rows: Option<Arc<Vec<Row>>>,
+    visible_rows: Option<(String, SortKey, bool, Arc<Vec<Row>>)>,
     filter: String,
     grouped: bool,
     was_grouped: bool,
@@ -666,7 +716,7 @@ pub(super) struct Page {
     confirm: Option<Vec<ProcessIdentity>>,
     /// Previous priority class keyed by process identity.
     lowered: Vec<(ProcessIdentity, u32)>,
-    denied: HashSet<u32>,
+    denied: HashSet<ProcessIdentity>,
     job: Option<Receiver<Done>>,
     lines: Vec<String>,
 }
@@ -675,9 +725,11 @@ impl Page {
     pub(super) fn new() -> Self {
         Self {
             worker: None,
-            live: Vec::new(),
+            live: Arc::default(),
             cpu_ready: false,
             frozen: None,
+            rows: None,
+            visible_rows: None,
             filter: String::new(),
             grouped: true,
             was_grouped: true,
@@ -696,19 +748,28 @@ impl Page {
     pub(super) fn tick(&mut self) {
         if let Some(worker) = &self.worker {
             for snap in worker.rx.try_iter() {
-                self.live = snap.procs;
+                self.live = Arc::new(snap.procs);
                 self.cpu_ready = snap.cpu_ready;
+                if self.frozen.is_none() {
+                    self.rows = None;
+                }
             }
-            // A lowered process that has exited needs no restore entry.
-            let identities: HashSet<_> = self.live.iter().filter_map(|p| p.identity).collect();
-            if !identities.is_empty() {
+            if self.rows.is_none() && self.frozen.is_none() {
+                let identities: HashSet<_> = self.live.iter().filter_map(|p| p.identity).collect();
                 self.lowered.retain(|(id, _)| identities.contains(id));
+                self.denied.retain(|id| identities.contains(id));
             }
         }
         let finished = self.job.as_ref().and_then(|rx| rx.try_recv().ok());
         if let Some(done) = finished {
             self.job = None;
-            self.denied.extend(done.denied);
+            for (id, denied) in done.access {
+                if denied {
+                    self.denied.insert(id);
+                } else {
+                    self.denied.remove(&id);
+                }
+            }
             self.lowered.extend(done.lowered);
             self.lowered.retain(|(id, _)| !done.restored.contains(id));
             self.lines = done.lines;
@@ -723,15 +784,19 @@ impl Page {
             self.was_grouped = self.grouped;
             self.selection.clear();
             self.confirm = None;
+            self.rows = None;
         }
         let own_pid = std::process::id();
-        let grouped = self.grouped;
-        let denied = self.denied.clone();
-        let protected = move |p: &Proc| is_protected(p.pid, &p.name, own_pid, &denied);
-        let procs: Vec<Proc> = shown(&self.live, self.frozen.as_deref()).to_vec();
-        let all_rows = build_rows(&procs, grouped, &protected);
-        let existing: HashSet<String> = all_rows.iter().map(|r| r.key.clone()).collect();
-        self.selection.prune(&existing);
+        let protected = move |p: &Proc| is_protected(p.pid, &p.name, own_pid);
+        let procs = Arc::clone(self.frozen.as_ref().unwrap_or(&self.live));
+        if self.rows.is_none() {
+            let rows = build_rows(&procs, self.grouped, &protected);
+            let existing = rows.iter().map(|r| r.key.clone()).collect();
+            self.selection.prune(&existing);
+            self.rows = Some(Arc::new(rows));
+            self.visible_rows = None;
+        }
+        let all_rows = self.rows.as_ref().unwrap().clone();
 
         let inspector = inspector_frame();
         let mut intent: Option<Intent> = None;
@@ -754,27 +819,28 @@ impl Page {
         egui::CentralPanel::default().frame(side).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             ui.spacing_mut().button_padding = Vec2::new(6.0, 1.0);
-            let rows = toolboks_addon_sdk::tutorial::region(ui, "toolbar", |ui| {
-                self.toolbar(ui, all_rows.clone())
+            let rows = self.display_rows(&all_rows);
+            toolboks_addon_sdk::tutorial::region(ui, "toolbar", |ui| {
+                self.toolbar(ui, procs.len(), rows.len());
             });
             ui.add_space(2.0);
             toolboks_addon_sdk::tutorial::region(ui, "table", |ui| {
                 ui.scope(|ui| {
                     table_style(ui);
-                    self.table(ui, rows);
+                    self.table(ui, &rows);
                 });
             });
         });
 
         if let Some(intent) = intent {
-            self.apply(intent, ui.ctx(), &procs, &all_rows, &protected);
+            self.apply(intent, ui.ctx(), &procs, &protected);
         }
     }
 
     fn selected_procs(&self, procs: &[Proc]) -> Vec<Proc> {
         procs
             .iter()
-            .filter(|p| self.selection.keys.contains(&row_key(self.grouped, p)))
+            .filter(|p| self.selection.keys.contains(&row_key(self.was_grouped, p)))
             .cloned()
             .collect()
     }
@@ -784,7 +850,6 @@ impl Page {
         intent: Intent,
         ctx: &egui::Context,
         procs: &[Proc],
-        rows: &[Row],
         protected: &dyn Fn(&Proc) -> bool,
     ) {
         if self.frozen.is_some()
@@ -827,7 +892,6 @@ impl Page {
             Intent::Copy(text) => ctx.copy_text(text),
             Intent::Open(path) => open_location(&path),
         }
-        let _ = rows;
     }
 
     fn start_job(&mut self, ctx: &egui::Context, action: Action) {
@@ -850,13 +914,28 @@ impl Page {
         }
     }
 
-    /// Filter, group, pause and count. Returns the rows to show, filtered and sorted.
-    fn toolbar(&mut self, ui: &mut egui::Ui, rows: Vec<Row>) -> Vec<Row> {
+    fn display_rows(&mut self, rows: &[Row]) -> Arc<Vec<Row>> {
+        if let Some((filter, sort, descending, visible)) = &self.visible_rows {
+            if filter == &self.filter && *sort == self.sort_key && *descending == self.descending {
+                return visible.clone();
+            }
+        }
+        let mut filtered = filter_rows(rows.to_vec(), &self.filter);
+        sort_rows(&mut filtered, self.sort_key, self.descending);
+        let visible = Arc::new(filtered);
+        self.visible_rows = Some((
+            self.filter.clone(),
+            self.sort_key,
+            self.descending,
+            visible.clone(),
+        ));
+        visible
+    }
+
+    /// Filter, group, pause and count.
+    fn toolbar(&mut self, ui: &mut egui::Ui, procs_total: usize, row_count: usize) {
         let mut paused = self.frozen.is_some();
         let was_paused = paused;
-        let procs_total: usize = rows.iter().map(|r| r.pids.len()).sum();
-        let mut rows = filter_rows(rows, &self.filter);
-        sort_rows(&mut rows, self.sort_key, self.descending);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_M;
             ui.add(
@@ -869,24 +948,24 @@ impl Page {
                 .on_hover_text("Freeze the list so rows stop moving. Sampling carries on.");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let text = if self.grouped {
-                    format!("{} apps, {procs_total} processes", rows.len())
+                    format!("{row_count} apps, {procs_total} processes")
                 } else {
-                    format!("{} processes", rows.len())
+                    format!("{row_count} processes")
                 };
                 ui.label(RichText::new(text).weak());
             });
         });
         if paused != was_paused {
             self.frozen = paused.then(|| self.live.clone());
+            self.rows = None;
             self.confirm = None;
         }
-        rows
     }
 
-    fn table(&mut self, ui: &mut egui::Ui, rows: Vec<Row>) {
+    fn table(&mut self, ui: &mut egui::Ui, rows: &[Row]) {
         let mut sort_click: Option<SortKey> = None;
         let mut click: Option<Click> = None;
-        let (sort_key, descending, grouped) = (self.sort_key, self.descending, self.grouped);
+        let (sort_key, descending, grouped) = (self.sort_key, self.descending, self.was_grouped);
         let selection = &self.selection;
         let ready = self.cpu_ready;
         let modifiers = ui.input(|i| i.modifiers);
@@ -1037,6 +1116,16 @@ impl Page {
         }
 
         let chosen = self.selected_procs(procs);
+        if chosen
+            .iter()
+            .any(|p| p.identity.is_some_and(|id| self.denied.contains(&id)))
+        {
+            ui.label(
+                RichText::new("Windows denied a previous action for this selection.")
+                    .weak()
+                    .small(),
+            );
+        }
         let (to_end, skipped) = plan_end(&chosen, protected);
         if to_end.is_empty() {
             let note = if chosen.iter().any(|p| p.identity.is_none() && !protected(p)) {
@@ -1175,6 +1264,7 @@ mod tests {
                 created: u64::from(pid),
             }),
             name: name.to_string(),
+            lower_name: name.to_lowercase(),
             cpu,
             mem,
             run_secs: pid as u64,
@@ -1310,14 +1400,14 @@ mod tests {
             Err(ActionError::IdentityChanged)
         );
         assert_eq!(
-            set_priority(stale, &name, BELOW_NORMAL_PRIORITY_CLASS.0),
+            set_priority(stale, &name, BELOW_NORMAL_PRIORITY_CLASS.0, true),
             Err(ActionError::IdentityChanged)
         );
         assert!(child.try_wait().unwrap().is_none());
 
-        let previous = set_priority(identity, &name, BELOW_NORMAL_PRIORITY_CLASS.0).unwrap();
+        let previous = set_priority(identity, &name, BELOW_NORMAL_PRIORITY_CLASS.0, false).unwrap();
         assert_eq!(
-            set_priority(identity, &name, previous),
+            set_priority(identity, &name, previous, false),
             Ok(BELOW_NORMAL_PRIORITY_CLASS.0)
         );
         end_process(identity, &name).unwrap();
@@ -1326,7 +1416,6 @@ mod tests {
 
     #[test]
     fn protected_names_and_pids() {
-        let denied: HashSet<u32> = [777].into();
         for name in [
             "System",
             "Registry",
@@ -1334,12 +1423,12 @@ mod tests {
             "Memory Compression",
             "dwm.exe",
         ] {
-            assert!(is_protected(500, name, 1, &denied), "{name}");
+            assert!(is_protected(500, name, 1), "{name}");
         }
-        assert!(is_protected(0, "anything", 1, &denied));
-        assert!(is_protected(1234, "whatever.exe", 1234, &denied));
-        assert!(is_protected(777, "refused.exe", 1, &denied));
-        assert!(!is_protected(500, "chrome.exe", 1, &denied));
+        assert!(is_protected(0, "anything", 1));
+        assert!(is_protected(1234, "whatever.exe", 1234));
+        assert!(!is_protected(777, "refused.exe", 1));
+        assert!(!is_protected(500, "chrome.exe", 1));
     }
 
     #[test]

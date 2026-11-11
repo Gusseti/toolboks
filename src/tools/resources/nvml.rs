@@ -1,10 +1,17 @@
 //! Temperature, power and clocks from NVIDIA's management library, loaded at runtime.
 
-use std::ffi::c_void;
+use std::{ffi::c_void, path::PathBuf};
 
-use windows::core::{w, PCSTR};
+use windows::core::{w, HSTRING, PCSTR};
 use windows::Win32::Foundation::{FreeLibrary, HMODULE};
-use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use windows::Win32::System::{
+    Com::CoTaskMemFree,
+    LibraryLoader::{
+        GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
+        LOAD_LIBRARY_SEARCH_SYSTEM32,
+    },
+};
+use windows::Win32::UI::Shell::{FOLDERID_ProgramFiles, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
 
 /// Extras only NVIDIA's driver library can give. Every field is `None` when unavailable.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -52,13 +59,37 @@ fn milliwatts_to_watts(mw: u32) -> f32 {
     mw as f32 / 1000.0
 }
 
+fn load_nvml() -> Option<HMODULE> {
+    // SAFETY: use a fixed name and restrict the module and dependency search to System32.
+    if let Ok(lib) = unsafe { LoadLibraryExW(w!("nvml.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32) } {
+        return Some(lib);
+    }
+    // SAFETY: this is the OS-resolved Program Files path. Copy the returned string before
+    // freeing the buffer with the allocator documented by SHGetKnownFolderPath.
+    let folder = unsafe {
+        let raw = SHGetKnownFolderPath(&FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, None).ok()?;
+        let folder = HSTRING::from_wide(raw.as_wide());
+        CoTaskMemFree(Some(raw.0.cast()));
+        folder
+    };
+    let path = PathBuf::from(folder.to_os_string()).join(r"NVIDIA Corporation\NVSMI\nvml.dll");
+    // SAFETY: pass the full vendor path and search only that directory and System32 for imports.
+    unsafe {
+        LoadLibraryExW(
+            &HSTRING::from(path.as_os_str()),
+            None,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    }
+    .ok()
+}
+
 impl Nvml {
     /// `None` when there is no `nvml.dll`, it fails to initialise, or no device exists.
     pub fn open() -> Option<Nvml> {
-        // SAFETY: loading a system library by name.
-        let lib = unsafe { LoadLibraryW(w!("nvml.dll")) }.ok()?;
+        let lib = load_nvml()?;
         let free = |lib: HMODULE| {
-            // SAFETY: `lib` was returned by LoadLibraryW and is freed once.
+            // SAFETY: `lib` was returned by LoadLibraryExW and is freed once.
             let _ = unsafe { FreeLibrary(lib) };
         };
         // SAFETY: every alias below matches the documented NVML export signature.

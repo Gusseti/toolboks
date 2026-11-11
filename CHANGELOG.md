@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Toolboks has its own logo: it shows in the window, on the taskbar, in Alt+Tab and on toolboks.exe in Explorer, instead of the default icon. The tray icon still shows the live memory percentage.
+
 ## [0.12.2] - 2026-11-09
 
 ### Changed

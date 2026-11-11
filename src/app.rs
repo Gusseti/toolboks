@@ -57,6 +57,9 @@ pub struct App {
     silent_check: bool,
     /// Show the "update available" prompt window.
     prompt_open: bool,
+    /// Start update cleanup only after the first frame has rendered successfully.
+    first_frame: Option<std::time::Instant>,
+    update_cleanup_done: bool,
     /// "Keep running in the tray": the window's X hides it instead of quitting.
     keep_in_tray: bool,
     tray: Option<Tray>,
@@ -178,6 +181,8 @@ impl App {
             launch_check_started: false,
             silent_check: false,
             prompt_open: false,
+            first_frame: None,
+            update_cleanup_done: cfg!(feature = "preview"),
             keep_in_tray,
             tray: None,
             hidden: false,
@@ -202,7 +207,11 @@ impl App {
             return;
         }
         self.prompt_open = false;
+        // This process must never clean up the backup produced by the install it is starting.
+        self.update_cleanup_done = true;
+        self.first_frame = None;
         self.update = UpdateState::Installing;
+        update::set_installing(true);
         self.spawn_update_job(ctx, move || UpdateMsg::Installed(update::install(&release)));
     }
 
@@ -225,12 +234,23 @@ impl App {
         let Some(rx) = &self.update_rx else {
             return;
         };
-        let Ok(msg) = rx.try_recv() else {
-            // Still working; look again shortly, even if the window is hidden.
-            ctx.request_repaint_after(Duration::from_millis(200));
-            return;
+        let msg = match rx.try_recv() {
+            Ok(msg) => msg,
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(200));
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.update_rx = None;
+                update::set_installing(false);
+                self.update = UpdateState::Failed("The update stopped unexpectedly.".into());
+                return;
+            }
         };
         self.update_rx = None;
+        if matches!(msg, UpdateMsg::Installed(_)) {
+            update::set_installing(false);
+        }
 
         let silent = std::mem::take(&mut self.silent_check);
         self.update = match msg {
@@ -329,7 +349,21 @@ fn restart() -> std::io::Result<()> {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.install_in_progress()
+            && !instance::is_relaunching()
+            && self
+                .first_frame
+                .is_some_and(|t| t.elapsed() >= Duration::from_secs(2))
+        {
+            self.first_frame = None;
+            self.update_cleanup_done = true;
+            update::cleanup_old_exe();
+        }
         self.check_on_launch(ctx);
+        if self.install_in_progress() && ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.message = Some("Wait for the update to finish before closing Toolboks.".into());
+        }
         self.poll_update(ctx);
         self.tray_tick(ctx);
         self.sync_workspaces();
@@ -359,10 +393,17 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.shell_ui(ui);
+        if !self.update_cleanup_done && self.first_frame.is_none() {
+            self.first_frame = Some(std::time::Instant::now());
+            ui.ctx().request_repaint_after(Duration::from_secs(2));
+        }
     }
 }
 
 impl App {
+    fn install_in_progress(&self) -> bool {
+        update::is_installing()
+    }
     fn sync_workspaces(&mut self) {
         let active = match self.screen {
             Screen::Tool(index)
@@ -412,6 +453,7 @@ impl App {
         tray.set_visible(true);
         tray.refresh();
         let actions = tray.actions();
+        let installing = self.install_in_progress();
         // The percentage is polled, so wake up regularly even if nothing else asks.
         ctx.request_repaint_after(Duration::from_secs(if self.hidden { 1 } else { 2 }));
 
@@ -420,6 +462,11 @@ impl App {
                 tray::Action::Toggle if self.hidden => self.show_window(ctx),
                 tray::Action::Toggle => self.hide_window(ctx),
                 tray::Action::Show => self.show_window(ctx),
+                tray::Action::Quit if installing => {
+                    self.show_window(ctx);
+                    self.message =
+                        Some("Wait for the update to finish before closing Toolboks.".into());
+                }
                 tray::Action::Quit => {
                     self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -428,7 +475,7 @@ impl App {
         }
 
         let close = ctx.input(|i| i.viewport().close_requested());
-        if close && !self.quitting && !instance::is_relaunching() {
+        if close && !installing && !self.quitting && !instance::is_relaunching() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.hide_window(ctx);
         }
@@ -460,7 +507,6 @@ impl App {
             self.prompt_open = false;
             return;
         };
-        let release = release.clone();
 
         let (mut install, mut later) = (false, false);
         egui::Window::new("Update available")
@@ -498,7 +544,7 @@ impl App {
                         .color(look::MUTED),
                     );
                 }
-                let notes = update::plain_notes(&release.notes);
+                let notes = &release.notes;
                 if !notes.is_empty() {
                     ui.add_space(look::GAP);
                     ui.label(
@@ -532,7 +578,7 @@ impl App {
             });
 
         if install {
-            self.start_install(ctx, release);
+            self.start_install(ctx, release.clone());
         } else if later {
             self.prompt_open = false;
         }

@@ -19,7 +19,13 @@ pub fn cpu_estimate_w(load_percent: f32, rated_w: f32) -> f32 {
 
 /// Watts to energy: the sum of the samples times the seconds between them, in watt-hours.
 pub fn energy_wh(watts: &[f32], step_secs: f32) -> f32 {
-    watts.iter().sum::<f32>() * step_secs / 3600.0
+    watts.iter().filter(|v| v.is_finite()).sum::<f32>() * step_secs / 3600.0
+}
+
+#[cfg(test)]
+#[test]
+fn unavailable_power_is_skipped_in_energy_total() {
+    assert_eq!(energy_wh(&[60.0, f32::NAN, 0.0, 120.0], 60.0), 3.0);
 }
 
 /// The "CPU rated power" input, with a hint on where to find the number.

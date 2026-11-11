@@ -271,10 +271,16 @@ impl crate::tools::Tool for Resources {
                         .map(|(n, v)| (n.as_str(), [*v]))
                         .collect();
                     self.engines.update(&engines);
+                    self.gpu_power.push(
+                        sample
+                            .gpu
+                            .as_ref()
+                            .and_then(|gpu| gpu.power_w)
+                            .unwrap_or(f32::NAN),
+                    );
                     match &sample.gpu {
                         Some(g) => {
                             self.gpu_load.push(g.load.unwrap_or(0.0));
-                            self.gpu_power.push(g.power_w.unwrap_or(0.0));
                             self.gpu = Some(g.clone());
                             self.gpu_missing = 0;
                         }

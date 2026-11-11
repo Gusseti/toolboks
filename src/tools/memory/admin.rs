@@ -71,7 +71,10 @@ fn purge_text(
 impl Memory {
     /// A purge, a "Trim selected" or an optimize run is in progress.
     pub(super) fn busy(&self) -> bool {
-        self.purge.is_some() || self.run.is_some() || self.trim_job.is_some()
+        self.purge.is_some()
+            || self.run.is_some()
+            || self.trim_job.is_some()
+            || self.refresh_action_pending
     }
 
     /// Runs the purge on a worker thread; ignored while another job is running or when not
@@ -120,7 +123,7 @@ impl Memory {
             win::local_time_hms(),
             purge_text(done.result, done.before, done.after)
         ));
-        self.refresh_now();
+        self.refresh_now(ctx);
     }
 
     pub(super) fn advanced_block(&mut self, ui: &mut egui::Ui) {

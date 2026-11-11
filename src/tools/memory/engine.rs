@@ -18,8 +18,8 @@ use super::actions::{
 use super::activity::{self, Activity};
 use super::growth::{self, WindowsPrivateMemory};
 use super::pressure::{Assessment, SignalSource, Verdict};
-use super::report::{self, HonestReport, MemorySampler, RunMeasurement, RunMeasurements, Trigger};
-use super::sampler::WindowsSampler;
+use super::report::{self, HonestReport, RunMeasurement, RunMeasurements, Trigger};
+use super::sampler::{WindowsSampler, WorkingSets};
 use super::scheduler::Decision;
 use super::stats::ProcInfo;
 use super::Memory;
@@ -46,13 +46,43 @@ pub struct RunJob {
     rx: Receiver<RunDone>,
     trigger: Trigger,
     before: RunMeasurement,
-    trim_pids: Vec<u32>,
+    before_sets: WorkingSets,
 }
 
 struct RunDone {
     results: Vec<ActionResult>,
     undo: UndoLog,
     cooldowns: Cooldowns,
+}
+
+fn paired_working_sets(before: &WorkingSets, after: &WorkingSets) -> (u64, u64, Vec<Identity>) {
+    let mut before_total = 0;
+    let mut after_total = 0;
+    let mut pids = Vec::new();
+    for (identity, earlier) in before {
+        if let Some(later) = after.get(identity) {
+            before_total += earlier;
+            after_total += later;
+            pids.push(identity.clone());
+        }
+    }
+    (before_total, after_total, pids)
+}
+
+#[cfg(test)]
+#[test]
+fn working_set_comparison_excludes_exited_and_reused_pids() {
+    let app = |pid, created| Identity {
+        pid,
+        created,
+        name: "app.exe".into(),
+    };
+    let before = WorkingSets::from([(app(1, 10), 800), (app(2, 20), 600), (app(3, 30), 100)]);
+    let after = WorkingSets::from([(app(2, 99), 300), (app(3, 30), 50)]);
+    assert_eq!(
+        paired_working_sets(&before, &after),
+        (100, 50, vec![app(3, 30)])
+    );
 }
 
 /// What the safe actions did, in numbers, for the Last run card.
@@ -112,7 +142,7 @@ impl RunSummary {
 pub struct Settling {
     trigger: Trigger,
     apps_trimmed: usize,
-    trim_pids: Vec<u32>,
+    trim_processes: Vec<Identity>,
     started: Instant,
     m: RunMeasurements,
 }
@@ -132,13 +162,13 @@ impl Settling {
     pub fn new(
         trigger: Trigger,
         apps_trimmed: usize,
-        trim_pids: Vec<u32>,
+        trim_processes: Vec<Identity>,
         m: RunMeasurements,
     ) -> Self {
         Self {
             trigger,
             apps_trimmed,
-            trim_pids,
+            trim_processes,
             started: Instant::now(),
             m,
         }
@@ -149,11 +179,15 @@ impl Settling {
     }
 
     /// Takes the reading that is due `elapsed` after the run, if any.
-    pub fn poll(&mut self, elapsed: Duration, sampler: &mut dyn MemorySampler) -> SettleStep {
+    pub fn poll(
+        &mut self,
+        elapsed: Duration,
+        sample: impl FnOnce(&[Identity]) -> Option<RunMeasurement>,
+    ) -> SettleStep {
         let Some(stage) = report::next_stage_due(elapsed, &self.m) else {
             return SettleStep::Waiting;
         };
-        let Some(reading) = sampler.sample(&self.trim_pids) else {
+        let Some(reading) = sample(&self.trim_processes) else {
             return SettleStep::Failed;
         };
         match stage {
@@ -285,7 +319,7 @@ impl Memory {
             self.last_eval = Instant::now();
             if !open {
                 // The page refreshes itself while it is open.
-                self.refresh_now();
+                self.refresh_now(ctx);
             }
             self.note_foreground();
             self.evaluate(ctx);
@@ -345,11 +379,14 @@ impl Memory {
         if self.busy() {
             return false;
         }
+        self.request_refresh(ctx, Some(super::RefreshAction::Optimize(trigger)))
+    }
+
+    pub(super) fn run_from_snapshot(&mut self, ctx: &egui::Context, trigger: Trigger) -> bool {
         self.settling = None;
         if trigger == Trigger::Manual {
             self.run_note = None;
         }
-        self.refresh_now();
         let Some(sampler) = self.sampler.as_ref() else {
             return false;
         };
@@ -377,15 +414,15 @@ impl Memory {
             self.status = None;
             return true;
         }
-        let trim_pids: Vec<u32> = plan
+        let trim_processes: Vec<Identity> = plan
             .iter()
             .filter(|a| a.kind == Kind::Trim)
-            .map(|a| a.identity.pid)
+            .map(|a| a.identity.clone())
             .collect();
-        let Some(before) = self
+        let Some((before, before_sets)) = self
             .win_sampler
             .get_or_insert_with(WindowsSampler::new)
-            .sample(&trim_pids)
+            .sample_verified(&trim_processes)
         else {
             self.status = Some(
                 "Could not read the memory numbers, so nothing was changed. Try again.".to_string(),
@@ -416,7 +453,7 @@ impl Memory {
             rx,
             trigger,
             before,
-            trim_pids,
+            before_sets,
         });
         self.last_run = None;
         self.status = None;
@@ -448,22 +485,33 @@ impl Memory {
         self.cooldowns = done.cooldowns;
         let summary = RunSummary::from_results(&done.results);
         self.last_run = Some(summary);
-        self.refresh_now();
+        self.refresh_now(ctx);
 
-        let Some(after) = self
+        let trimmed: Vec<_> = done
+            .results
+            .iter()
+            .filter(|r| r.ok() && r.kind == Kind::Trim)
+            .map(|r| r.identity.clone())
+            .collect();
+        let Some((mut after, after_sets)) = self
             .win_sampler
             .get_or_insert_with(WindowsSampler::new)
-            .sample(&job.trim_pids)
+            .sample_verified(&trimmed)
         else {
             self.status = Some("Could not read the memory numbers after the run.".to_string());
             return;
         };
+        let mut before = job.before;
+        let (before_ws, after_ws, trim_processes) =
+            paired_working_sets(&job.before_sets, &after_sets);
+        before.private_ws = before_ws;
+        after.private_ws = after_ws;
         let settling = Settling::new(
             job.trigger,
             summary.trimmed,
-            job.trim_pids,
+            trim_processes,
             RunMeasurements {
-                before: job.before,
+                before,
                 after,
                 at_30s: None,
                 at_120s: None,
@@ -485,10 +533,12 @@ impl Memory {
             return;
         };
         let elapsed = settling.started.elapsed();
-        match settling.poll(
-            elapsed,
-            self.win_sampler.get_or_insert_with(WindowsSampler::new),
-        ) {
+        let sampler = self.win_sampler.get_or_insert_with(WindowsSampler::new);
+        match settling.poll(elapsed, |processes| {
+            let (mut reading, sets) = sampler.sample_verified(processes)?;
+            reading.private_ws = sets.values().sum();
+            Some(reading)
+        }) {
             SettleStep::Waiting => {}
             SettleStep::Took { last } => {
                 if let Some(newest) = self.reports.back_mut() {
@@ -550,19 +600,11 @@ mod tests {
         }
     }
 
-    struct Fake(VecDeque<Option<RunMeasurement>>);
-
-    impl MemorySampler for Fake {
-        fn sample(&mut self, _pids: &[u32]) -> Option<RunMeasurement> {
-            self.0.pop_front().flatten()
-        }
-    }
-
     fn settling() -> Settling {
         Settling::new(
             Trigger::Manual,
             2,
-            vec![10, 11],
+            Vec::new(),
             RunMeasurements {
                 before: reading(100, 100, 1000),
                 after: reading(600, 100, 500),
@@ -581,24 +623,22 @@ mod tests {
     #[test]
     fn settling_waits_then_takes_30s_and_120s_readings() {
         let mut s = settling();
-        let mut sampler = Fake(VecDeque::from([
-            Some(reading(500, 100, 650)),
-            Some(reading(450, 100, 700)),
-        ]));
+        let mut readings = VecDeque::from([reading(500, 100, 650), reading(450, 100, 700)]);
+        let mut sample = |_: &[Identity]| readings.pop_front();
         assert_eq!(
-            s.poll(Duration::from_secs(29), &mut sampler),
+            s.poll(Duration::from_secs(29), &mut sample),
             SettleStep::Waiting
         );
         assert_eq!(
-            s.poll(Duration::from_secs(31), &mut sampler),
+            s.poll(Duration::from_secs(31), &mut sample),
             SettleStep::Took { last: false }
         );
         assert_eq!(
-            s.poll(Duration::from_secs(60), &mut sampler),
+            s.poll(Duration::from_secs(60), &mut sample),
             SettleStep::Waiting
         );
         assert_eq!(
-            s.poll(Duration::from_secs(121), &mut sampler),
+            s.poll(Duration::from_secs(121), &mut sample),
             SettleStep::Took { last: true }
         );
         let r = s.report();
@@ -611,9 +651,8 @@ mod tests {
     fn a_failed_reading_gives_up_without_changing_the_report() {
         let mut s = settling();
         let before = s.report();
-        let mut sampler = Fake(VecDeque::from([None]));
         assert_eq!(
-            s.poll(Duration::from_secs(40), &mut sampler),
+            s.poll(Duration::from_secs(40), |_| None),
             SettleStep::Failed
         );
         assert_eq!(s.report().came_back, before.came_back);

@@ -519,7 +519,7 @@ fn summarize(run: &plan::Run) -> String {
     let ineffective = count(|o| matches!(o, plan::Outcome::NotEffective));
     let failed = count(|o| matches!(o, plan::Outcome::Failed(_)));
     format!(
-        "Done: {done}, not effective: {ineffective} (Windows ignores it on this edition), \
+        "Done: {done}, restored after a mismatch: {ineffective}, \
          failed: {failed}"
     )
 }
@@ -550,7 +550,7 @@ fn run_notes(run: &plan::Run) -> Vec<String> {
         .filter_map(|a| match &a.outcome {
             plan::Outcome::Done => None,
             plan::Outcome::NotEffective => Some(format!(
-                "{}: saved, but Windows ignores it on this edition.",
+                "{}: Windows did not keep the change. The previous setting was restored.",
                 title_of(a.id)
             )),
             plan::Outcome::Failed(e) => {
@@ -914,18 +914,22 @@ fn confirm_off_text(entry: &Entry) -> String {
 
 /// Undoes steps newest first through `undo_one`: the last one only, or all. Steps that fail stay
 /// in the list (original order). Returns (undone, failed).
-fn run_undo<T>(
+fn run_undo<T, K: Eq + std::hash::Hash>(
     steps: &mut Vec<T>,
     all: bool,
+    key_of: impl Fn(&T) -> K,
     mut undo_one: impl FnMut(&T) -> Result<(), String>,
 ) -> (usize, usize) {
     let take = if all { steps.len() } else { steps.len().min(1) };
     let batch: Vec<T> = steps.split_off(steps.len() - take);
     let (mut done, mut kept) = (0, Vec::new());
+    let mut blocked = std::collections::HashSet::new();
     for step in batch.into_iter().rev() {
-        if undo_one(&step).is_ok() {
+        let key = key_of(&step);
+        if !blocked.contains(&key) && undo_one(&step).is_ok() {
             done += 1;
         } else {
+            blocked.insert(key);
             kept.push(step);
         }
     }
@@ -1009,15 +1013,22 @@ impl Debloater {
                     if enable { "on" } else { "off" }
                 )
             }
-            Err(e) => format!("Could not change {}: {e}", entry.name),
+            Err(e) => {
+                let message = format!("Could not change {}: {e}", entry.name);
+                self.startup.steps.extend(e.recovery);
+                message
+            }
         });
         self.startup.started = false;
     }
 
     fn startup_undo(&mut self, all: bool) {
-        let (done, failed) = run_undo(&mut self.startup.steps, all, |step| {
-            startup::undo(&mut startup::WinStartup, step)
-        });
+        let (done, failed) = run_undo(
+            &mut self.startup.steps,
+            all,
+            |step| (step.source, step.name.clone()),
+            |step| startup::undo(&mut startup::WinStartup, step),
+        );
         self.startup.message = Some(startup_undo_summary(done, failed));
         self.startup.pending = None;
         self.startup.started = false;
@@ -1321,6 +1332,7 @@ impl Debloater {
         self.tasks.message = Some(match job {
             Some(TaskJob::Set(title, result, point)) => {
                 if let Some(status) = &point {
+                    self.restore.tasks_done = restore::has_restore_point(status);
                     self.restore.status = Some(restore::status_text(status));
                 }
                 match result {
@@ -1329,7 +1341,11 @@ impl Debloater {
                         self.tasks.steps.push(step);
                         format!("{title} is now {now}.")
                     }
-                    Err(e) => format!("Could not change {title}: {e}"),
+                    Err(e) => {
+                        let message = format!("Could not change {title}: {e}");
+                        self.tasks.steps.extend(e.recovery);
+                        message
+                    }
                 }
             }
             Some(TaskJob::Undo {
@@ -1350,9 +1366,6 @@ impl Debloater {
             return;
         }
         let make_point = should_create(self.restore.on, self.env.elevated, self.restore.tasks_done);
-        if make_point {
-            self.restore.tasks_done = true;
-        }
         self.restore.status = None;
         let elevated = self.env.elevated;
         let (tx, rx) = mpsc::channel();
@@ -1366,7 +1379,9 @@ impl Debloater {
                 )
             });
             let result = match &point {
-                Some(status) if restore::is_blocking(status) => Err(restore::status_text(status)),
+                Some(status) if restore::is_blocking(status) => {
+                    Err(restore::status_text(status).into())
+                }
                 _ => tasks::set_enabled(&mut tasks::WinTasks, &def, enable),
             };
             let _ = tx.send(TaskJob::Set(def.title.to_string(), result, point));
@@ -1384,8 +1399,12 @@ impl Debloater {
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let (done, failed) =
-                run_undo(&mut steps, all, |s| tasks::undo(&mut tasks::WinTasks, s));
+            let (done, failed) = run_undo(
+                &mut steps,
+                all,
+                |step| step.path,
+                |s| tasks::undo(&mut tasks::WinTasks, s),
+            );
             let _ = tx.send(TaskJob::Undo {
                 remaining: steps,
                 done,
@@ -1730,6 +1749,7 @@ impl Debloater {
         self.services.message = Some(match job {
             Some(ServiceJob::Set(title, result, point)) => {
                 if let Some(status) = &point {
+                    self.restore.services_done = restore::has_restore_point(status);
                     self.restore.status = Some(restore::status_text(status));
                 }
                 match result {
@@ -1737,7 +1757,11 @@ impl Debloater {
                         self.services.steps.push(step);
                         format!("{title} is now switched off.")
                     }
-                    Err(e) => format!("Could not change {title}: {e}"),
+                    Err(e) => {
+                        let message = format!("Could not change {title}: {e}");
+                        self.services.steps.extend(e.recovery);
+                        message
+                    }
                 }
             }
             Some(ServiceJob::Undo {
@@ -1762,9 +1786,6 @@ impl Debloater {
             self.env.elevated,
             self.restore.services_done,
         );
-        if make_point {
-            self.restore.services_done = true;
-        }
         self.restore.status = None;
         let elevated = self.env.elevated;
         let (tx, rx) = mpsc::channel();
@@ -1778,7 +1799,9 @@ impl Debloater {
                 )
             });
             let result = match &point {
-                Some(status) if restore::is_blocking(status) => Err(restore::status_text(status)),
+                Some(status) if restore::is_blocking(status) => {
+                    Err(restore::status_text(status).into())
+                }
                 _ => services::set_off(&mut services::WinServices, &def),
             };
             let _ = tx.send(ServiceJob::Set(def.title.to_string(), result, point));
@@ -1800,7 +1823,7 @@ impl Debloater {
             let undo_one = |s: &services::UndoStep| services::undo(&mut services::WinServices, s);
             let (done, failed) = match only {
                 Some(id) => undo_for_id(&mut steps, id, undo_one),
-                None => run_undo(&mut steps, all, undo_one),
+                None => run_undo(&mut steps, all, |step| step.name, undo_one),
             };
             let _ = tx.send(ServiceJob::Undo {
                 remaining: steps,
@@ -2103,13 +2126,18 @@ mod tests {
             was_enabled: true,
         };
         let mut steps = vec![step("a"), step("b")];
-        let (done, failed) = run_undo(&mut steps, true, |s| {
-            if s.id == "a" {
-                Err("no".into())
-            } else {
-                Ok(())
-            }
-        });
+        let (done, failed) = run_undo(
+            &mut steps,
+            true,
+            |step| step.path,
+            |s| {
+                if s.id == "a" {
+                    Err("no".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
         assert_eq!((done, failed), (1, 1));
         assert_eq!(steps[0].id, "a");
     }
@@ -2181,24 +2209,69 @@ mod tests {
         };
         let mut steps = vec![step("a"), step("b"), step("c")];
         let mut order = Vec::new();
-        let (done, failed) = run_undo(&mut steps, true, |s| {
-            order.push(s.name.clone());
-            if s.name == "b" {
-                Err("no".into())
-            } else {
-                Ok(())
-            }
-        });
+        let (done, failed) = run_undo(
+            &mut steps,
+            true,
+            |step| step.name.clone(),
+            |s| {
+                order.push(s.name.clone());
+                if s.name == "b" {
+                    Err("no".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
         assert_eq!(order, ["c", "b", "a"]);
         assert_eq!((done, failed), (2, 1));
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].name, "b");
 
         let mut steps = vec![step("a"), step("b")];
-        let (done, failed) = run_undo(&mut steps, false, |_| Ok(()));
+        let (done, failed) = run_undo(&mut steps, false, |step| step.name.clone(), |_| Ok(()));
         assert_eq!((done, failed), (1, 0));
         assert_eq!(steps[0].name, "a");
-        assert_eq!(run_undo(&mut Vec::<u8>::new(), true, |_| Ok(())), (0, 0));
+        assert_eq!(
+            run_undo(&mut Vec::<u8>::new(), true, |step| *step, |_| Ok(())),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn undo_does_not_restore_older_values_after_a_newer_step_failed() {
+        let step = |name: &str, previous| UndoStep {
+            source: Source::UserRun,
+            name: name.into(),
+            previous,
+        };
+        let mut steps = vec![
+            step("App", None),
+            step("Other", None),
+            step("App", Some(vec![2])),
+        ];
+        let mut attempted = Vec::new();
+        let (done, failed) = run_undo(
+            &mut steps,
+            true,
+            |s| (s.source, s.name.clone()),
+            |s| {
+                attempted.push(s.name.clone());
+                if s.name == "App" {
+                    Err("Windows rejected the restore".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(attempted, ["App", "Other"]);
+        assert_eq!((done, failed), (1, 2));
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].previous, None);
+        assert_eq!(steps[1].previous, Some(vec![2]));
+        assert_eq!(
+            run_undo(&mut steps, true, |s| (s.source, s.name.clone()), |_| Ok(())),
+            (2, 0)
+        );
     }
 
     fn item(id: &'static str, group: Group, risk: Risk) -> Item {
@@ -2289,7 +2362,7 @@ mod tests {
         let run = run_with(&[Done, Done, NotEffective, Failed("no".into())]);
         assert_eq!(
             summarize(&run),
-            "Done: 2, not effective: 1 (Windows ignores it on this edition), failed: 1"
+            "Done: 2, restored after a mismatch: 1, failed: 1"
         );
         assert_eq!(run_notes(&run).len(), 2);
         assert!(summarize(&plan::Run::default()).starts_with("Done: 0"));

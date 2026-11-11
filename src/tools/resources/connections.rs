@@ -610,8 +610,8 @@ pub(super) struct Page {
     selected: Option<String>,
     /// Process identity waiting for the second click on End process.
     confirm: Option<ProcessIdentity>,
-    denied: HashSet<u32>,
-    end_job: Option<Receiver<(String, Option<u32>)>>,
+    denied: HashSet<ProcessIdentity>,
+    end_job: Option<Receiver<(String, ProcessIdentity, bool)>>,
     end_line: Option<String>,
     /// Looked-up names, kept in memory only.
     names: HashMap<IpAddr, Option<String>>,
@@ -651,6 +651,9 @@ impl Page {
                 match snap {
                     Ok(rows) => {
                         self.live = rows;
+                        let live: HashSet<_> =
+                            self.live.iter().filter_map(|row| row.identity).collect();
+                        self.denied.retain(|identity| live.contains(identity));
                         self.error = None;
                     }
                     Err(e) => self.error = Some(e),
@@ -658,11 +661,13 @@ impl Page {
             }
         }
         let done = self.end_job.as_ref().and_then(|rx| rx.try_recv().ok());
-        if let Some((line, denied_pid)) = done {
+        if let Some((line, identity, denied)) = done {
             self.end_job = None;
             self.end_line = Some(line);
-            if let Some(pid) = denied_pid {
-                self.denied.insert(pid);
+            if denied {
+                self.denied.insert(identity);
+            } else {
+                self.denied.remove(&identity);
             }
         }
         let name = self
@@ -917,7 +922,14 @@ impl Page {
         ui.separator();
 
         let own_pid = std::process::id();
-        let protected = is_protected(c.pid, &c.name, own_pid, &self.denied);
+        let protected = is_protected(c.pid, &c.name, own_pid);
+        if c.identity.is_some_and(|id| self.denied.contains(&id)) {
+            ui.label(
+                RichText::new("Windows denied the previous action for this process.")
+                    .weak()
+                    .small(),
+            );
+        }
         let busy = self.end_job.is_some();
         if self.confirm.is_some() && self.confirm != c.identity {
             self.confirm = None;
@@ -1022,7 +1034,7 @@ impl Page {
             .spawn(move || {
                 let r = end_process(identity, &name);
                 let line = result_line("Ended", &name, pid, r);
-                let _ = tx.send((line, (r == Err(ActionError::AccessDenied)).then_some(pid)));
+                let _ = tx.send((line, identity, r == Err(ActionError::AccessDenied)));
                 ctx.request_repaint();
             });
         if spawned.is_ok() {

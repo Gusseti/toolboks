@@ -33,6 +33,7 @@ pub struct Installed {
 pub trait Packages {
     fn list(&self) -> Result<Vec<Installed>, String>;
     fn remove(&mut self, full_name: &str) -> Result<(), String>;
+    fn is_installed(&self, package: &Installed) -> Result<bool, String>;
 }
 
 pub struct WinPackages;
@@ -85,6 +86,30 @@ impl Packages for WinPackages {
             Ok(code) => Err(fail(hex(code.0))),
             Err(e) => Err(fail(hex(e.code().0))),
         }
+    }
+
+    fn is_installed(&self, package: &Installed) -> Result<bool, String> {
+        let check = || -> windows::core::Result<bool> {
+            let packages = PackageManager::new()?.FindPackagesByUserSecurityIdPackageFamilyName(
+                &HSTRING::new(),
+                &HSTRING::from(&package.family_name),
+            )?;
+            let iter = packages.First()?;
+            while iter.HasCurrent()? {
+                let full_name = iter.Current()?.Id()?.FullName()?;
+                if full_name
+                    .to_string()
+                    .eq_ignore_ascii_case(&package.full_name)
+                {
+                    return Ok(true);
+                }
+                iter.MoveNext()?;
+            }
+            Ok(false)
+        };
+        check().map_err(|error| {
+            format!("Could not verify whether Windows removed this app ({error}).")
+        })
     }
 }
 
@@ -282,7 +307,14 @@ pub fn remove_apps(rows: &[AppRow], selected: &[&str], pkgs: &mut dyn Packages) 
                 "This is a Windows component and is never removed.".to_string(),
             ));
         } else {
-            match pkgs.remove(&inst.full_name) {
+            let result = pkgs.remove(&inst.full_name).and_then(|()| {
+                if pkgs.is_installed(inst)? {
+                    Err("Windows still lists this app as installed.".into())
+                } else {
+                    Ok(())
+                }
+            });
+            match result {
                 Ok(()) => run.removed.push((row.entry.id, inst.full_name.clone())),
                 Err(e) => run.failed.push((row.entry.id, e)),
             }
@@ -300,6 +332,7 @@ mod tests {
         items: Vec<Installed>,
         fail: HashSet<String>,
         removed: Vec<String>,
+        verify: Result<bool, String>,
     }
 
     impl Packages for Fake {
@@ -312,6 +345,9 @@ mod tests {
             }
             self.removed.push(full_name.to_string());
             Ok(())
+        }
+        fn is_installed(&self, _: &Installed) -> Result<bool, String> {
+            self.verify.clone()
         }
     }
 
@@ -331,6 +367,7 @@ mod tests {
             items,
             fail: fail.iter().map(|s| s.to_string()).collect(),
             removed: vec![],
+            verify: Ok(false),
         }
     }
 
@@ -368,6 +405,20 @@ mod tests {
         assert_eq!(run.failed.len(), 1);
         assert_eq!(run.failed[0].0, "maps");
         assert_eq!(f.removed.len(), 1);
+    }
+
+    #[test]
+    fn removal_requires_confirmed_absence() {
+        let mut f = fake(vec![inst("Microsoft.BingNews", false, false)], &[]);
+        let r = rows(&f).unwrap();
+        for result in [Ok(true), Err("Could not check Windows".into())] {
+            f.verify = result;
+            let run = remove_apps(&r, &["bing-news"], &mut f);
+            assert!(run.removed.is_empty());
+            assert_eq!(run.failed.len(), 1);
+            assert_eq!(run.failed[0].0, "bing-news");
+        }
+        assert_eq!(f.removed.len(), 2);
     }
 
     #[test]
@@ -438,6 +489,15 @@ mod tests {
     #[ignore]
     fn smoke_list_real_packages() {
         let list = WinPackages.list().unwrap();
-        assert!(!list.is_empty());
+        let installed = list
+            .into_iter()
+            .find(|pkg| !pkg.full_name.is_empty() && !pkg.family_name.is_empty())
+            .expect("an installed package with a usable identity");
+        assert!(WinPackages.is_installed(&installed).unwrap());
+        let absent = Installed {
+            full_name: format!("{}-missing", installed.full_name),
+            ..installed
+        };
+        assert!(!WinPackages.is_installed(&absent).unwrap());
     }
 }

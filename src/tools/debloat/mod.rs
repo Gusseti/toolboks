@@ -63,7 +63,7 @@ struct StartupState {
 struct RestoreState {
     /// The switch (off by default each session).
     on: bool,
-    /// Tasks page: a restore point was already tried this session, so do not repeat it.
+    /// Tasks page: Windows confirmed a new or recent restore point this session.
     tasks_done: bool,
     /// Services page: same, once per session.
     services_done: bool,
@@ -78,7 +78,7 @@ enum TaskJob {
     /// One task was switched: (title, outcome, restore point result if one was made first).
     Set(
         String,
-        Result<tasks::UndoStep, String>,
+        Result<tasks::UndoStep, ChangeError<tasks::UndoStep>>,
         Option<restore::RestoreStatus>,
     ),
     /// Undo ran; the steps that failed come back with the counts.
@@ -112,7 +112,7 @@ enum ServiceJob {
     /// One service was switched off: (title, outcome, restore point result if one was made first).
     Set(
         String,
-        Result<services::UndoStep, String>,
+        Result<services::UndoStep, ChangeError<services::UndoStep>>,
         Option<restore::RestoreStatus>,
     ),
     /// Undo ran; the steps that failed come back with the counts.
@@ -121,6 +121,43 @@ enum ServiceJob {
         done: usize,
         failed: usize,
     },
+}
+
+#[derive(Debug)]
+pub(super) struct ChangeError<T> {
+    message: String,
+    recovery: Option<T>,
+}
+
+impl<T> From<String> for ChangeError<T> {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            recovery: None,
+        }
+    }
+}
+
+impl<T> std::fmt::Display for ChangeError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.message.fmt(f)
+    }
+}
+
+fn rollback<T>(
+    message: String,
+    step: T,
+    undo: impl FnOnce(&T) -> Result<(), String>,
+) -> ChangeError<T> {
+    match undo(&step) {
+        Ok(()) => format!("{message}. The previous setting was restored.").into(),
+        Err(error) => ChangeError {
+            message: format!(
+                "{message}. Could not restore the previous setting ({error}). Use Undo to retry."
+            ),
+            recovery: Some(step),
+        },
+    }
 }
 
 /// State of the Services page. Service Control Manager calls run on worker threads only.

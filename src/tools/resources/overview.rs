@@ -99,7 +99,7 @@ impl Resources {
             .iter()
             .map(|l| power::cpu_estimate_w(*l, self.cpu_rated_w))
             .collect();
-        let has_gpu = self.gpu.as_ref().is_some_and(|g| g.power_w.is_some());
+        let has_gpu = gpu.iter().any(|v| v.is_finite());
         let mut lines = vec![Line {
             values: &cpu,
             color: GREY,
@@ -122,13 +122,8 @@ impl Resources {
         let max = peak_ceiling(&[gpu, &cpu], 50.0);
         let step = range.step_secs();
         let mut stats = Vec::new();
-        if has_gpu {
-            stats.push((
-                self.gpu_power
-                    .last()
-                    .map_or(NONE.to_string(), power::fmt_watts),
-                "GPU now",
-            ));
+        if let Some(watts) = self.gpu_power.last().filter(|v| v.is_finite()) {
+            stats.push((power::fmt_watts(watts), "GPU now"));
         }
         stats.push((
             cpu.last()
@@ -137,7 +132,12 @@ impl Resources {
             "CPU now (estimate)",
         ));
         if has_gpu {
-            stats.push((power::fmt_energy(power::energy_wh(gpu, step)), "GPU used"));
+            let label = if gpu.iter().any(|v| !v.is_finite()) {
+                "GPU used (recorded intervals)"
+            } else {
+                "GPU used"
+            };
+            stats.push((power::fmt_energy(power::energy_wh(gpu, step)), label));
         }
         stats.push((
             power::fmt_energy(power::energy_wh(&cpu, step)),

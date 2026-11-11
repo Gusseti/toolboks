@@ -337,7 +337,9 @@ mod tests {
                 let parts: Vec<_> = step.page.split('/').collect();
                 let p: usize = parts[0].parse().unwrap();
                 tool.tutorial_navigate(parts.get(1).copied().unwrap_or(""));
-                for _ in 0..5 {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                loop {
+                    tool.tick(&ctx);
                     let mut output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(
@@ -353,6 +355,10 @@ mod tests {
                         },
                     );
                     output.textures_delta.clear();
+                    if anchors::anchor(&ctx).is_some() || std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
                 }
                 assert!(
                     anchors::anchor(&ctx).is_some(),

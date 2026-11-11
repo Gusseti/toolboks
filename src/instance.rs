@@ -13,8 +13,8 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetWindowTextW, IsIconic, IsWindowVisible, SetForegroundWindow,
-    ShowWindow, SW_RESTORE, SW_SHOW,
+    EnumWindows, GetClassNameW, GetWindowTextW, IsIconic, IsWindowVisible, MessageBoxW,
+    SetForegroundWindow, ShowWindow, MB_ICONWARNING, MB_OK, SW_RESTORE, SW_SHOW,
 };
 
 use crate::win::Handle;
@@ -102,14 +102,24 @@ pub fn acquire(args: &[String]) -> Option<Guard> {
             Some(Guard(result.ok()))
         }
         Action::HandOver => {
-            bring_forward();
+            if !bring_forward() {
+                // SAFETY: the title and message are static NUL-terminated wide strings.
+                unsafe {
+                    MessageBoxW(
+                        None,
+                        w!("Another Toolboks instance is starting or is not responding. Wait a moment and try again. If this continues, close the other instance in Task Manager."),
+                        w!("Toolboks is already running"),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                }
+            }
             None
         }
     }
 }
 
 /// Finds the other toolboks window (winit class, title starts with "toolboks ") and shows it.
-fn bring_forward() {
+fn bring_forward() -> bool {
     unsafe extern "system" fn visit(hwnd: HWND, found: LPARAM) -> BOOL {
         let mut class = [0u16; 32];
         let mut title = [0u16; 64];
@@ -134,7 +144,7 @@ fn bring_forward() {
     // SAFETY: the callback only writes to `found`, which outlives the call.
     let _ = unsafe { EnumWindows(Some(visit), LPARAM(&mut found as *mut HWND as isize)) };
     if found.0.is_null() {
-        return;
+        return false;
     }
     // SAFETY: `found` is a window handle from EnumWindows; all calls tolerate stale handles.
     unsafe {
@@ -145,6 +155,7 @@ fn bring_forward() {
         }
         let _ = SetForegroundWindow(found);
     }
+    true
 }
 
 #[cfg(test)]

@@ -7,9 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use windows::Win32::{
-    System::Com::CoCreateGuid, System::SystemInformation::GetSystemWindowsDirectoryW,
-};
+use windows::Win32::System::Com::CoCreateGuid;
 
 use crate::{
     addons,
@@ -18,6 +16,7 @@ use crate::{
         catalog,
         model::{Edition, Hive, RegValue},
     },
+    win::windows_dir,
 };
 
 #[derive(Clone, Copy)]
@@ -319,17 +318,6 @@ fn export(journal: &Journal) -> Result<Vec<u8>, String> {
         .chain(contents.encode_utf16())
         .flat_map(u16::to_le_bytes)
         .collect())
-}
-
-pub(super) fn windows_dir() -> Result<PathBuf, String> {
-    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
-    let mut buffer = [0; 260];
-    // SAFETY: the API writes at most the slice length supplied by the binding.
-    let len = unsafe { GetSystemWindowsDirectoryW(Some(&mut buffer)) } as usize;
-    if len == 0 || len >= buffer.len() {
-        return Err("Could not locate the Windows system directory.".into());
-    }
-    Ok(PathBuf::from(OsString::from_wide(&buffer[..len])))
 }
 
 fn checked(command: &mut Command, operation: &str) -> Result<String, String> {

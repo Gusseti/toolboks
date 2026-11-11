@@ -57,6 +57,9 @@ impl Totals {
 /// Reads system memory and the process list through `sysinfo`.
 pub struct Sampler {
     sys: System,
+}
+
+pub struct Snapshot {
     pub totals: Totals,
     pub processes: Vec<ProcInfo>,
     /// Parent pid of each process, where known.
@@ -66,35 +69,25 @@ pub struct Sampler {
 impl Sampler {
     /// `None` if the platform refuses to provide system info.
     pub fn new() -> Option<Self> {
-        let mut sampler = Self {
+        Some(Self {
             sys: System::new().ok()?,
-            totals: Totals::default(),
-            processes: Vec::new(),
-            parents: std::collections::HashMap::new(),
-        };
-        sampler.refresh();
-        Some(sampler)
+        })
     }
 
-    /// Cheap refresh of the RAM totals only, for background checks.
-    pub fn refresh_totals(&mut self) {
+    /// Full refresh: totals and the process list.
+    pub fn refresh(&mut self) -> Snapshot {
         self.sys.refresh_memory();
-        self.totals = Totals {
+        let totals = Totals {
             total: self.sys.total_memory(),
             used: self.sys.used_memory(),
             available: self.sys.available_memory(),
         };
-    }
-
-    /// Full refresh: totals and the process list.
-    pub fn refresh(&mut self) {
-        self.refresh_totals();
         self.sys.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
             ProcessRefreshKind::nothing().with_memory(),
         );
-        self.processes = self
+        let processes = self
             .sys
             .processes()
             .values()
@@ -106,12 +99,17 @@ impl Sampler {
                 count: 1,
             })
             .collect();
-        self.parents = self
+        let parents = self
             .sys
             .processes()
             .values()
             .filter_map(|p| Some((p.pid().as_u32(), p.parent()?.as_u32())))
             .collect();
+        Snapshot {
+            totals,
+            processes,
+            parents,
+        }
     }
 }
 

@@ -1011,8 +1011,21 @@ impl NativeAddon for DiskManager {
 fn reveal(path: &str) {
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("explorer.exe")
-            .arg(format!("/select,{}", display_path(path)))
+        use std::{
+            ffi::OsString, os::windows::ffi::OsStringExt, os::windows::process::CommandExt,
+            path::PathBuf,
+        };
+        use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+
+        let mut buffer = [0; 260];
+        // SAFETY: the binding passes the slice length to the Windows API.
+        let len = unsafe { GetSystemWindowsDirectoryW(Some(&mut buffer)) } as usize;
+        if len == 0 || len >= buffer.len() {
+            return;
+        }
+        let windows = PathBuf::from(OsString::from_wide(&buffer[..len]));
+        let _ = std::process::Command::new(windows.join("explorer.exe"))
+            .raw_arg(format!("/select,\"{}\"", display_path(path)))
             .spawn();
     }
     #[cfg(not(windows))]

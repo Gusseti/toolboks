@@ -348,34 +348,46 @@ fn state_for(on: bool) -> TaskState {
 
 /// Switches one catalog task on or off. Refuses tasks not in the catalog or never offered, tasks
 /// that are not present or protected, and re-reads the state to confirm.
-pub fn set_enabled(tasks: &mut dyn Tasks, def: &TaskDef, enable: bool) -> Result<UndoStep, String> {
+pub(super) fn set_enabled(
+    tasks: &mut dyn Tasks,
+    def: &TaskDef,
+    enable: bool,
+) -> Result<UndoStep, super::ChangeError<UndoStep>> {
     let known = catalog()
         .iter()
         .find(|d| d.path == def.path)
         .ok_or_else(|| "This task is not on the list, so it was left alone".to_string())?;
     if is_never_offered(known.path) {
-        return Err("Windows needs this task, so it was left alone".to_string());
+        return Err("Windows needs this task, so it was left alone"
+            .to_string()
+            .into());
     }
     let was_enabled = match tasks.state(known.path) {
         TaskState::Enabled => true,
         TaskState::Disabled => false,
-        TaskState::NotPresent => return Err("Not on this PC".to_string()),
-        TaskState::Protected => return Err("Protected by Windows, skipped".to_string()),
-        TaskState::Unknown(m) => return Err(format!("Could not read the task: {m}")),
+        TaskState::NotPresent => return Err("Not on this PC".to_string().into()),
+        TaskState::Protected => return Err("Protected by Windows, skipped".to_string().into()),
+        TaskState::Unknown(m) => return Err(format!("Could not read the task: {m}").into()),
     };
     if was_enabled == enable {
-        return Err(format!("Already {}", on_off(enable)));
+        return Err(format!("Already {}", on_off(enable)).into());
     }
-    tasks.set_enabled(known.path, enable)?;
-    if tasks.state(known.path) != state_for(enable) {
-        let _ = tasks.set_enabled(known.path, was_enabled);
-        return Err("Windows did not keep the change, so it was put back".to_string());
-    }
-    Ok(UndoStep {
+    let step = UndoStep {
         id: known.id,
         path: known.path,
         was_enabled,
-    })
+    };
+    let result = tasks.set_enabled(known.path, enable).and_then(|()| {
+        if tasks.state(known.path) == state_for(enable) {
+            Ok(())
+        } else {
+            Err("Windows did not keep the change".into())
+        }
+    });
+    match result {
+        Ok(()) => Ok(step),
+        Err(error) => Err(super::rollback(error, step, |step| undo(tasks, step))),
+    }
 }
 
 pub fn undo(tasks: &mut dyn Tasks, step: &UndoStep) -> Result<(), String> {
@@ -565,7 +577,7 @@ mod tests {
         assert!(set_enabled(&mut f, d, false).is_err());
         let mut f = FakeTasks::with(d.path, TaskState::Protected);
         assert_eq!(
-            set_enabled(&mut f, d, false).unwrap_err(),
+            set_enabled(&mut f, d, false).unwrap_err().message,
             "Protected by Windows, skipped"
         );
         let mut f = FakeTasks::with(d.path, TaskState::Unknown("x".into()));
@@ -573,10 +585,12 @@ mod tests {
         let mut f = FakeTasks::with(d.path, TaskState::Disabled);
         assert!(set_enabled(&mut f, d, false)
             .unwrap_err()
+            .message
             .starts_with("Already"));
         let mut f = FakeTasks::with(d.path, TaskState::Enabled);
         assert!(set_enabled(&mut f, d, true)
             .unwrap_err()
+            .message
             .starts_with("Already"));
         let mut f = FakeTasks::with(d.path, TaskState::Enabled);
         f.fail_writes = true;
