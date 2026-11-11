@@ -23,15 +23,21 @@ fn main() -> eframe::Result {
     let Some(_instance) = instance::acquire(&args) else {
         return Ok(());
     };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title(format!(
+            "{} {}",
+            instance::APP_NAME,
+            env!("CARGO_PKG_VERSION")
+        ))
+        .with_inner_size([1540.0, 960.0])
+        .with_min_inner_size([1060.0, 720.0]);
+    // The window and taskbar icon. If the embedded image cannot be read, Windows keeps the exe's
+    // own icon (see build.rs), so a bad image never stops the app from starting.
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon.png")) {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(format!(
-                "{} {}",
-                instance::APP_NAME,
-                env!("CARGO_PKG_VERSION")
-            ))
-            .with_inner_size([1540.0, 960.0])
-            .with_min_inner_size([1060.0, 720.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
