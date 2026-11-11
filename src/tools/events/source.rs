@@ -40,7 +40,27 @@ pub struct Query {
 
 pub trait EventSource {
     fn query(&self, q: &Query) -> Result<Vec<Event>, String>;
+    fn query_partial(&self, q: &Query) -> Result<QueryRead, String> {
+        self.query(q).map(|events| QueryRead {
+            events,
+            error: None,
+        })
+    }
     fn channel_status(&self, channel: &str) -> ChannelStatus;
+}
+
+pub struct QueryRead {
+    pub events: Vec<Event>,
+    pub error: Option<String>,
+}
+
+impl QueryRead {
+    fn complete(self) -> Result<Vec<Event>, String> {
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(self.events),
+        }
+    }
 }
 
 /// The real Windows Event Log (EvtQuery / EvtNext / EvtRender). Calls may be slow: use a worker
@@ -156,9 +176,14 @@ fn open_query(channel: &str, xpath: &str, newest_first: bool) -> Result<Handle, 
 
 impl EventSource for WinEvents {
     fn query(&self, q: &Query) -> Result<Vec<Event>, String> {
+        self.query_partial(q)?.complete()
+    }
+
+    fn query_partial(&self, q: &Query) -> Result<QueryRead, String> {
         let mut out = Vec::new();
+        let mut error = None;
         if q.max == 0 {
-            return Ok(out);
+            return Ok(QueryRead { events: out, error });
         }
         let results = open_query(&q.channel, &build_xpath(q), q.newest_first)?;
         let mut batch = [0isize; 64];
@@ -173,8 +198,8 @@ impl EventSource for WinEvents {
                 .map(|h| Handle(EVT_HANDLE(*h)))
                 .collect();
             for h in &handles {
-                if let Some(xml) = render_xml(h.0) {
-                    if let Some(mut ev) = parse_event_xml(&xml) {
+                match render_xml(h.0).and_then(|xml| parse_event_xml(&xml)) {
+                    Some(mut ev) => {
                         if ev.channel.is_empty() {
                             ev.channel = q.channel.clone();
                         }
@@ -183,19 +208,28 @@ impl EventSource for WinEvents {
                             break 'outer;
                         }
                     }
+                    None => {
+                        error = Some(format!(
+                            "Some records in the {} log could not be read.",
+                            q.channel
+                        ));
+                    }
                 }
             }
             if let Err(e) = r {
                 match win32_code(&e) {
-                    ERROR_NO_MORE_ITEMS | ERROR_TIMEOUT => break,
-                    _ => return Err(plain_error(&q.channel, &e)),
+                    ERROR_NO_MORE_ITEMS => break,
+                    _ => {
+                        error = Some(plain_error(&q.channel, &e));
+                        break;
+                    }
                 }
             }
             if got == 0 {
                 break;
             }
         }
-        Ok(out)
+        Ok(QueryRead { events: out, error })
     }
 
     fn channel_status(&self, channel: &str) -> ChannelStatus {
@@ -338,6 +372,49 @@ const LOAD_MAX_MARKERS: usize = 5_000;
 /// Loads System and Application since `since_ms` (all crash markers plus warnings and errors),
 /// merged and sorted oldest first, plus one status per channel.
 pub fn load(src: &dyn EventSource, since_ms: i64) -> (Vec<Event>, Vec<ChannelStatus>) {
+    load_with_limits(src, since_ms, LOAD_MAX_PER_CHANNEL, LOAD_MAX_MARKERS)
+}
+
+pub fn poll(src: &dyn EventSource, since_ms: i64) -> (Vec<Event>, Vec<ChannelStatus>) {
+    load_with_limits(src, since_ms, 200, 200)
+}
+
+fn append_query(
+    src: &dyn EventSource,
+    query: &Query,
+    all: &mut Vec<Event>,
+    status: &mut ChannelStatus,
+) {
+    let error = match src.query_partial(query) {
+        Ok(read) => {
+            let limited = read.events.len() >= query.max;
+            all.extend(read.events);
+            read.error.or_else(|| {
+                limited.then(|| {
+                    format!(
+                        "The {} query reached its {} record limit. The results may be incomplete.",
+                        query.channel, query.max
+                    )
+                })
+            })
+        }
+        Err(error) => Some(error),
+    };
+    if let Some(error) = error {
+        status.readable = false;
+        status.error = Some(match status.error.take() {
+            Some(previous) if previous != error => format!("{previous}. {error}"),
+            _ => error,
+        });
+    }
+}
+
+fn load_with_limits(
+    src: &dyn EventSource,
+    since_ms: i64,
+    max: usize,
+    max_markers: usize,
+) -> (Vec<Event>, Vec<ChannelStatus>) {
     let mut all: Vec<Event> = Vec::new();
     let mut statuses = Vec::new();
     for channel in CHANNELS {
@@ -346,24 +423,21 @@ pub fn load(src: &dyn EventSource, since_ms: i64) -> (Vec<Event>, Vec<ChannelSta
             since_ms,
             until_ms: None,
             levels: vec![1, 2, 3],
-            max: LOAD_MAX_PER_CHANNEL,
+            max,
             newest_first: true,
         };
         let markers = Query {
             levels: vec![CRASH_MARKERS],
-            max: LOAD_MAX_MARKERS,
+            max: max_markers,
             ..levels.clone()
         };
-        if let Ok(v) = src.query(&levels) {
-            all.extend(v);
-        }
+        let mut status = src.channel_status(channel);
+        append_query(src, &levels, &mut all, &mut status);
         // The crash markers live in the System log only (Application has unrelated 1001s).
         if channel == "System" {
-            if let Ok(v) = src.query(&markers) {
-                all.extend(v);
-            }
+            append_query(src, &markers, &mut all, &mut status);
         }
-        statuses.push(src.channel_status(channel));
+        statuses.push(status);
     }
     all.sort_by(|a, b| (a.channel.as_str(), a.record_id).cmp(&(b.channel.as_str(), b.record_id)));
     all.dedup_by(|a, b| a.channel == b.channel && a.record_id == b.record_id);
@@ -944,6 +1018,72 @@ mod tests {
         assert_eq!(statuses.len(), 2);
         assert_eq!(statuses[0].name, "System");
         assert_eq!(statuses[1].name, "Application");
+    }
+
+    struct BrokenQueries {
+        marker_failure: bool,
+        partial: bool,
+    }
+
+    impl EventSource for BrokenQueries {
+        fn query(&self, query: &Query) -> Result<Vec<Event>, String> {
+            self.query_partial(query)?.complete()
+        }
+
+        fn query_partial(&self, query: &Query) -> Result<QueryRead, String> {
+            if query.channel == "System"
+                && query.levels.contains(&CRASH_MARKERS) == self.marker_failure
+            {
+                if self.partial {
+                    return Ok(QueryRead {
+                        events: vec![ev("System", 1, 100, 41, 1)],
+                        error: Some("The event stream stopped".into()),
+                    });
+                }
+                return Err("Windows rejected this query".into());
+            }
+            Ok(QueryRead {
+                events: Vec::new(),
+                error: None,
+            })
+        }
+
+        fn channel_status(&self, channel: &str) -> ChannelStatus {
+            ChannelStatus {
+                name: channel.into(),
+                readable: true,
+                error: None,
+                oldest_ms: Some(0),
+            }
+        }
+    }
+
+    #[test]
+    fn query_failures_override_a_successful_channel_probe() {
+        for marker_failure in [false, true] {
+            for partial in [false, true] {
+                let src = BrokenQueries {
+                    marker_failure,
+                    partial,
+                };
+                for (events, statuses) in [load(&src, 0), poll(&src, 0)] {
+                    let status = &statuses[0];
+                    assert!(!status.readable);
+                    assert!(status.error.is_some());
+                    assert!(statuses[1].readable);
+                    assert_eq!(events.len(), usize::from(partial));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn incomplete_reads_are_rejected_by_callers_that_need_complete_results() {
+        let read = QueryRead {
+            events: vec![ev("System", 1, 100, 41, 1)],
+            error: Some("The event stream stopped".into()),
+        };
+        assert!(read.complete().is_err());
     }
 
     #[test]

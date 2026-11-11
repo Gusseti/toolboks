@@ -14,7 +14,7 @@ use super::catalog;
 use super::model::{
     Category, ChannelStatus, Crash, CrashKind, DigestLine, Event, Group, Info, Severity,
 };
-use super::source::{self, DumpHeader, EventSource, Query, WinEvents};
+use super::source::{self, DumpHeader, WinEvents};
 use crate::ui::{self as look, AMBER, BORDER, GAP, GREEN, MUTED, RED, TEXT_CAPTION, TEXT_SECTION};
 
 const DAY_MS: i64 = 86_400_000;
@@ -351,7 +351,11 @@ fn unreadable_warnings(statuses: &[ChannelStatus]) -> Vec<String> {
     statuses
         .iter()
         .filter(|s| !s.readable)
-        .map(|s| format!("Windows did not let toolboks read the {} log.", s.name))
+        .map(|s| {
+            s.error
+                .clone()
+                .unwrap_or_else(|| format!("The {} log could not be read completely.", s.name))
+        })
         .collect()
 }
 
@@ -627,7 +631,7 @@ enum Msg {
         since_ms: i64,
         analysis: Analysis,
     },
-    Polled(Vec<Event>),
+    Polled(Vec<Event>, Vec<ChannelStatus>),
     Analyzed(Analysis, usize),
     Message(Key, Option<String>),
     Dump(i64, Result<DumpHeader, String>),
@@ -727,24 +731,16 @@ impl Page {
     fn poll(&mut self, ctx: &egui::Context) {
         self.poll_busy = true;
         self.last_poll = Instant::now();
-        let newest = self.events.iter().map(|e| e.time_ms).max().unwrap_or(0);
+        let newest = self
+            .events
+            .iter()
+            .map(|e| e.time_ms)
+            .max()
+            .unwrap_or(self.since_ms);
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let mut found = Vec::new();
-            for channel in source::CHANNELS {
-                let q = Query {
-                    channel: channel.to_string(),
-                    since_ms: newest,
-                    until_ms: None,
-                    levels: vec![1, 2, 3],
-                    max: 200,
-                    newest_first: true,
-                };
-                if let Ok(mut events) = WinEvents.query(&q) {
-                    found.append(&mut events);
-                }
-            }
-            let _ = tx.send(Msg::Polled(found));
+            let (found, statuses) = source::poll(&WinEvents, newest);
+            let _ = tx.send(Msg::Polled(found, statuses));
             ctx.request_repaint();
         });
     }
@@ -818,10 +814,22 @@ impl Page {
                     self.last_poll = Instant::now();
                     self.data_changed();
                 }
-                Msg::Polled(new) => {
+                Msg::Polled(new, statuses) => {
                     self.poll_busy = false;
-                    if !self.loading && merge_events(&mut self.events, new) > 0 {
-                        self.reanalyze(ctx);
+                    if !self.loading {
+                        for status in statuses.into_iter().filter(|s| !s.readable) {
+                            if let Some(previous) =
+                                self.statuses.iter_mut().find(|s| s.name == status.name)
+                            {
+                                previous.readable = false;
+                                previous.error = status.error;
+                            } else {
+                                self.statuses.push(status);
+                            }
+                        }
+                        if merge_events(&mut self.events, new) > 0 {
+                            self.reanalyze(ctx);
+                        }
                     }
                 }
                 Msg::Analyzed(analysis, n) => {
@@ -1580,7 +1588,7 @@ mod tests {
         assert!(coverage_line(std::slice::from_ref(&bad), 0).is_none());
         assert_eq!(
             unreadable_warnings(&[ok.clone(), bad.clone()]),
-            vec!["Windows did not let toolboks read the Application log."]
+            vec!["denied"]
         );
         assert!(no_crashes_text(std::slice::from_ref(&ok), 0).contains("since 2023-11-14"));
         assert!(
