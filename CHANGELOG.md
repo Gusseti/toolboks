@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-11-12
+
+### Added
+
+- Audio Gainer has a dedicated **Refresh microphones** button directly below the microphone selector.
+
+### Fixed
+
+- Opening or reopening Audio Gainer's microphone list now refreshes the available microphones before showing the choices, including when opened with the keyboard. The list does not repeatedly scan while left open.
+- Microphone-only refresh keeps the selected Windows audio endpoint across device reordering or renaming, without stopping active input/routes or resetting output choices. A removed or ambiguous endpoint is not silently replaced by another microphone.
+- Failed microphone scans keep the previous inventory and display a local retry message. An active microphone can still be disabled if its endpoint disappears from the list.
+- Built-in add-on versions and minimum host versions are synchronized with Toolboks 0.12.4.
+
+### Verification
+
+- Added focused pointer/keyboard, selection-preservation and failure/retry regression tests. The permanent testing report records results and remaining physical-device verification limits.
+
 ## [0.12.3] - 2026-11-12
 
 ### Changed
