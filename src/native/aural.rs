@@ -142,6 +142,42 @@ impl Device {
         let name = device.name().unwrap_or_else(|_| "Unnamed device".into());
         Self { device, name }
     }
+
+    fn same_endpoint(&self, other: &Self) -> bool {
+        #[cfg(windows)]
+        {
+            // CPAL's WASAPI equality compares IMMDevice endpoint IDs, not names.
+            #[allow(irrefutable_let_patterns)]
+            if let (
+                cpal::platform::DeviceInner::Wasapi(a),
+                cpal::platform::DeviceInner::Wasapi(b),
+            ) = (self.device.as_inner(), other.device.as_inner())
+            {
+                return a == b;
+            }
+        }
+        // Other backends expose no portable identity. Reconciliation below rejects
+        // ambiguous names rather than switching to an arbitrary microphone.
+        self.name == other.name
+    }
+}
+
+fn refreshed_selection<T>(
+    old: &[T],
+    selected: Option<usize>,
+    fresh: &[T],
+    same: impl Fn(&T, &T) -> bool,
+) -> Option<usize> {
+    let previous = old.get(selected?)?;
+    if old.iter().filter(|item| same(previous, item)).count() != 1 {
+        return None;
+    }
+    let mut matches = fresh
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| same(previous, item));
+    let index = matches.next()?.0;
+    matches.next().is_none().then_some(index)
 }
 
 fn virtual_cable(name: &str) -> bool {
@@ -164,6 +200,7 @@ pub(super) struct Aural {
     routes: [Option<Output>; 2],
     route_errors: [Option<String>; 2],
     message: Option<String>,
+    microphone_refresh_error: Option<String>,
     gain_db: f32,
     volume: f32,
     monitor_level: Arc<AtomicU32>,
@@ -185,6 +222,7 @@ impl Default for Aural {
             routes: [None, None],
             route_errors: [None, None],
             message: None,
+            microphone_refresh_error: None,
             gain_db: 0.0,
             volume: 50.0,
             monitor_level: Arc::new(AtomicU32::new(0.5_f32.to_bits())),
@@ -196,10 +234,42 @@ impl Default for Aural {
 }
 
 impl Aural {
+    fn refresh_microphones(&mut self) {
+        // Enumerate on demand with a fresh host. No cached device list or resident
+        // watcher is kept, and existing streams retain their original endpoints.
+        let host = cpal::default_host();
+        let devices = host
+            .input_devices()
+            .map(|devices| devices.map(Device::listed).collect())
+            .map_err(|error| format!("Could not refresh microphones: {error}. Try again."));
+        self.apply_microphone_refresh(devices);
+    }
+
+    fn apply_microphone_refresh(&mut self, devices: Result<Vec<Device>, String>) {
+        let fresh = match devices {
+            Ok(devices) => devices,
+            Err(error) => {
+                self.microphone_refresh_error = Some(error);
+                return;
+            }
+        };
+        let selected = refreshed_selection(
+            &self.inputs,
+            self.selected_input,
+            &fresh,
+            Device::same_endpoint,
+        );
+        self.microphone_refresh_error = (self.selected_input.is_some() && selected.is_none())
+            .then(|| "The selected microphone is unavailable. Choose a microphone.".into());
+        self.inputs = fresh;
+        self.selected_input = selected;
+    }
+
     fn refresh(&mut self) {
         self.cancel();
         self.loaded = true;
         self.message = None;
+        self.microphone_refresh_error = None;
         self.route_errors = [None, None];
         let host = cpal::default_host();
         let default_in = host.default_input_device().and_then(|d| d.name().ok());
@@ -361,7 +431,55 @@ fn picker(
     *selected != old
 }
 
+fn refreshing_picker(
+    ui: &mut egui::Ui,
+    id: &str,
+    label: String,
+    contents: impl FnOnce(&mut egui::Ui, bool) -> bool,
+) -> bool {
+    let enabled = ui.is_enabled();
+    let was_open = egui::ComboBox::is_open(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(id)));
+    egui::ComboBox::from_id_salt(id)
+        .width((ui.available_width() - 22.0).clamp(110.0, 260.0))
+        .selected_text(label)
+        .truncate()
+        .show_ui(ui, |ui| {
+            // The popup's initial sizing pass disables its child Ui, but opening
+            // still needs the fresh list. Only the parent control gates refresh.
+            let opening = enabled && !was_open;
+            contents(ui, opening)
+        })
+        .inner
+        .unwrap_or(false)
+}
+
 impl Aural {
+    fn microphone_picker(&mut self, ui: &mut egui::Ui) -> bool {
+        let label = self
+            .selected_input
+            .and_then(|index| self.inputs.get(index))
+            .map_or("Choose a microphone", |device| device.name.as_str())
+            .to_owned();
+        refreshing_picker(ui, "aural-input-picker", label, |ui, opening| {
+            if opening {
+                self.refresh_microphones();
+            }
+            let mut changed = false;
+            for (index, device) in self.inputs.iter().enumerate() {
+                changed |= ui
+                    .selectable_value(&mut self.selected_input, Some(index), &device.name)
+                    .changed();
+            }
+            if self.inputs.is_empty() {
+                muted(
+                    ui,
+                    "No microphones found. Connect one, then reopen this list.",
+                );
+            }
+            changed
+        })
+    }
+
     fn input_ui(&mut self, ui: &mut egui::Ui, interactive: bool) {
         tutorial::region(ui, "aural-input", |ui| {
             look::card(ui, ui.available_width(), 0.0, |ui| {
@@ -376,21 +494,21 @@ impl Aural {
                 );
                 ui.add_space(look::SPACE_M);
                 if ui
-                    .add_enabled_ui(interactive, |ui| {
-                        picker(
-                            ui,
-                            "aural-input-picker",
-                            &self.inputs,
-                            &mut self.selected_input,
-                            "Choose a microphone",
-                            |_| true,
-                        )
-                    })
+                    .add_enabled_ui(interactive, |ui| self.microphone_picker(ui))
                     .inner
                 {
                     self.cancel();
                     self.route_errors = [None, None];
                     self.message = None;
+                }
+                if ui
+                    .add_enabled(interactive, egui::Button::new("Refresh microphones"))
+                    .clicked()
+                {
+                    self.refresh_microphones();
+                }
+                if let Some(error) = self.microphone_refresh_error.as_deref() {
+                    muted(ui, error);
                 }
                 ui.add_space(look::SPACE_M);
                 ui.horizontal_wrapped(|ui| {
@@ -407,7 +525,10 @@ impl Aural {
                                 .fill(look::ACCENT);
                     }
                     if ui
-                        .add_enabled(interactive && self.selected_input.is_some(), button)
+                        .add_enabled(
+                            interactive && (live || self.selected_input.is_some()),
+                            button,
+                        )
                         .clicked()
                     {
                         if live {
@@ -432,7 +553,10 @@ impl Aural {
                         ),
                     );
                 } else if self.inputs.is_empty() {
-                    muted(ui, "Connect a microphone, then refresh devices.");
+                    muted(
+                        ui,
+                        "Connect a microphone, then open the list or refresh microphones.",
+                    );
                 }
                 ui.add_space(look::SPACE_M);
                 section(ui, "Input gain");
@@ -779,6 +903,162 @@ impl NativeAddon for Aural {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn picker_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        enabled: bool,
+        refreshes: &mut usize,
+    ) -> egui::Id {
+        let mut id = egui::Id::NULL;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(500.0, 400.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.add_enabled_ui(enabled, |ui| {
+                    id = ui.make_persistent_id(egui::IdSalt::new("refresh-test-picker"));
+                    refreshing_picker(
+                        ui,
+                        "refresh-test-picker",
+                        "Microphone".into(),
+                        |ui, opening| {
+                            if opening {
+                                *refreshes += 1;
+                            }
+                            ui.selectable_label(false, "Available microphone").clicked()
+                        },
+                    );
+                });
+            },
+        );
+        output.textures_delta.clear();
+        id
+    }
+
+    fn picker_pointer(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    fn picker_key(key: egui::Key) -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    #[test]
+    fn microphone_picker_refreshes_once_per_pointer_open_and_reopen() {
+        let ctx = egui::Context::default();
+        let mut refreshes = 0;
+        let id = picker_frame(&ctx, Vec::new(), true, &mut refreshes);
+        let center = ctx.read_response(id).unwrap().rect.center();
+        assert_eq!(refreshes, 0);
+        picker_frame(&ctx, picker_pointer(center, true), true, &mut refreshes);
+        picker_frame(&ctx, picker_pointer(center, false), true, &mut refreshes);
+        assert!(egui::ComboBox::is_open(&ctx, id));
+        assert_eq!(refreshes, 1);
+        for _ in 0..3 {
+            picker_frame(&ctx, Vec::new(), true, &mut refreshes);
+        }
+        assert_eq!(refreshes, 1, "an open list must not rescan every frame");
+        picker_frame(&ctx, picker_key(egui::Key::Escape), true, &mut refreshes);
+        assert!(!egui::ComboBox::is_open(&ctx, id));
+        picker_frame(&ctx, picker_pointer(center, true), true, &mut refreshes);
+        picker_frame(&ctx, picker_pointer(center, false), true, &mut refreshes);
+        assert!(egui::ComboBox::is_open(&ctx, id));
+        assert_eq!(refreshes, 2, "reopening must refresh the current inventory");
+    }
+
+    #[test]
+    fn microphone_picker_refreshes_on_keyboard_open_but_not_when_disabled() {
+        let ctx = egui::Context::default();
+        let mut refreshes = 0;
+        let id = picker_frame(&ctx, Vec::new(), true, &mut refreshes);
+        ctx.memory_mut(|memory| memory.request_focus(id));
+        picker_frame(&ctx, picker_key(egui::Key::Enter), true, &mut refreshes);
+        assert!(egui::ComboBox::is_open(&ctx, id));
+        assert_eq!(refreshes, 1);
+        picker_frame(&ctx, Vec::new(), true, &mut refreshes);
+        assert_eq!(refreshes, 1);
+        picker_frame(&ctx, picker_key(egui::Key::Escape), true, &mut refreshes);
+        picker_frame(&ctx, Vec::new(), false, &mut refreshes);
+        let center = ctx.read_response(id).unwrap().rect.center();
+        picker_frame(&ctx, picker_pointer(center, true), false, &mut refreshes);
+        picker_frame(&ctx, picker_pointer(center, false), false, &mut refreshes);
+        assert!(!egui::ComboBox::is_open(&ctx, id));
+        assert_eq!(refreshes, 1, "disabled controls must not enumerate devices");
+    }
+
+    #[test]
+    fn microphone_refresh_preserves_endpoint_identity_across_reorder_and_names() {
+        let old = [(10, "Microphone"), (20, "Microphone")];
+        let fresh = [(20, "Renamed microphone"), (30, "New"), (10, "Microphone")];
+        assert_eq!(
+            refreshed_selection(&old, Some(1), &fresh, |a, b| a.0 == b.0),
+            Some(0)
+        );
+        // A replacement with the same display name must not inherit selection.
+        assert_eq!(
+            refreshed_selection(&old, Some(1), &[(30, "Microphone")], |a, b| a.0 == b.0),
+            None
+        );
+    }
+
+    #[test]
+    fn microphone_refresh_requires_unambiguous_selection_without_endpoint_ids() {
+        let old = ["USB microphone", "USB microphone"];
+        assert_eq!(
+            refreshed_selection(&old, Some(0), &["USB microphone"], |a, b| a == b),
+            None
+        );
+        assert_eq!(
+            refreshed_selection(&["USB microphone"], Some(0), &old, |a, b| a == b),
+            None
+        );
+        assert_eq!(refreshed_selection(&old, None, &old, |a, b| a == b), None);
+    }
+
+    #[test]
+    fn microphone_refresh_failure_retains_state_and_retry_clears_only_refresh_error() {
+        let mut addon = Aural {
+            selected_outputs: [Some(2), Some(4)],
+            route_errors: [Some("Existing route error".into()), None],
+            message: Some("Existing audio error".into()),
+            ..Default::default()
+        };
+        addon.apply_microphone_refresh(Err("Enumeration unavailable".into()));
+        assert_eq!(
+            addon.microphone_refresh_error.as_deref(),
+            Some("Enumeration unavailable")
+        );
+        assert_eq!(addon.selected_outputs, [Some(2), Some(4)]);
+        addon.apply_microphone_refresh(Ok(Vec::new()));
+        assert!(addon.microphone_refresh_error.is_none());
+        assert_eq!(addon.message.as_deref(), Some("Existing audio error"));
+        assert_eq!(
+            addon.route_errors[0].as_deref(),
+            Some("Existing route error")
+        );
+        assert_eq!(addon.selected_outputs, [Some(2), Some(4)]);
+        assert!(!addon.loaded);
+    }
 
     #[test]
     fn gain_updates_the_stereo_peaks_and_latches_clipping() {
