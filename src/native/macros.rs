@@ -119,6 +119,63 @@ fn muted(ui: &mut egui::Ui, text: impl Into<String>) {
 fn heading(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).size(look::TEXT_SECTION).strong());
 }
+fn creation_icon(ui: &mut egui::Ui, accept: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(22.0, 28.0), egui::Sense::click());
+    let color = if response.hovered() {
+        if accept {
+            look::GREEN
+        } else {
+            look::RED
+        }
+    } else {
+        look::TEXT
+    };
+    let center = rect.center();
+    let stroke = egui::Stroke::new(1.8, color);
+    if accept {
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(-6.0, 0.0),
+                center + egui::vec2(-2.0, 4.0),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(-2.0, 4.0),
+                center + egui::vec2(6.0, -5.0),
+            ],
+            stroke,
+        );
+    } else {
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(-5.0, -5.0),
+                center + egui::vec2(5.0, 5.0),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(5.0, -5.0),
+                center + egui::vec2(-5.0, 5.0),
+            ],
+            stroke,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::Role::Button,
+            ui.is_enabled(),
+            if accept {
+                "Create macro"
+            } else {
+                "Cancel creation"
+            },
+        )
+    });
+    response
+}
 fn duration_text(ms: u64) -> String {
     if ms < 1000 {
         format!("{ms} ms")
@@ -136,6 +193,7 @@ fn button_name(button: MouseButton) -> &'static str {
 }
 fn action_name(action: &Action) -> String {
     match action {
+        Action::RecordedMovement { .. } => "Mouse movement".into(),
         Action::Key { vk, down } => format!(
             "{} {}",
             if *down { "Key down" } else { "Key up" },
@@ -272,40 +330,6 @@ impl MacroManager {
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
-        if let Some(mut name) = self.new_name.take() {
-            let mut create = false;
-            let mut cancel = false;
-            egui::Modal::new(egui::Id::unique("macro-add-name")).show(ctx, |ui| {
-                heading(ui, "Add name");
-                ui.label("Name your new macro.");
-                let response =
-                    ui.add(egui::TextEdit::singleline(&mut name).hint_text("Macro name"));
-                if self.focus_new_name {
-                    response.request_focus();
-                    self.focus_new_name = false;
-                }
-                ui.horizontal(|ui| {
-                    create = ui
-                        .add_enabled(!name.trim().is_empty(), egui::Button::new("Create macro"))
-                        .clicked()
-                        || (!name.trim().is_empty()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                    cancel = ui.button("Cancel").clicked()
-                        || ui.input(|i| i.key_pressed(egui::Key::Escape));
-                });
-            });
-            if create {
-                self.prefs.macros.push(Macro {
-                    name: name.trim().into(),
-                    ..Default::default()
-                });
-                self.prefs.selected = self.prefs.macros.len() - 1;
-                self.step = None;
-                self.pending_save = true;
-            } else if !cancel {
-                self.new_name = Some(name);
-            }
-        }
         if let Some(index) = self.confirm_delete {
             let name = self
                 .prefs
@@ -335,51 +359,70 @@ impl MacroManager {
             self.inspector(ui, editable);
             return;
         }
-        if self.prefs.macros.is_empty() {
-            heading(ui, "Macro settings");
-            muted(ui, "Create a macro to see its settings.");
-            ui.add_enabled(false, egui::Button::new("Play macro"));
-            ui.add_space(look::SPACE_M);
-            ui.add_enabled_ui(false, |ui| self.controls(ui, false));
+        look::card(ui, ui.available_width(), 0.0, |ui| {
+            let has_macro = !self.prefs.macros.is_empty();
+            heading(
+                ui,
+                self.prefs
+                    .macros
+                    .get(self.prefs.selected)
+                    .map_or("Macro settings", |m| m.name.as_str()),
+            );
+            if !has_macro {
+                muted(ui, "Create a macro to enable its controls.");
+            }
+            ui.separator();
+            self.controls(ui, interactive && has_macro);
+            ui.separator();
+            if ui
+                .add_enabled(editable && has_macro, egui::Button::new("Delete macro"))
+                .clicked()
+            {
+                self.confirm_delete = Some(self.prefs.selected);
+            }
+        });
+    }
+    fn inline_creation(&mut self, ui: &mut egui::Ui, editable: bool) {
+        let Some(mut name) = self.new_name.take() else {
+            if ui.add_enabled(editable, egui::Button::new("New")).clicked() {
+                self.new_name = Some(String::new());
+                self.focus_new_name = true;
+            }
+            return;
+        };
+        let mut create = false;
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut name)
+                    .hint_text("Give it a name")
+                    .desired_width((ui.available_width() - 56.0).max(70.0)),
+            );
+            if self.focus_new_name {
+                field.request_focus();
+                self.focus_new_name = false;
+            }
+            create = creation_icon(ui, true)
+                .on_hover_text("Create macro")
+                .clicked();
+            cancel = creation_icon(ui, false).on_hover_text("Cancel").clicked();
+            create |= ui.input(|i| i.key_pressed(egui::Key::Enter));
+            cancel |= ui.input(|i| i.key_pressed(egui::Key::Escape));
+        });
+        if cancel {
             return;
         }
-        heading(ui, &self.prefs.macros[self.prefs.selected].name);
-        let playing = self.engine.status().playing;
-        if ui
-            .add_enabled(
-                interactive && !self.engine.status().recording,
-                egui::Button::new(
-                    RichText::new(if playing {
-                        "Stop playback"
-                    } else {
-                        "Play macro"
-                    })
-                    .color(look::TEXT),
-                )
-                .fill(look::ACCENT),
-            )
-            .clicked()
-        {
-            if playing {
-                self.engine.stop();
-                self.playing_macro = None;
-            } else {
-                self.play();
-            }
+        if create && !name.trim().is_empty() {
+            self.prefs.macros.push(Macro {
+                name: name.trim().into(),
+                ..Default::default()
+            });
+            self.prefs.selected = self.prefs.macros.len() - 1;
+            self.step = None;
+            self.pending_save = true;
+        } else {
+            self.new_name = Some(name);
         }
-        ui.add_enabled(
-            editable,
-            egui::TextEdit::singleline(&mut self.prefs.macros[self.prefs.selected].name)
-                .desired_width(ui.available_width()),
-        );
-        if ui
-            .add_enabled(editable, egui::Button::new("Delete macro"))
-            .clicked()
-        {
-            self.confirm_delete = Some(self.prefs.selected);
-        }
-        ui.add_space(look::SPACE_M);
-        self.controls(ui, interactive);
     }
     pub(super) fn needs_background_preferences(
         prefs: &BTreeMap<String, serde_json::Value>,
@@ -454,7 +497,9 @@ impl MacroManager {
         }
         if !steps.is_empty() {
             let start = self.selected_macro().steps.len();
-            self.selected_macro().steps.extend(steps);
+            self.selected_macro()
+                .steps
+                .extend(engine::group_recorded_movements(steps));
             self.step = Some(start);
             self.pending_save = true;
         }
@@ -660,151 +705,181 @@ impl MacroManager {
             }
         }
     }
+    fn shortcut_control(&mut self, ui: &mut egui::Ui, record: bool, interactive: bool) {
+        muted(
+            ui,
+            if record {
+                "Record shortcut"
+            } else {
+                "Activation key"
+            },
+        );
+        let binding = if record {
+            self.prefs.record_hotkey
+        } else {
+            self.prefs
+                .macros
+                .get(self.prefs.selected)
+                .and_then(|m| m.activation_key)
+        };
+        let label = if self.shortcut_capture == Some(record) {
+            "Press shortcut…".into()
+        } else {
+            hotkey_text(&binding)
+        };
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(
+                    interactive && !self.engine.status().recording && !self.engine.status().playing,
+                    egui::Button::new(label).min_size(egui::vec2(130.0, 28.0)),
+                )
+                .clicked()
+            {
+                self.shortcut_capture = Some(record);
+                let _ = self.engine.configure_shortcuts(None, Vec::new());
+                self.configured_hotkeys = None;
+                if let Err(error) = self.engine.start_shortcut_capture() {
+                    self.shortcut_capture = None;
+                    self.message = Some(error);
+                    self.configure_hotkeys();
+                }
+            }
+            if binding.is_some()
+                && ui
+                    .add_enabled(interactive, egui::Button::new("Clear"))
+                    .clicked()
+            {
+                if record {
+                    self.prefs.record_hotkey = None;
+                } else if let Some(m) = self.prefs.macros.get_mut(self.prefs.selected) {
+                    m.activation_key = None;
+                }
+                self.configure_hotkeys();
+            }
+        });
+    }
     fn controls(&mut self, ui: &mut egui::Ui, interactive: bool) {
         tutorial::region(ui, "macro-recording", |ui| {
-            look::card(ui, ui.available_width(), 0.0, |ui| {
-                let status = self.engine.status();
-                ui.horizontal_wrapped(|ui| {
+            egui::CollapsingHeader::new("Record")
+                .id_salt("macro-record-section")
+                .default_open(true)
+                .show(ui, |ui| {
+                    let status = self.engine.status();
                     if ui
                         .add_enabled(
                             interactive && !status.playing,
                             egui::Button::new(if status.recording {
                                 "Stop recording"
                             } else {
-                                "Record"
-                            })
-                            .fill(look::ACCENT),
+                                "Start recording"
+                            }),
                         )
                         .clicked()
                     {
-                        self.record()
+                        self.record();
                     }
-                    ui.checkbox(&mut self.prefs.keys, "Keystrokes");
-                    ui.checkbox(&mut self.prefs.movement, "Movement");
-                    ui.checkbox(&mut self.prefs.clicks, "Clicks");
-                    ui.checkbox(&mut self.prefs.scroll, "Scroll");
-                    ui.separator();
-                    muted(ui, "Delays");
-                    for (mode, name) in [(0, "Recorded"), (1, "Fixed"), (2, "Custom")] {
-                        ui.selectable_value(&mut self.prefs.delay_mode, mode, name);
-                    }
-                    if self.prefs.delay_mode == 1 {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.prefs.default_delay)
-                                .desired_width(72.0),
-                        );
-                    }
+                    ui.add_enabled_ui(interactive && !status.recording && !status.playing, |ui| {
+                        egui::Grid::new("macro-record-inputs")
+                            .num_columns(2)
+                            .show(ui, |ui| {
+                                ui.checkbox(&mut self.prefs.keys, "Keystrokes");
+                                ui.checkbox(&mut self.prefs.movement, "Movement");
+                                ui.end_row();
+                                ui.checkbox(&mut self.prefs.clicks, "Clicks");
+                                ui.checkbox(&mut self.prefs.scroll, "Scroll");
+                                ui.end_row();
+                            });
+                        ui.add_space(look::SPACE_XS);
+                        muted(ui, "Delays");
+                        ui.horizontal_wrapped(|ui| {
+                            for (mode, label) in [(0, "Recorded"), (1, "Fixed"), (2, "Custom")] {
+                                ui.selectable_value(&mut self.prefs.delay_mode, mode, label);
+                            }
+                        });
+                        if self.prefs.delay_mode == 1 {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.prefs.default_delay)
+                                    .desired_width(100.0),
+                            );
+                        }
+                    });
+                    ui.add_space(look::SPACE_XS);
+                    self.shortcut_control(ui, true, interactive);
                     if status.recording {
                         muted(
                             ui,
                             format!("Recording · {} events · Esc stops", status.recorded_steps),
                         );
-                    } else {
-                        muted(ui, "Esc always stops");
                     }
                 });
-                if self.prefs.delay_mode == 2 {
-                    muted(ui, "Recorded delays remain editable for every step below.");
-                }
-            })
         });
-        ui.add_space(look::SPACE_M);
+        ui.separator();
         tutorial::region(ui, "macro-repeat", |ui| {
-            look::card(ui, ui.available_width(), 0.0, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    heading(ui, "Playback");
-                    ui.selectable_value(&mut self.prefs.repeat_mode, 0, "Once");
-                    ui.selectable_value(&mut self.prefs.repeat_mode, 1, "For duration");
-                    ui.selectable_value(&mut self.prefs.repeat_mode, 2, "Until stopped (toggle)");
-                    if self.prefs.repeat_mode != 0 {
-                        muted(ui, "Between repeats");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.prefs.repeat_delay)
-                                .desired_width(72.0),
-                        );
-                    }
-                    if self.prefs.repeat_mode == 1 {
-                        muted(ui, "Run for");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.prefs.run_duration)
-                                .desired_width(72.0),
-                        );
-                    }
-                });
-                ui.horizontal_wrapped(|ui| {
-                    for record in [true, false] {
-                        muted(
-                            ui,
-                            if record {
-                                "Record shortcut"
-                            } else {
-                                "This macro's activation key"
-                            },
-                        );
-                        let binding = if record {
-                            self.prefs.record_hotkey
-                        } else {
-                            self.prefs
-                                .macros
-                                .get(self.prefs.selected)
-                                .and_then(|m| m.activation_key)
-                        };
-                        let label = if self.shortcut_capture == Some(record) {
-                            "Press shortcut…".into()
-                        } else {
-                            hotkey_text(&binding)
-                        };
-                        if ui
-                            .add_enabled(
-                                interactive
-                                    && !self.engine.status().recording
-                                    && !self.engine.status().playing,
-                                egui::Button::new(label),
+            egui::CollapsingHeader::new("Playback")
+                .id_salt("macro-playback-section")
+                .default_open(true)
+                .show(ui, |ui| {
+                    let playing = self.engine.status().playing;
+                    if ui
+                        .add_enabled(
+                            interactive && !self.engine.status().recording,
+                            egui::Button::new(
+                                RichText::new(if playing {
+                                    "Stop playback"
+                                } else {
+                                    "Play macro"
+                                })
+                                .color(look::TEXT),
                             )
-                            .clicked()
-                        {
-                            self.shortcut_capture = Some(record);
-                            let _ = self.engine.configure_shortcuts(None, Vec::new());
-                            self.configured_hotkeys = None;
-                            if let Err(error) = self.engine.start_shortcut_capture() {
-                                self.shortcut_capture = None;
-                                self.message = Some(error);
-                                self.configure_hotkeys();
-                            }
-                        }
-                        if binding.is_some()
-                            && ui
-                                .add_enabled(
-                                    interactive,
-                                    egui::Button::new(if record {
-                                        "Clear record key"
-                                    } else {
-                                        "Clear activation key"
-                                    }),
-                                )
-                                .clicked()
-                        {
-                            if record {
-                                self.prefs.record_hotkey = None
-                            } else {
-                                self.selected_macro().activation_key = None
-                            };
-                            self.configure_hotkeys();
+                            .fill(look::ACCENT),
+                        )
+                        .clicked()
+                    {
+                        if playing {
+                            self.engine.stop();
+                            self.playing_macro = None;
+                        } else {
+                            self.play();
                         }
                     }
+                    ui.add_enabled_ui(
+                        interactive && !playing && !self.engine.status().recording,
+                        |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.selectable_value(&mut self.prefs.repeat_mode, 0, "Once");
+                                ui.selectable_value(&mut self.prefs.repeat_mode, 1, "For duration");
+                                ui.selectable_value(
+                                    &mut self.prefs.repeat_mode,
+                                    2,
+                                    "Until stopped",
+                                );
+                            });
+                            if self.prefs.repeat_mode != 0 {
+                                muted(ui, "Delay between repeats");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.prefs.repeat_delay)
+                                        .desired_width(100.0),
+                                );
+                            }
+                            if self.prefs.repeat_mode == 1 {
+                                muted(ui, "Run for");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.prefs.run_duration)
+                                        .desired_width(100.0),
+                                );
+                            }
+                        },
+                    );
+                    ui.add_space(look::SPACE_XS);
+                    self.shortcut_control(ui, false, interactive);
                 });
-            })
         });
     }
     fn library(&mut self, ui: &mut egui::Ui, editable: bool) {
         look::card(ui, ui.available_width(), 0.0, |ui| {
-            ui.horizontal(|ui| {
-                heading(ui, "Macros");
-                if ui.add_enabled(editable, egui::Button::new("New")).clicked() {
-                    self.new_name = Some(String::new());
-                    self.focus_new_name = true;
-                }
-            });
+            heading(ui, "Macros");
+            self.inline_creation(ui, editable);
+            ui.add_space(look::SPACE_XS);
             let names = self
                 .prefs
                 .macros
@@ -953,20 +1028,41 @@ impl MacroManager {
         });
     }
     fn canvas(&mut self, ui: &mut egui::Ui, editable: bool) {
+        let recorded = self.selected_step().and_then(|s| match &s.action {
+            Action::RecordedMovement { samples } => {
+                Some(samples.iter().map(|s| s.point).collect::<Vec<_>>())
+            }
+            _ => None,
+        });
         tutorial::region(ui, "macro-mouse", |ui| {
             look::card(ui, ui.available_width(), 0.0, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    heading(ui, "Mouse path");
-                    ui.selectable_value(&mut self.tool, CanvasTool::Select, "Select");
-                    ui.selectable_value(&mut self.tool, CanvasTool::Draw, "Draw path");
-                    ui.selectable_value(&mut self.tool, CanvasTool::Click, "Add click");
+                    heading(
+                        ui,
+                        if recorded.is_some() {
+                            "Mouse movement"
+                        } else {
+                            "Mouse path"
+                        },
+                    );
+                    if recorded.is_none() {
+                        ui.selectable_value(&mut self.tool, CanvasTool::Select, "Select");
+                        ui.selectable_value(&mut self.tool, CanvasTool::Draw, "Draw path");
+                        ui.selectable_value(&mut self.tool, CanvasTool::Click, "Add click");
+                    }
                 });
                 let bounds = virtual_screen();
                 muted(
                     ui,
                     format!(
-                        "{} × {} desktop · Click to place points; drag to adjust",
-                        bounds[2], bounds[3]
+                        "{} × {} desktop · {}",
+                        bounds[2],
+                        bounds[3],
+                        if recorded.is_some() {
+                            "Recorded mouse movements are not editable"
+                        } else {
+                            "Click to place points; drag to adjust"
+                        }
                     ),
                 );
                 let (rect, response) = ui.allocate_exact_size(
@@ -1002,6 +1098,18 @@ impl MacroManager {
                         + ((p.y - rect.top()) / rect.height() * bounds[3] as f32).round() as i32,
                 };
                 let tool = &self.tool;
+                if let Some(points) = &recorded {
+                    for segment in points.windows(2) {
+                        painter.line_segment(
+                            [to_canvas(&segment[0]), to_canvas(&segment[1])],
+                            egui::Stroke::new(2.0, look::ACCENT),
+                        );
+                    }
+                    for point in [points.first(), points.last()].into_iter().flatten() {
+                        painter.circle_filled(to_canvas(point), 3.0, look::TEXT);
+                    }
+                    return;
+                }
                 let drag = &mut self.drag_point;
                 let selected = self.prefs.selected;
                 let step = self.step;
@@ -1098,7 +1206,27 @@ impl MacroManager {
         });
     }
     fn timing(&mut self, ui: &mut egui::Ui, editable: bool) {
+        let recorded = self.selected_step().and_then(|s| match &s.action {
+            Action::RecordedMovement { samples } => {
+                Some(samples.iter().map(|s| s.delay_ms).sum::<u64>())
+            }
+            _ => None,
+        });
         look::card(ui, ui.available_width(), 0.0, |ui| {
+            if let Some(duration) = recorded {
+                heading(ui, "Recorded movement");
+                muted(
+                    ui,
+                    "The captured timing and trajectory play back as recorded.",
+                );
+                ui.label(format!("Duration: {} - Read-only", duration_text(duration)));
+                return;
+            }
+            let current = self.selected_step().and_then(|s| match s.action {
+                Action::Path { duration_ms, .. } => Some(duration_ms),
+                _ => None,
+            });
+            let mut duration = current.unwrap_or(0);
             ui.horizontal_wrapped(|ui| {
                 heading(ui, "Movement timing");
                 if ui.selectable_label(!self.seconds, "Milliseconds").clicked() {
@@ -1109,75 +1237,121 @@ impl MacroManager {
                     self.seconds = true;
                     self.timing_text.clear();
                 }
-            });
-            let scope = if self.seconds {
-                TimingScope::Seconds
-            } else {
-                TimingScope::Milliseconds
-            };
-            let seconds = self.seconds;
-            if let Some(Step {
-                action: Action::Path { duration_ms, .. },
-                ..
-            }) = self.selected_step()
-            {
-                let scale = if seconds { 1000.0 } else { 1.0 };
-                let maximum = if seconds { 10.0 } else { 1000.0 };
-                let mut value = *duration_ms as f64 / scale;
-                if ui
-                    .add_enabled(
-                        editable,
-                        egui::Slider::new(&mut value, 0.0..=maximum)
-                            .suffix(if seconds { " s" } else { " ms" })
-                            .max_decimals(if seconds { 3 } else { 0 })
-                            .clamping(egui::SliderClamping::Edits),
-                    )
-                    .changed()
-                {
-                    *duration_ms = (value * scale).round() as u64;
+                let id = ui.make_persistent_id("movement-duration-value");
+                if !ui.memory(|m| m.has_focus(id)) && self.timing_text.is_empty() {
+                    self.timing_text = if self.seconds {
+                        format!("{:.2} s", duration as f64 / 1000.0)
+                    } else {
+                        format!("{duration} ms")
+                    };
                 }
-                let width = ui.available_width();
-                let (r, _) = ui.allocate_exact_size(egui::vec2(width, 15.0), egui::Sense::hover());
-                for i in 0..=10 {
-                    let x = r.left() + r.width() * i as f32 / 10.0;
-                    ui.painter().text(
-                        egui::pos2(x, r.top()),
-                        egui::Align2::CENTER_TOP,
-                        format!("{}", if seconds { i } else { i * 100 }),
-                        egui::FontId::proportional(10.0),
-                        look::MUTED,
-                    );
-                }
-            } else {
-                muted(ui, "Select a mouse path to set its duration.");
-            }
-            ui.horizontal(|ui| {
-                muted(ui, "Custom timing");
                 let response = ui.add_enabled(
-                    editable,
+                    editable && current.is_some(),
                     egui::TextEdit::singleline(&mut self.timing_text)
-                        .hint_text(if self.seconds {
-                            "2.5s or 2.5 sec"
-                        } else {
-                            "250ms"
-                        })
-                        .desired_width(110.0),
+                        .id(id)
+                        .desired_width(75.0),
                 );
-                if response.lost_focus() && !self.timing_text.trim().is_empty() {
-                    match engine::parse_timing(&self.timing_text, scope) {
-                        Ok(value) => {
-                            if let Some(Step {
-                                action: Action::Path { duration_ms, .. },
-                                ..
-                            }) = self.selected_step()
-                            {
-                                *duration_ms = value;
-                            }
-                        }
+                if response.lost_focus()
+                    || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                {
+                    match engine::parse_timing(
+                        &self.timing_text,
+                        if self.seconds {
+                            TimingScope::Seconds
+                        } else {
+                            TimingScope::Milliseconds
+                        },
+                    ) {
+                        Ok(value) => duration = value,
                         Err(error) => self.message = Some(error),
                     }
                 }
+                if !response.has_focus() {
+                    self.timing_text = if self.seconds {
+                        format!("{:.2} s", duration as f64 / 1000.0)
+                    } else {
+                        format!("{duration} ms")
+                    };
+                }
             });
+            let maximum = if self.seconds { 10_000_u64 } else { 1_000 };
+            let (rect, response) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), 48.0),
+                egui::Sense::click_and_drag(),
+            );
+            let left = rect.left() + 8.0;
+            let right = rect.right() - 8.0;
+            let y = rect.top() + 13.0;
+            let enabled = editable && current.is_some() && ui.is_enabled();
+            if enabled && (response.clicked() || response.dragged()) {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let ratio = ((pos.x - left) / (right - left).max(1.0)).clamp(0.0, 1.0);
+                    let tick = (ratio * 10.0).round();
+                    duration = if response.clicked()
+                        && (pos.x - (left + (right - left) * tick / 10.0)).abs() <= 8.0
+                    {
+                        maximum * tick as u64 / 10
+                    } else {
+                        (ratio * maximum as f32).round() as u64
+                    };
+                    self.timing_text.clear();
+                    response.request_focus();
+                }
+            }
+            if enabled && response.has_focus() {
+                let delta = ui.input(|i| {
+                    i.key_pressed(egui::Key::ArrowRight) as i32
+                        - i.key_pressed(egui::Key::ArrowLeft) as i32
+                });
+                if delta != 0 {
+                    duration = (duration as i64 + delta as i64 * if self.seconds { 10 } else { 1 })
+                        .clamp(0, maximum as i64) as u64;
+                    self.timing_text.clear();
+                }
+            }
+            ui.painter().line_segment(
+                [egui::pos2(left, y), egui::pos2(right, y)],
+                egui::Stroke::new(5.0, look::BORDER),
+            );
+            let handle_x =
+                left + (right - left) * (duration as f32 / maximum as f32).clamp(0.0, 1.0);
+            if current.is_some() {
+                ui.painter().line_segment(
+                    [egui::pos2(left, y), egui::pos2(handle_x, y)],
+                    egui::Stroke::new(5.0, look::ACCENT),
+                );
+            }
+            for i in 0..=10 {
+                let x = left + (right - left) * i as f32 / 10.0;
+                ui.painter()
+                    .circle_filled(egui::pos2(x, y), 3.0, look::MUTED);
+                ui.painter().text(
+                    egui::pos2(x, rect.top() + 28.0),
+                    egui::Align2::CENTER_TOP,
+                    format!("{}", if self.seconds { i } else { i * 100 }),
+                    egui::FontId::proportional(10.0),
+                    look::MUTED,
+                );
+            }
+            ui.painter()
+                .circle_filled(egui::pos2(handle_x, y), 6.0, look::WINDOW_BG);
+            ui.painter().circle_stroke(
+                egui::pos2(handle_x, y),
+                6.0,
+                egui::Stroke::new(1.0, look::TEXT),
+            );
+            if current.is_none() {
+                muted(ui, "Select a mouse path to set its duration.");
+            }
+            if current.is_some() && editable {
+                if let Some(Step {
+                    action: Action::Path { duration_ms, .. },
+                    ..
+                }) = self.selected_step()
+                {
+                    *duration_ms = duration;
+                }
+            }
         });
     }
     fn inspector(&mut self, ui: &mut egui::Ui, editable: bool) {
@@ -1204,6 +1378,13 @@ impl MacroManager {
                                 .suffix(" ms"),
                         );
                         match &mut step.action {
+                            Action::RecordedMovement { samples } => {
+                                muted(ui, "Recorded mouse movements are not editable");
+                                ui.label(format!(
+                                    "Duration: {}",
+                                    duration_text(samples.iter().map(|s| s.delay_ms).sum())
+                                ));
+                            }
                             Action::Path {
                                 duration_ms,
                                 points,
@@ -1323,6 +1504,13 @@ impl NativeAddon for MacroManager {
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
             {
                 self.prefs = saved;
+            }
+        }
+        for m in &mut self.prefs.macros {
+            let grouped = engine::group_recorded_movements(m.steps.clone());
+            if grouped != m.steps {
+                m.steps = grouped;
+                self.pending_save = true;
             }
         }
         if !self.prefs.macros.is_empty() {
@@ -1466,6 +1654,139 @@ impl NativeAddon for MacroManager {
 #[cfg(test)]
 mod smoke_tests {
     use super::*;
+    #[test]
+    fn inline_macro_creation_accepts_enter_and_escape_cancels() {
+        let ctx = egui::Context::default();
+        look::apply_style(&ctx);
+        let mut manager = MacroManager {
+            new_name: Some("  My routine  ".into()),
+            ..Default::default()
+        };
+        for key in [egui::Key::Enter, egui::Key::Escape] {
+            if key == egui::Key::Escape {
+                manager.new_name = Some("Cancelled".into());
+            }
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ui| manager.inline_creation(ui, true),
+            );
+            output.textures_delta.clear();
+            assert!(manager.new_name.is_none());
+            assert_eq!(manager.prefs.macros.len(), 1);
+            assert_eq!(manager.prefs.macros[0].name, "My routine");
+        }
+    }
+    #[test]
+    fn timing_checkpoint_ten_sets_exactly_ten_seconds() {
+        let ctx = egui::Context::default();
+        look::apply_style(&ctx);
+        let mut manager = MacroManager::default();
+        manager.prefs.macros.push(Macro {
+            name: "Path".into(),
+            steps: vec![Step {
+                delay_ms: 0,
+                action: Action::Path {
+                    points: vec![],
+                    duration_ms: 1000,
+                    clicks: vec![],
+                },
+            }],
+            ..Default::default()
+        });
+        manager.step = Some(0);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| manager.timing(ui, true));
+        let endpoint = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Circle(circle) if circle.radius == 3.0 => Some(circle.center),
+                _ => None,
+            })
+            .max_by(|a, b| a.x.total_cmp(&b.x))
+            .expect("ten-second dot");
+        output.textures_delta.clear();
+        for pressed in [true, false] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(endpoint),
+                        egui::Event::PointerButton {
+                            pos: endpoint,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| manager.timing(ui, true),
+            );
+            output.textures_delta.clear();
+        }
+        assert!(matches!(
+            manager.prefs.macros[0].steps[0].action,
+            Action::Path {
+                duration_ms: 10_000,
+                ..
+            }
+        ));
+    }
+    #[test]
+    fn recorded_movement_view_has_no_path_edit_controls() {
+        let ctx = egui::Context::default();
+        look::apply_style(&ctx);
+        let mut manager = MacroManager::default();
+        manager.prefs.macros.push(Macro {
+            name: "Recorded".into(),
+            steps: engine::group_recorded_movements(vec![
+                Step {
+                    delay_ms: 0,
+                    action: Action::Move { x: 20, y: 30 },
+                },
+                Step {
+                    delay_ms: 40,
+                    action: Action::Move { x: 80, y: 90 },
+                },
+            ]),
+            ..Default::default()
+        });
+        manager.step = Some(0);
+        let before = manager.prefs.macros[0].clone();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            manager.canvas(ui, true);
+            manager.timing(ui, true);
+            manager.inspector(ui, true);
+        });
+        let labels = output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some(t.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(labels.contains("Recorded mouse movements are not editable"));
+        for absent in [
+            "Draw path",
+            "Add click",
+            "Remove last point",
+            "Custom timing",
+        ] {
+            assert!(!labels.contains(absent));
+        }
+        assert_eq!(manager.prefs.macros[0], before);
+        output.textures_delta.clear();
+    }
     #[test]
     fn empty_library_and_deleting_last_macro_stay_empty_after_save_and_render() {
         let mut manager = MacroManager {

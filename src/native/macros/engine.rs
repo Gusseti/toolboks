@@ -36,6 +36,41 @@ pub struct Point {
     pub y: i32,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MovementSample {
+    pub point: Point,
+    pub delay_ms: u64,
+}
+pub fn group_recorded_movements(steps: Vec<Step>) -> Vec<Step> {
+    let mut grouped: Vec<Step> = Vec::new();
+    for step in steps {
+        if let Action::Move { x, y } = step.action {
+            if let Some(Step {
+                action: Action::RecordedMovement { samples },
+                ..
+            }) = grouped.last_mut()
+            {
+                samples.push(MovementSample {
+                    point: Point { x, y },
+                    delay_ms: step.delay_ms,
+                });
+            } else {
+                grouped.push(Step {
+                    delay_ms: step.delay_ms,
+                    action: Action::RecordedMovement {
+                        samples: vec![MovementSample {
+                            point: Point { x, y },
+                            delay_ms: 0,
+                        }],
+                    },
+                });
+            }
+        } else {
+            grouped.push(step);
+        }
+    }
+    grouped
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PathClick {
     pub point_index: usize,
     pub button: MouseButton,
@@ -43,6 +78,9 @@ pub struct PathClick {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
+    RecordedMovement {
+        samples: Vec<MovementSample>,
+    },
     Key {
         vk: u16,
         down: bool,
@@ -881,6 +919,14 @@ unsafe fn run_worker(
                             }
                         }
                         Action::Move { x, y } => move_to(Point { x: *x, y: *y })?,
+                        Action::RecordedMovement { samples } => {
+                            for sample in samples {
+                                if !wait(sample.delay_ms, &cancel, deadline) {
+                                    break 'runs;
+                                }
+                                move_to(sample.point)?;
+                            }
+                        }
                         Action::Button { button: b, down } => {
                             button(*b, *down)?;
                             if *down {
@@ -1015,6 +1061,60 @@ unsafe fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recorded_movement_groups_preserve_samples_timing_and_action_order() {
+        let steps = vec![
+            Step {
+                delay_ms: 40,
+                action: Action::Move { x: 10, y: 20 },
+            },
+            Step {
+                delay_ms: 7,
+                action: Action::Move { x: 30, y: 40 },
+            },
+            Step {
+                delay_ms: 11,
+                action: Action::Button {
+                    button: MouseButton::Left,
+                    down: true,
+                },
+            },
+            Step {
+                delay_ms: 5,
+                action: Action::Move { x: 50, y: 60 },
+            },
+            Step {
+                delay_ms: 9,
+                action: Action::Move { x: 70, y: 80 },
+            },
+        ];
+        let grouped = group_recorded_movements(steps.clone());
+        assert_eq!(grouped.len(), 3);
+        assert_eq!(grouped[0].delay_ms, 40);
+        assert_eq!(grouped[1], steps[2]);
+        let mut expanded = Vec::new();
+        for step in &grouped {
+            if let Action::RecordedMovement { samples } = &step.action {
+                for (index, sample) in samples.iter().enumerate() {
+                    expanded.push(Step {
+                        delay_ms: sample.delay_ms + if index == 0 { step.delay_ms } else { 0 },
+                        action: Action::Move {
+                            x: sample.point.x,
+                            y: sample.point.y,
+                        },
+                    });
+                }
+            } else {
+                expanded.push(step.clone());
+            }
+        }
+        assert_eq!(expanded, steps);
+        assert_eq!(group_recorded_movements(grouped.clone()), grouped);
+        assert_eq!(
+            serde_json::from_str::<Vec<Step>>(&serde_json::to_string(&grouped).unwrap()).unwrap(),
+            grouped
+        );
+    }
     #[test]
     fn shortcut_assignment_waits_through_modifiers_and_keeps_first_key() {
         let mut shared = Shared {
