@@ -24,4 +24,6 @@ The recording shortcut remains shared. Esc is reserved for stopping; shortcuts m
 
 Shortcut assignment uses the native Windows key, so `Keypad 4` and top-row `4` stay separate. Reassign any keypad shortcut saved by an older build, which stored it as a top-row number. With Num Lock off, Windows reports keypad navigation keys instead of numbers.
 
+Click the shortcut button, then press your key or combination. Assignment has no timeout: Ctrl, Shift, Alt and Windows alone keep it waiting, and the first non-modifier key completes the combination. Esc cancels. Fn is generally handled by keyboard firmware and is not exposed as an independent Windows modifier.
+
 Macros and preferences are stored locally with the add-on's namespaced preferences. Playback sends real input to the active Windows desktop; Windows may reject input to an application with higher privileges. Stop releases keys/buttons held by playback.

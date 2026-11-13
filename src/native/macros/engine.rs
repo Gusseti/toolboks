@@ -171,6 +171,9 @@ struct Worker {
 }
 impl Shared {
     fn capture_key(&mut self, vk: u32, modifiers: u32) {
+        if !self.capture_shortcut || control_key(vk as u16) {
+            return;
+        }
         self.captured_shortcut = Some(Hotkey { vk, modifiers });
         self.capture_shortcut = false;
     }
@@ -1012,6 +1015,30 @@ unsafe fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shortcut_assignment_waits_through_modifiers_and_keeps_first_key() {
+        let mut shared = Shared {
+            capture_shortcut: true,
+            ..Default::default()
+        };
+        for vk in [
+            0x10, 0x11, 0x12, 0x5b, 0x5c, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5,
+        ] {
+            shared.capture_key(vk, 0);
+            assert!(shared.capture_shortcut);
+            assert!(shared.captured_shortcut.is_none());
+        }
+        shared.capture_key(0x64, 6);
+        shared.capture_key(0x35, 0);
+        assert_eq!(
+            shared.captured_shortcut,
+            Some(Hotkey {
+                vk: 0x64,
+                modifiers: 6
+            })
+        );
+        assert!(!shared.capture_shortcut);
+    }
     #[test]
     #[ignore = "requires an interactive Windows desktop"]
     fn windows_shortcut_assignment_captures_keypad_without_blocking() {
