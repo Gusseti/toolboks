@@ -15,7 +15,7 @@
 
 - Macro Manager uses one unified options bar with collapsible Record and Playback sections. Selecting a step shows its settings instead; the rename field is removed.
 - Record Mouse captures movement, mouse buttons and wheel activity, including over Toolboks. Record keystrokes captures keyboard input separately; recording checkboxes are removed. The recording shortcut uses the most recently chosen recording mode. Only clicks on the mouse recorder's Stop button are excluded from mouse recordings.
-- Editor proportions and section headings more closely follow the approved design; shortcut controls fill the wider options bar and the editable movement duration sits at the right of its header.
+- Macro Manager follows the approved editor layout: aligned full-height library and options panels, quiet full-width macro rows, spaced step controls, a separate canvas toolbar, and a full-width timing track with an editable duration. Record and Playback expand without indenting their controls; recorded paths show labelled start and end points.
 - New macro creation happens inline: Give it a name, confirm with the checkmark or Enter, or cancel with X or Escape. White icons turn green or red on hover.
 - Consecutive recorded mouse movements become one read-only Mouse movement step, with its full trajectory displayed. Coordinates, timing and input order are preserved, including older recordings grouped on load. Grouped recordings use a new local action format that older builds cannot read.
 - The steps list, mouse editor, timing and macro controls remain visible with disabled actions when the library is empty, including after deleting its last macro.
