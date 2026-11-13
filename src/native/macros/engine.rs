@@ -232,6 +232,9 @@ pub struct Engine {
     event_waker: Arc<Mutex<Option<Box<dyn Fn() + Send>>>>,
 }
 impl Engine {
+    pub fn set_mouse_exclusion(&mut self, rect: Option<[i32; 4]>) {
+        self.shared.lock().unwrap().options.ignore_rect = rect;
+    }
     pub fn set_event_waker(&mut self, wake: impl Fn() + Send + 'static) {
         let mut current = self.event_waker.lock().unwrap();
         if current.is_none() {
@@ -549,7 +552,6 @@ unsafe extern "system" {
     fn GetAsyncKeyState(vk: i32) -> i16;
     fn GetForegroundWindow() -> isize;
     fn GetWindowThreadProcessId(window: isize, process: *mut u32) -> u32;
-    fn WindowFromPoint(point: WinPoint) -> isize;
 }
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -668,92 +670,85 @@ unsafe extern "system" fn keyboard(code: i32, wp: usize, lp: isize) -> isize {
     }
     CallNextHookEx(0, code, wp, lp)
 }
+fn record_mouse_event(s: &mut Shared, message: usize, point: Point, data: u32) {
+    if !s.status.recording {
+        return;
+    }
+    let inside_control = s
+        .options
+        .ignore_rect
+        .is_some_and(|r| point.x >= r[0] && point.y >= r[1] && point.x < r[2] && point.y < r[3]);
+    let button = match message {
+        0x201 | 0x202 => Some(MouseButton::Left),
+        0x204 | 0x205 => Some(MouseButton::Right),
+        0x207 | 0x208 => Some(MouseButton::Middle),
+        0x20b | 0x20c => Some(if data >> 16 == 1 {
+            MouseButton::X1
+        } else {
+            MouseButton::X2
+        }),
+        _ => None,
+    };
+    if let Some(button) = button {
+        let down = matches!(message, 0x201 | 0x204 | 0x207 | 0x20b);
+        if down && inside_control {
+            s.suppressed_buttons.insert(button);
+            return;
+        }
+        if !down && s.suppressed_buttons.remove(&button) {
+            return;
+        }
+        if s.options.mouse_buttons && (down || s.buttons.contains(&button)) {
+            if s.options.mouse_movement {
+                record(
+                    s,
+                    Action::Move {
+                        x: point.x,
+                        y: point.y,
+                    },
+                );
+            }
+            if down {
+                s.buttons.insert(button);
+            } else {
+                s.buttons.remove(&button);
+            }
+            record(s, Action::Button { button, down });
+        }
+    } else {
+        match message {
+            0x200 if s.options.mouse_movement => record(
+                s,
+                Action::Move {
+                    x: point.x,
+                    y: point.y,
+                },
+            ),
+            0x20a | 0x20e if s.options.mouse_scroll => record(
+                s,
+                Action::Scroll {
+                    delta: (data >> 16) as i16 as i32,
+                    horizontal: message == 0x20e,
+                },
+            ),
+            _ => {}
+        }
+    }
+}
 unsafe extern "system" fn mouse(code: i32, wp: usize, lp: isize) -> isize {
     if code >= 0 {
         let data = &*(lp as *const MouseHook);
         if data.flags & 1 == 0 {
             if let Some(hook) = HOOK.lock().unwrap().as_ref() {
-                let mut s = hook.shared.lock().unwrap();
-                if s.status.recording {
-                    let mut point_process = 0;
-                    let own_window =
-                        GetWindowThreadProcessId(WindowFromPoint(data.point), &mut point_process)
-                            != 0
-                            && point_process == GetCurrentProcessId();
-                    let inside = own_window
-                        || s.options.ignore_rect.is_some_and(|r| {
-                            data.point.x >= r[0]
-                                && data.point.y >= r[1]
-                                && data.point.x < r[2]
-                                && data.point.y < r[3]
-                        });
-                    let button = match wp {
-                        0x201 | 0x202 => Some(MouseButton::Left),
-                        0x204 | 0x205 => Some(MouseButton::Right),
-                        0x207 | 0x208 => Some(MouseButton::Middle),
-                        0x20b | 0x20c => Some(if data.data >> 16 == 1 {
-                            MouseButton::X1
-                        } else {
-                            MouseButton::X2
-                        }),
-                        _ => None,
-                    };
-                    if let Some(button) = button {
-                        let down = matches!(wp, 0x201 | 0x204 | 0x207 | 0x20b);
-                        if inside && down {
-                            s.suppressed_buttons.insert(button);
-                        }
-                        let suppressed = s.suppressed_buttons.contains(&button);
-                        if !down {
-                            s.suppressed_buttons.remove(&button);
-                        }
-                        // Pair an outside press even if its release lands over Toolboks.
-                        if inside && !down && !suppressed && s.buttons.remove(&button) {
-                            record(
-                                &mut s,
-                                Action::Button {
-                                    button,
-                                    down: false,
-                                },
-                            );
-                        }
-                        if !inside && !suppressed && s.options.mouse_buttons {
-                            if s.options.mouse_movement {
-                                record(
-                                    &mut s,
-                                    Action::Move {
-                                        x: data.point.x,
-                                        y: data.point.y,
-                                    },
-                                );
-                            }
-                            if down {
-                                s.buttons.insert(button);
-                                record(&mut s, Action::Button { button, down });
-                            } else if s.buttons.remove(&button) {
-                                record(&mut s, Action::Button { button, down });
-                            }
-                        }
-                    } else if !inside {
-                        match wp {
-                            0x200 if s.options.mouse_movement => record(
-                                &mut s,
-                                Action::Move {
-                                    x: data.point.x,
-                                    y: data.point.y,
-                                },
-                            ),
-                            0x20a | 0x20e if s.options.mouse_scroll => record(
-                                &mut s,
-                                Action::Scroll {
-                                    delta: (data.data >> 16) as i16 as i32,
-                                    horizontal: wp == 0x20e,
-                                },
-                            ),
-                            _ => {}
-                        }
-                    }
-                }
+                record_mouse_event(
+                    &mut hook.shared.lock().unwrap(),
+                    wp,
+                    Point {
+                        x: data.point.x,
+                        y: data.point.y,
+                    },
+                    data.data,
+                );
             }
         }
     }
@@ -1061,6 +1056,48 @@ unsafe fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mouse_records_app_content_and_excludes_only_stop_clicks() {
+        let mut shared = Shared::default();
+        shared.status.recording = true;
+        shared.options = RecordOptions {
+            keys: false,
+            ignore_rect: Some([100, 100, 180, 130]),
+            ..Default::default()
+        };
+        // Content position, including when that position belongs to Toolboks.
+        let point = Point { x: 300, y: 400 };
+        for message in [0x200, 0x201, 0x202, 0x20a] {
+            record_mouse_event(&mut shared, message, point, 120 << 16);
+        }
+        assert!(shared
+            .steps
+            .iter()
+            .any(|s| matches!(s.action, Action::Move { x: 300, y: 400 })));
+        assert!(shared
+            .steps
+            .iter()
+            .any(|s| matches!(s.action, Action::Button { down: true, .. })));
+        assert!(shared
+            .steps
+            .iter()
+            .any(|s| matches!(s.action, Action::Button { down: false, .. })));
+        assert!(shared
+            .steps
+            .iter()
+            .any(|s| matches!(s.action, Action::Scroll { delta: 120, .. })));
+        let count = shared.steps.len();
+        let stop = Point { x: 120, y: 110 };
+        record_mouse_event(&mut shared, 0x201, stop, 0);
+        record_mouse_event(&mut shared, 0x202, stop, 0);
+        assert_eq!(shared.steps.len(), count);
+        record_mouse_event(&mut shared, 0x200, stop, 0);
+        assert_eq!(
+            shared.steps.len(),
+            count + 1,
+            "Movement is captured even over Stop"
+        );
+    }
     #[test]
     fn recorded_movement_groups_preserve_samples_timing_and_action_order() {
         let steps = vec![

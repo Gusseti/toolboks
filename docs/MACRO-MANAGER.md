@@ -8,7 +8,7 @@ The library starts empty. Choose New and type into Give it a name. Confirm with 
 
 Edit delays or delete steps directly in the step list. Add key immediately waits for your key without inserting a placeholder. Delete removes the selected step without confirmation, or asks for confirmation when the macro itself is selected. The last macro can be deleted too.
 
-Choose keystrokes, mouse movements, clicks and/or scrolls, then press Record. Stop recording with the same button, your configured shortcut or Esc. Toolboks control gestures and injected playback input are excluded from recordings. New recordings append to the selected macro.
+Choose Record Mouse to capture movement, button presses/releases and scrolling, including activity over Toolboks. Choose Record keystrokes to record keyboard input separately. There are no recording-input checkboxes. Stop with the same button, the recording shortcut or Esc; the shortcut uses the most recently chosen mode. Clicks on the mouse recorder's Stop button and injected playback input are excluded. New recordings append to the selected macro.
 
 Recorded delays preserve the elapsed time between captured actions. Fixed delays apply the chosen default between events. Custom delays retain recorded timings for individual editing in Selected step. Recorded key/button presses and releases stay separate so held keys and drags can be replayed.
 
