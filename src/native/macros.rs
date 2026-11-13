@@ -34,6 +34,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             macros: vec![Macro {
+                activation_key: None,
                 name: "New macro".into(),
                 steps: vec![],
             }],
@@ -76,7 +77,8 @@ pub(super) struct MacroManager {
     message: Option<String>,
     shortcut_capture: Option<bool>,
     key_capture: bool,
-    configured_hotkeys: Option<(Option<Hotkey>, Option<Hotkey>)>,
+    configured_hotkeys: Option<(Option<Hotkey>, Vec<(usize, Hotkey)>)>,
+    playing_macro: Option<usize>,
     was_recording: bool,
     pending_save: bool,
     ignore_rect: Option<[i32; 4]>,
@@ -99,6 +101,7 @@ impl Default for MacroManager {
             shortcut_capture: None,
             key_capture: false,
             configured_hotkeys: None,
+            playing_macro: None,
             was_recording: false,
             pending_save: false,
             ignore_rect: None,
@@ -250,16 +253,31 @@ impl MacroManager {
             ["record_hotkey", "play_hotkey"]
                 .iter()
                 .any(|k| p.get(*k).is_some_and(|v| !v.is_null()))
+                || p.get("macros")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|macros| {
+                        macros
+                            .iter()
+                            .any(|m| m.get("activation_key").is_some_and(|v| !v.is_null()))
+                    })
         })
     }
     fn configure_hotkeys(&mut self) {
+        if self.shortcut_capture.is_some() {
+            return;
+        }
         let desired = if self.allowed {
             (
                 self.prefs.record_hotkey.clone(),
-                self.prefs.play_hotkey.clone(),
+                self.prefs
+                    .macros
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, m)| m.activation_key.map(|key| (index, key)))
+                    .collect::<Vec<_>>(),
             )
         } else {
-            (None, None)
+            (None, Vec::new())
         };
         if self.configured_hotkeys.as_ref() == Some(&desired) {
             return;
@@ -278,6 +296,7 @@ impl MacroManager {
     fn selected_macro(&mut self) -> &mut Macro {
         if self.prefs.macros.is_empty() {
             self.prefs.macros.push(Macro {
+                activation_key: None,
                 name: "New macro".into(),
                 steps: vec![],
             })
@@ -333,12 +352,18 @@ impl MacroManager {
         }
     }
     fn play(&mut self) {
+        self.play_macro(self.prefs.selected);
+    }
+    fn play_macro(&mut self, index: usize) {
         if !self.allowed {
             return;
         }
         if self.engine.status().playing {
             self.engine.stop();
-            return;
+            if self.playing_macro == Some(index) {
+                self.playing_macro = None;
+                return;
+            }
         }
         if self.engine.status().recording {
             self.finish_recording()
@@ -362,7 +387,10 @@ impl MacroManager {
         } else {
             None
         };
-        let steps = self.selected_macro().steps.clone();
+        let Some(macro_data) = self.prefs.macros.get(index) else {
+            return;
+        };
+        let steps = macro_data.steps.clone();
         if steps.is_empty() {
             self.message = Some("Add or record some steps first.".into());
             return;
@@ -375,7 +403,8 @@ impl MacroManager {
         if let Err(error) = self.engine.play(steps, options) {
             self.message = Some(error)
         } else {
-            self.message = None
+            self.message = None;
+            self.playing_macro = Some(index);
         }
     }
     fn service(&mut self) {
@@ -386,7 +415,7 @@ impl MacroManager {
         for event in self.engine.poll_control_events() {
             match event {
                 ControlEvent::Record => self.record(),
-                ControlEvent::Play => self.play(),
+                ControlEvent::Play(index) => self.play_macro(index),
             }
         }
         if let Some(error) = self.engine.status().error {
@@ -407,8 +436,11 @@ impl MacroManager {
             } = event
             {
                 if key == egui::Key::Escape {
-                    self.shortcut_capture = None;
+                    let was_binding = self.shortcut_capture.take().is_some();
                     self.key_capture = false;
+                    if was_binding {
+                        self.configure_hotkeys();
+                    }
                     break;
                 }
                 let Some(vk) = key_vk(key) else { continue };
@@ -448,10 +480,11 @@ impl MacroManager {
                     if record {
                         self.prefs.record_hotkey = hotkey
                     } else {
-                        self.prefs.play_hotkey = hotkey
+                        self.selected_macro().activation_key = hotkey
                     };
                     self.configure_hotkeys();
                 }
+                self.pending_save = true;
                 break;
             }
         }
@@ -526,20 +559,6 @@ impl MacroManager {
                                 .desired_width(72.0),
                         );
                     }
-                    let playing = self.engine.status().playing;
-                    if ui
-                        .add_enabled(
-                            interactive && !self.engine.status().recording,
-                            egui::Button::new(if playing {
-                                "Stop playback"
-                            } else {
-                                "Play macro"
-                            }),
-                        )
-                        .clicked()
-                    {
-                        self.play()
-                    }
                 });
                 ui.horizontal_wrapped(|ui| {
                     for record in [true, false] {
@@ -548,13 +567,13 @@ impl MacroManager {
                             if record {
                                 "Record shortcut"
                             } else {
-                                "Playback shortcut"
+                                "This macro's activation key"
                             },
                         );
                         let binding = if record {
                             &self.prefs.record_hotkey
                         } else {
-                            &self.prefs.play_hotkey
+                            &self.prefs.macros[self.prefs.selected].activation_key
                         };
                         let label = if self.shortcut_capture == Some(record) {
                             "Press shortcut…".into()
@@ -562,10 +581,17 @@ impl MacroManager {
                             hotkey_text(binding)
                         };
                         if ui
-                            .add_enabled(interactive, egui::Button::new(label))
+                            .add_enabled(
+                                interactive
+                                    && !self.engine.status().recording
+                                    && !self.engine.status().playing,
+                                egui::Button::new(label),
+                            )
                             .clicked()
                         {
-                            self.shortcut_capture = Some(record)
+                            self.shortcut_capture = Some(record);
+                            let _ = self.engine.configure_shortcuts(None, Vec::new());
+                            self.configured_hotkeys = None;
                         }
                         if binding.is_some()
                             && ui
@@ -574,7 +600,7 @@ impl MacroManager {
                                     egui::Button::new(if record {
                                         "Clear record key"
                                     } else {
-                                        "Clear play key"
+                                        "Clear activation key"
                                     }),
                                 )
                                 .clicked()
@@ -582,7 +608,7 @@ impl MacroManager {
                             if record {
                                 self.prefs.record_hotkey = None
                             } else {
-                                self.prefs.play_hotkey = None
+                                self.selected_macro().activation_key = None
                             };
                             self.configure_hotkeys();
                         }
@@ -597,6 +623,7 @@ impl MacroManager {
                 heading(ui, "Macros");
                 if ui.add_enabled(editable, egui::Button::new("New")).clicked() {
                     self.prefs.macros.push(Macro {
+                        activation_key: None,
                         name: format!("Macro {}", self.prefs.macros.len() + 1),
                         steps: vec![],
                     });
@@ -608,15 +635,21 @@ impl MacroManager {
                 .prefs
                 .macros
                 .iter()
-                .map(|m| (m.name.clone(), m.steps.len()))
+                .map(|m| {
+                    (
+                        m.name.clone(),
+                        m.steps.len(),
+                        hotkey_text(&m.activation_key),
+                    )
+                })
                 .collect::<Vec<_>>();
-            for (index, (name, count)) in names.into_iter().enumerate() {
+            for (index, (name, count, key)) in names.into_iter().enumerate() {
                 if ui
                     .add_enabled(
                         editable,
                         egui::Button::selectable(
                             self.prefs.selected == index,
-                            format!("{name}  ·  {count} steps"),
+                            format!("{name}  ·  {count} steps\n{key}"),
                         ),
                     )
                     .clicked()
@@ -643,6 +676,7 @@ impl MacroManager {
                 self.prefs.macros.remove(i);
                 self.prefs.selected = 0;
                 self.step = None;
+                self.configure_hotkeys();
             }
             ui.add_space(look::SPACE_M);
             heading(ui, "Steps");
@@ -1112,6 +1146,12 @@ impl NativeAddon for MacroManager {
             }
         }
         self.selected_macro();
+        if let Some(previous) = self.prefs.play_hotkey.take() {
+            if self.selected_macro().activation_key.is_none() {
+                self.selected_macro().activation_key = Some(previous);
+                self.pending_save = true;
+            }
+        }
         self.configure_hotkeys();
     }
     fn navigate(&mut self, page: &str) {
@@ -1139,7 +1179,14 @@ impl NativeAddon for MacroManager {
             self.ignore_rect = Some(rect);
         }
         egui::ScrollArea::vertical().id_salt("macro-manager-workspace").show(ui,|ui|{
-            ui.horizontal_wrapped(|ui|{ui.label(RichText::new(&self.selected_macro().name).size(look::TEXT_TITLE).strong());if ui.add_enabled(interactive && !busy,egui::Button::new("Save macro")).clicked(){self.pending_save=true;}});
+            ui.horizontal_wrapped(|ui|{
+                ui.label(RichText::new(&self.selected_macro().name).size(look::TEXT_TITLE).strong());
+                let playing=self.engine.status().playing;
+                if ui.add_enabled(interactive && !self.engine.status().recording,egui::Button::new(if playing{"Stop playback"}else{"Play macro"}).min_size(egui::vec2(110.0,32.0)).fill(look::ACCENT)).clicked(){
+                    if playing{self.engine.stop();self.playing_macro=None;}else{self.play();}
+                }
+                if ui.add_enabled(interactive && !busy,egui::Button::new("Save macro")).clicked(){self.pending_save=true;}
+            });
             muted(ui,"Record actions, edit steps, and draw mouse paths. Playback sends real desktop input.");
             if let Some(message)=self.message.clone(){if look::banner(ui,&message){self.message=None;}}
             ui.add_space(look::SPACE_M);self.controls(ui,interactive);
@@ -1192,7 +1239,7 @@ impl NativeAddon for MacroManager {
     }
     fn cancel(&mut self) {
         self.engine.stop();
-        let _ = self.engine.configure_shortcuts(None, None);
+        let _ = self.engine.configure_shortcuts(None, Vec::new());
         self.configured_hotkeys = None;
     }
     fn tutorial_steps(&self) -> Vec<TutorialStep> {
@@ -1214,6 +1261,47 @@ impl NativeAddon for MacroManager {
 #[cfg(test)]
 mod smoke_tests {
     use super::*;
+    #[test]
+    fn activation_keys_are_saved_per_macro_and_legacy_key_is_migrated() {
+        let mut manager = MacroManager {
+            saving_allowed: true,
+            pending_save: true,
+            ..Default::default()
+        };
+        let first = Hotkey {
+            modifiers: 2,
+            vk: 0x74,
+        };
+        let second = Hotkey {
+            modifiers: 2,
+            vk: 0x75,
+        };
+        manager.prefs.macros[0].activation_key = Some(first);
+        manager.prefs.macros.push(Macro {
+            name: "Second".into(),
+            activation_key: Some(second),
+            steps: Vec::new(),
+        });
+        let mut prefs = BTreeMap::new();
+        assert!(manager.save_preferences(&mut prefs));
+        let mut reopened = MacroManager {
+            saving_allowed: true,
+            ..Default::default()
+        };
+        reopened.load_preferences(&prefs);
+        assert_eq!(reopened.prefs.macros[0].activation_key, Some(first));
+        assert_eq!(reopened.prefs.macros[1].activation_key, Some(second));
+        let value = prefs.get_mut(KEY).unwrap();
+        value["macros"][0]["activation_key"] = serde_json::Value::Null;
+        value["play_hotkey"] = serde_json::to_value(first).unwrap();
+        let mut migrated = MacroManager {
+            saving_allowed: true,
+            ..Default::default()
+        };
+        migrated.load_preferences(&prefs);
+        assert_eq!(migrated.prefs.macros[0].activation_key, Some(first));
+        assert!(migrated.prefs.play_hotkey.is_none());
+    }
     #[test]
     fn editor_and_mouse_page_render_without_starting_input() {
         for width in [900.0, 1280.0] {

@@ -18,6 +18,8 @@ Milliseconds covers 0–1,000 ms; Seconds covers 0–10 s with decimal values an
 
 Play once, repeat for a duration, or repeat until stopped (toggle). The delay between repeats is a pause after each completed run; it does not speed up the actions within a run. Stop with the playback button, its configured shortcut or Esc. The run duration also stops active work when it expires.
 
-Assign recording and playback shortcuts in the Playback controls. Esc is reserved for stopping; shortcuts must be different and available in Windows. No input is recorded or played simply by opening Toolboks. Assigned shortcuts remain usable while working in another tool; active recording/playback continues without rendering Macro Manager's page.
+Use Play macro beside the macro name to play the selected macro. Assign each macro its own activation key in the Playback controls; the library shows its saved key. An activation key runs its assigned macro even when another macro is selected. Press it again to stop that macro. Existing global playback shortcuts migrate to the previously selected macro.
+
+The recording shortcut remains shared. Esc is reserved for stopping; shortcuts must be different and available in Windows. No input is recorded or played simply by opening Toolboks. Assigned shortcuts remain usable while working in another tool; active recording/playback continues without rendering Macro Manager's page.
 
 Macros and preferences are stored locally with the add-on's namespaced preferences. Playback sends real input to the active Windows desktop; Windows may reject input to an application with higher privileges. Stop releases keys/buttons held by playback.

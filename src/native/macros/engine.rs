@@ -12,6 +12,8 @@ use std::{
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Macro {
+    #[serde(default)]
+    pub activation_key: Option<Hotkey>,
     pub name: String,
     pub steps: Vec<Step>,
 }
@@ -116,7 +118,7 @@ pub struct Hotkey {
 #[derive(Clone, Copy, Debug)]
 pub enum ControlEvent {
     Record,
-    Play,
+    Play(usize),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimingScope {
@@ -177,7 +179,7 @@ pub struct Engine {
     worker: Option<Worker>,
     hotkeys: Option<Worker>,
     events: Arc<Mutex<Vec<ControlEvent>>>,
-    bindings: (Option<Hotkey>, Option<Hotkey>),
+    bindings: (Option<Hotkey>, Vec<(usize, Hotkey)>),
 }
 impl Engine {
     pub fn shortcuts_configured(&self) -> bool {
@@ -248,56 +250,72 @@ impl Engine {
     pub fn configure_shortcuts(
         &mut self,
         record: Option<Hotkey>,
-        play: Option<Hotkey>,
+        play: Vec<(usize, Hotkey)>,
     ) -> Result<(), String> {
-        if self.bindings == (record, play) {
+        let desired = (record, play.clone());
+        if self.bindings == desired {
             return Ok(());
+        }
+        let mut registrations: Vec<(Hotkey, ControlEvent)> = record
+            .into_iter()
+            .map(|key| (key, ControlEvent::Record))
+            .collect();
+        registrations.extend(
+            play.into_iter()
+                .map(|(index, key)| (key, ControlEvent::Play(index))),
+        );
+        for (i, (key, _)) in registrations.iter().enumerate() {
+            if key.vk == 0x1b
+                || key.vk == 0
+                || registrations[..i].iter().any(|(other, _)| other == key)
+            {
+                return Err(
+                    "Every macro needs a different activation key; Esc is reserved for Stop."
+                        .into(),
+                );
+            }
         }
         if let Some(worker) = self.hotkeys.take() {
             worker.stop();
         }
-        self.bindings = (None, None);
-        *SHORTCUTS.lock().unwrap() = [None, None];
-        if record.is_none() && play.is_none() {
+        self.events.lock().unwrap().clear();
+        self.bindings = (None, Vec::new());
+        SHORTCUTS.lock().unwrap().clear();
+        if registrations.is_empty() {
             return Ok(());
         }
-        if record == play
-            || [record, play]
-                .into_iter()
-                .flatten()
-                .any(|key| key.vk == 0x1b || key.vk == 0)
-        {
-            return Err("Choose distinct shortcuts; Esc is reserved for Stop".into());
-        }
+        let shortcut_keys = registrations.iter().map(|(key, _)| *key).collect();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
         let events = self.events.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let handle = thread::spawn(move || unsafe {
             let mut registered = Vec::new();
-            for (index, binding) in [record, play].into_iter().enumerate() {
-                if let Some(key) = binding {
-                    if RegisterHotKey(0, index as i32 + 1, key.modifiers | 0x4000, key.vk) == 0 {
-                        for id in registered {
-                            UnregisterHotKey(0, id);
-                        }
-                        let _ =
-                            tx.send(Err("Shortcut is already in use or unavailable".to_owned()));
-                        return;
+            for (index, (key, _)) in registrations.iter().enumerate() {
+                let id = index as i32 + 1;
+                if RegisterHotKey(0, id, key.modifiers | 0x4000, key.vk) == 0 {
+                    for id in registered {
+                        UnregisterHotKey(0, id);
                     }
-                    registered.push(index as i32 + 1);
+                    let _ = tx.send(Err(
+                        "Activation key is already in use or unavailable.".to_owned()
+                    ));
+                    return;
                 }
+                registered.push(id);
             }
             let _ = tx.send(Ok(()));
             while !flag.load(Ordering::SeqCst) {
                 let mut msg = Msg::default();
                 while PeekMessageW(&mut msg, 0, 0, 0, 1) != 0 {
                     if msg.message == 0x312 {
-                        events.lock().unwrap().push(if msg.wparam == 1 {
-                            ControlEvent::Record
-                        } else {
-                            ControlEvent::Play
-                        });
+                        if let Some((_, event)) = msg
+                            .wparam
+                            .checked_sub(1)
+                            .and_then(|index| registrations.get(index))
+                        {
+                            events.lock().unwrap().push(*event);
+                        }
                     }
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -309,15 +327,15 @@ impl Engine {
         self.hotkeys = Some(Worker { cancel, handle });
         let result = rx
             .recv()
-            .unwrap_or_else(|_| Err("Shortcut worker could not start".into()));
+            .unwrap_or_else(|_| Err("Shortcut worker could not start.".into()));
         if result.is_err() {
             if let Some(worker) = self.hotkeys.take() {
                 worker.stop();
             }
         }
         if result.is_ok() {
-            self.bindings = (record, play);
-            *SHORTCUTS.lock().unwrap() = [record, play];
+            self.bindings = desired;
+            *SHORTCUTS.lock().unwrap() = shortcut_keys;
         }
         result
     }
@@ -429,7 +447,7 @@ struct HookState {
     cancel: Arc<AtomicBool>,
 }
 static HOOK: Mutex<Option<HookState>> = Mutex::new(None);
-static SHORTCUTS: Mutex<[Option<Hotkey>; 2]> = Mutex::new([None, None]);
+static SHORTCUTS: Mutex<Vec<Hotkey>> = Mutex::new(Vec::new());
 fn control_key(vk: u16) -> bool {
     matches!(vk,0x10..=0x12|0x5b|0x5c|0xa0..=0xa5)
 }
@@ -491,7 +509,6 @@ unsafe extern "system" fn keyboard(code: i32, wp: usize, lp: isize) -> isize {
                             .lock()
                             .unwrap()
                             .iter()
-                            .flatten()
                             .any(|k| k.vk == data.vk && k.modifiers & 15 == modifiers);
                         let mut foreground_process = 0;
                         let in_app = GetWindowThreadProcessId(
@@ -941,6 +958,10 @@ mod tests {
     #[test]
     fn authored_and_recorded_model_round_trip() {
         let model = Macro {
+            activation_key: Some(Hotkey {
+                modifiers: 2,
+                vk: 0x74,
+            }),
             name: "Round trip".into(),
             steps: vec![
                 Step {
