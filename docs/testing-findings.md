@@ -272,3 +272,27 @@ Clippy initially rejected two new backend style patterns: a single-pattern match
 **BLOCKED — physical hot-plug and live-route checks were not performed.** I did not connect/disconnect real microphones, disable Windows devices, or start/stop the user's audio routes. Native visual inspection, scan latency on the user's driver, physical duplicate-device behaviour, and uninterrupted live routing across a scan remain to be checked on real hardware. No full standard/preview CI matrix or release build was run for this light test.
 
 The requested on-demand refresh paths are implemented and the focused tests pass. A physical microphone plugged in while the list is closed should be discovered on the next opening or Refresh microphones action; this expected hardware behaviour still needs a real-device check. The list does not continuously rescan while left open. Background automatic device notifications were not part of this request.
+
+# Test-4: 🟠 [MEDIUM] Macro Manager smoke test
+
+On 13 November 2026, I ran the requested smoke test after the Macro Manager implementation was finished. The tested build was the working staging changes based on `1b6ab8e` (Toolboks 0.12.4). This request did not resume the previously stopped Audio Gainer settings test.
+
+## What I checked
+
+I checked package validation, timing units, action-model serialization, empty playback rejection, local preference persistence, and headless rendering of the Editor and Mouse editor at widths of 900 and 1280 points. The final result was **6 passed, 0 failed**. No input hooks, recording, playback or global shortcuts were started by these tests.
+
+## 🟠 [MEDIUM] The new sidebar icon initially blocked installation
+
+**FAIL initially; PASS after correction.** The Macro Manager package used the new `macro` icon, but I had added its drawing code without updating the SDK's allowed icon names. The package validation smoke test caught that mismatch. I added `macro` to the SDK and JSON schema lists, then reran the same smoke suite successfully. Responsibility: Main agent, which owned host/package integration. The cause was an omitted validation-list update, not a backend-engine decision. This issue is resolved in the working build.
+
+## 🔵 [INFO] Editor rendering, data and timing checks passed
+
+**PASS.** The editor rendered both pages without activating recording or playback. Macro data survived a save/load through the actual namespaced preference methods. The engine action model round-tripped with key/button releases and path click actions. Timing parsing accepted the requested `ms`, `s`, and `sec` inputs and bare numbers in the selected scope; invalid times were rejected. Empty playback returned an error without starting an input worker.
+
+The first UI test attempt also needed an egui test-harness correction: unused texture deltas must be explicitly cleared. I corrected that cleanup rather than treating it as an application rendering defect. The unchanged rendering assertions then passed.
+
+## Evidence and limits
+
+I ran `cargo test --locked --offline -p toolboks --bin toolboks --target-dir ../toolboks/target macro -- --test-threads=1`. The six passing tests are `official_macro_manager_package_validates_and_rejects_impersonation`, `authored_and_recorded_model_round_trip`, `empty_play_does_not_start_input_worker`, `timing_units_and_active_scope`, `background_recording_results_use_namespaced_preferences`, and `editor_and_mouse_page_render_without_starting_input`. Sources are `src/addons.rs`, `src/native/macros.rs`, and `src/native/macros/engine.rs`. Formatting and the preview compilation check also passed.
+
+This was a smoke test only, not an exhaustive review or a real desktop-input check. Recording actual keyboard/mouse activity, playback against another application, global shortcut registration, Esc cancellation during live playback, multi-monitor coordinates and real elapsed repeat duration remain to be checked by hand. No claim of an end-to-end recording/playback pass is made.

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Audio Gainer settings for enabling the microphone when Toolboks opens, remembering on/off state, gain/listening volume/routing per microphone, and saving a default microphone by name even while it is disconnected. Saved per-microphone activation restores on switching and app launch and takes precedence over the general startup option.
+- A background device check switches to the saved default when it reconnects without requiring the Audio Gainer page to stay open. Startup activation is off by default, and manually disabling the microphone suppresses automatic activation for that session.
+- Existing Audio Gainer installations can review the package update to grant local-preferences access. Older packages keep live audio access without silently receiving the new permission.
+
 ## [0.12.4] - 2026-11-12
 
 ### Added

@@ -23,6 +23,34 @@ See [Guided tours](docs/GUIDED-TOURS.md) and [Drive optimization](docs/DRIVE-OPT
 - **Memory Cleaner**: one-click Optimize memory (gentle, no admin needed), a colored "Where your memory goes" bar grouped by app, automatic cleaning with a start-percentage slider and an options panel, and an Advanced page with the process list, protection, system-wide cleaning and auto-clean rules.
 - **Resource Monitor**: a Task Manager style Overview (CPU with live clock, GPU, memory, disk, network, top processes) and a Details page (per-core CPU, GPU engines, per-drive disk, per-adapter network), with live graphs.
 
+## Macro Manager
+
+Install Macro Manager from Add-ons to record keyboard and mouse actions, edit steps
+and mouse paths, and replay them with configurable repeat delays and duration.
+Recording and playback shortcuts are configurable; Esc stops active work. Timing
+accepts milliseconds or decimal seconds. Macros stay local. See
+[Macro Manager](docs/MACRO-MANAGER.md).
+
+## Audio Gainer settings
+
+Audio Gainer's Settings section can enable your microphone when Toolboks starts, even
+when you open another tool first. This is off by default. Remember settings for each
+microphone saves its on/off state, gain, listening volume, output choices and routing
+locally. Saved activation restores when switching microphones and when Toolboks
+launches. A saved per-microphone on/off state takes precedence over the general
+startup switch; saved routing resumes with an enabled microphone.
+
+Choose a microphone and use **Use selected microphone** under Default microphone to
+remember it by name. Its name stays saved while disconnected, and Toolboks switches
+back when it reconnects. Duplicate device names require a unique choice rather than
+automatically picking an arbitrary microphone. Manually disabling the microphone
+keeps it off for that session.
+
+Existing installations need to **Review update** in Audio Gainer to approve the new
+local-preferences permission before using saved settings. Preferences stay in the
+Toolboks data folder; preview builds keep a separate profile. VB-Audio Virtual Cable
+is installed separately for routing to other apps.
+
 ## Branches
 
 - `main` – stable; every stable release is cut from here.

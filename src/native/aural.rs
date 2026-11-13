@@ -1,5 +1,7 @@
 //! Aural's live audio controls inside the Toolboks workspace.
 mod routing;
+mod settings;
+use settings::{AudioPreferences, DeviceIdentity, Discovery};
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{
@@ -191,6 +193,17 @@ fn virtual_cable(name: &str) -> bool {
 
 pub(super) struct Aural {
     allowed: bool,
+    ui_active: bool,
+    preferences_allowed: bool,
+    preferences_loaded: bool,
+    preferences: AudioPreferences,
+    profile_input: Option<DeviceIdentity>,
+    discovery: Option<Discovery>,
+    want_input: bool,
+    manual_disabled: bool,
+    default_was_available: bool,
+    route_intent: [bool; 2],
+    settings_update_requested: bool,
     loaded: bool,
     inputs: Vec<Device>,
     outputs: Vec<Device>,
@@ -213,6 +226,17 @@ impl Default for Aural {
     fn default() -> Self {
         Self {
             allowed: false,
+            ui_active: false,
+            preferences_allowed: false,
+            preferences_loaded: false,
+            preferences: AudioPreferences::default(),
+            profile_input: None,
+            discovery: None,
+            want_input: false,
+            manual_disabled: false,
+            default_was_available: false,
+            route_intent: [false; 2],
+            settings_update_requested: false,
             loaded: false,
             inputs: Vec::new(),
             outputs: Vec::new(),
@@ -234,6 +258,15 @@ impl Default for Aural {
 }
 
 impl Aural {
+    pub(super) fn needs_background_preferences(
+        prefs: &BTreeMap<String, serde_json::Value>,
+    ) -> bool {
+        prefs
+            .get(settings::KEY)
+            .and_then(|value| serde_json::from_value::<AudioPreferences>(value.clone()).ok())
+            .is_some_and(|settings| settings.startup_enabled() || settings.default_input.is_some())
+    }
+
     fn refresh_microphones(&mut self) {
         // Enumerate on demand with a fresh host. No cached device list or resident
         // watcher is kept, and existing streams retain their original endpoints.
@@ -302,6 +335,15 @@ impl Aural {
                 .or_else(|| self.outputs.iter().position(|d| !virtual_cable(&d.name))),
             self.outputs.iter().position(|d| virtual_cable(&d.name)),
         ];
+        if let Some(target) = self
+            .preferences
+            .default_input
+            .as_ref()
+            .or(self.preferences.last_input.as_ref())
+        {
+            self.selected_input = target.resolve(self.inputs.iter().map(|d| d.name.clone()));
+        }
+        self.restore_profile();
     }
 
     fn enable_input(&mut self) -> Result<(), String> {
@@ -314,6 +356,11 @@ impl Aural {
             .ok_or("Choose a microphone first.")?;
         self.input = Some(Input::open(&device.device, self.gain_db)
             .map_err(|e| format!("Could not open the microphone: {e}. Check the device and Windows microphone access."))?);
+        self.want_input = true;
+        self.manual_disabled = false;
+        if let Some(input) = &self.input {
+            input.signal.metering.store(self.ui_active, Relaxed);
+        }
         self.message = None;
         self.last_sample = Instant::now();
         Ok(())
@@ -370,6 +417,7 @@ impl Aural {
                 }
             };
         input.signal.routes.lock().unwrap()[index] = Some(bridge);
+        self.route_intent[index] = true;
         self.routes[index] = Some(Output {
             _stream: stream,
             error,
@@ -429,6 +477,28 @@ fn picker(
             }
         });
     *selected != old
+}
+
+fn audio_setting_switch(ui: &mut egui::Ui, value: &mut bool, label: &str) {
+    ui.horizontal_top(|ui| {
+        let response = look::toggle_switch(ui, value);
+        let text = ui.add(egui::Label::new(label).wrap().sense(egui::Sense::click()));
+        if text.clicked() {
+            *value = !*value;
+        }
+        let response = response.labelled_by(text.id);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::Role::Switch, ui.is_enabled(), *value, label)
+        });
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                response.rect.expand(2.0),
+                look::CONTROL_RADIUS,
+                ui.visuals().selection.stroke,
+                egui::StrokeKind::Outside,
+            );
+        }
+    });
 }
 
 fn refreshing_picker(
@@ -497,9 +567,7 @@ impl Aural {
                     .add_enabled_ui(interactive, |ui| self.microphone_picker(ui))
                     .inner
                 {
-                    self.cancel();
-                    self.route_errors = [None, None];
-                    self.message = None;
+                    self.change_microphone();
                 }
                 if ui
                     .add_enabled(interactive, egui::Button::new("Refresh microphones"))
@@ -532,16 +600,10 @@ impl Aural {
                         .clicked()
                     {
                         if live {
-                            self.cancel();
+                            self.disable_input();
                         } else if let Err(e) = self.enable_input() {
                             self.message = Some(e);
                         }
-                    }
-                    if ui
-                        .add_enabled(interactive, egui::Button::new("Refresh devices"))
-                        .clicked()
-                    {
-                        self.refresh();
                     }
                 });
                 if let Some(input) = &self.input {
@@ -579,6 +641,110 @@ impl Aural {
                         .store(gain(self.gain_db).to_bits(), Relaxed);
                 }
                 muted(ui, "Gain applies to both routes.");
+            });
+        });
+    }
+
+    fn settings_ui(&mut self, ui: &mut egui::Ui, interactive: bool) {
+        tutorial::region(ui, "aural-settings", |ui| {
+            look::card(ui, ui.available_width(), 0.0, |ui| {
+                section(ui, "Settings");
+                let enabled = interactive && self.preferences_allowed;
+                ui.add_space(look::SPACE_M);
+                ui.add_enabled_ui(enabled, |ui| {
+                    audio_setting_switch(
+                        ui,
+                        &mut self.preferences.auto_enable,
+                        "Enable microphone on startup",
+                    );
+                });
+                muted(
+                    ui,
+                    "Starts live audio when Toolboks opens. A saved per-microphone on/off state takes priority when remembering settings is enabled.",
+                );
+                ui.add_space(look::SPACE_M);
+                ui.add_enabled_ui(enabled, |ui| {
+                    audio_setting_switch(
+                        ui,
+                        &mut self.preferences.remember_devices,
+                        "Remember settings for each microphone",
+                    );
+                });
+                muted(
+                    ui,
+                    "Save microphone on/off, gain, listening volume and routing. Restore them when switching microphones or reopening Toolboks.",
+                );
+                if self.preferences.remember_devices {
+                    if let Some(device) = self.selected_input.and_then(|i| self.inputs.get(i)) {
+                        muted(ui, format!("Saving settings for {}.", device.name));
+                    } else {
+                        muted(ui, "Choose a microphone to save its settings.");
+                    }
+                }
+                ui.add_space(look::SPACE_L);
+                section(ui, "Default microphone");
+                if let Some(default) = &self.preferences.default_input {
+                    ui.label(egui::RichText::new(&default.name).strong());
+                    muted(
+                        ui,
+                        if self.default_input_available() {
+                            "Available. Toolboks switches back when it reconnects."
+                        } else {
+                            "Waiting for this microphone. Toolboks will switch to it when it connects."
+                        },
+                    );
+                } else {
+                    muted(
+                        ui,
+                        "No default set. Choose a microphone above, then save it here.",
+                    );
+                }
+                ui.add_enabled_ui(enabled, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let uniquely_named = self
+                            .selected_input
+                            .and_then(|index| self.inputs.get(index))
+                            .is_some_and(|selected| {
+                                self.inputs
+                                    .iter()
+                                    .filter(|d| d.name == selected.name)
+                                    .count()
+                                    == 1
+                            });
+                        if ui
+                            .add_enabled(
+                                uniquely_named,
+                                egui::Button::new("Use selected microphone"),
+                            )
+                            .clicked()
+                        {
+                            self.set_default_input();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.preferences.default_input.is_some(),
+                                egui::Button::new("Clear default"),
+                            )
+                            .clicked()
+                        {
+                            self.clear_default_input();
+                        }
+                    });
+                });
+                if !self.preferences_allowed {
+                    muted(ui, "Review the Audio Gainer update to allow these settings to be saved on this PC.");
+                    if ui
+                        .add_enabled(
+                            !tutorial::active(ui.ctx()),
+                            egui::Button::new("Review update"),
+                        )
+                        .clicked()
+                    {
+                        self.request_settings_update();
+                    }
+                } else {
+                    muted(ui, "Changes are saved automatically on this PC.");
+                }
             });
         });
     }
@@ -736,7 +902,7 @@ impl Aural {
                     {
                         self.route_errors[index] = None;
                         if live {
-                            self.stop_route(index);
+                            self.route_stopped(index);
                         } else {
                             self.route_errors[index] = self.enable_route(index).err();
                         }
@@ -782,13 +948,25 @@ impl Aural {
 impl NativeAddon for Aural {
     fn set_capabilities(&mut self, capabilities: &[Capability]) {
         self.allowed = capabilities.contains(&Capability::LiveAudio);
+        let preferences_allowed = capabilities.contains(&Capability::LocalPreferences);
+        if preferences_allowed != self.preferences_allowed {
+            self.preferences_loaded = false;
+        }
+        self.preferences_allowed = preferences_allowed;
+        if !self.allowed || !self.preferences_allowed {
+            self.discovery = None;
+        }
         if !self.allowed && self.input.is_some() {
             self.cancel();
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _: &mut BTreeMap<String, serde_json::Value>) -> bool {
-        let interactive = self.allowed && !tutorial::active(ui.ctx());
+    fn ui(&mut self, ui: &mut egui::Ui, prefs: &mut BTreeMap<String, serde_json::Value>) -> bool {
+        let tutorial_active = tutorial::active(ui.ctx());
+        if !tutorial_active {
+            self.begin_ui_preferences(prefs);
+        }
+        let interactive = self.allowed && !tutorial_active;
         if interactive && !self.loaded {
             self.refresh();
         }
@@ -815,6 +993,8 @@ impl NativeAddon for Aural {
                         ui.vertical(|ui| {
                             ui.set_width(270.0);
                             self.input_ui(ui, interactive);
+                            ui.add_space(look::SPACE_M);
+                            self.settings_ui(ui, interactive);
                         });
                         ui.vertical(|ui| {
                             ui.set_width(ui.available_width());
@@ -824,18 +1004,43 @@ impl NativeAddon for Aural {
                 } else {
                     self.input_ui(ui, interactive);
                     ui.add_space(look::SPACE_M);
+                    self.settings_ui(ui, interactive);
+                    ui.add_space(look::SPACE_M);
                     self.detail_ui(ui, interactive);
                 }
             });
-        false
+        if tutorial_active {
+            false
+        } else {
+            self.finish_ui_preferences(prefs)
+        }
     }
 
+    fn load_preferences(&mut self, prefs: &BTreeMap<String, serde_json::Value>) {
+        if self.preferences_loaded {
+            return;
+        }
+        self.preferences_loaded = true;
+        if self.preferences_allowed {
+            self.preferences = prefs
+                .get(settings::KEY)
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            self.want_input = self.preferences.startup_enabled();
+            self.ensure_discovery();
+        }
+    }
+    fn take_host_request(&mut self) -> Option<toolboks_addon_sdk::HostRequest> {
+        std::mem::take(&mut self.settings_update_requested)
+            .then_some(toolboks_addon_sdk::HostRequest::ReviewUpdate)
+    }
     fn tick(&mut self, _: &egui::Context) {
         self.tick_background();
         self.sample();
     }
 
     fn suspend(&mut self) {
+        self.ui_active = false;
         if let Some(input) = &self.input {
             input.signal.metering.store(false, Relaxed);
         }
@@ -844,6 +1049,7 @@ impl NativeAddon for Aural {
     }
 
     fn resume(&mut self) {
+        self.ui_active = true;
         if let Some(input) = &self.input {
             for peak in &input.signal.peaks {
                 peak.store(0, Relaxed);
@@ -854,10 +1060,11 @@ impl NativeAddon for Aural {
     }
 
     fn has_background_work(&self) -> bool {
-        self.routes.iter().any(Option::is_some)
+        self.input.is_some() || self.discovery.is_some()
     }
 
     fn tick_background(&mut self) {
+        self.poll_discovery();
         let error = self
             .input
             .as_ref()
@@ -893,6 +1100,7 @@ impl NativeAddon for Aural {
     fn tutorial_steps(&self) -> Vec<TutorialStep> {
         [
             ("aural-input", "Choose your microphone", "Choose a physical input, then enable it. Input gain changes the level sent to both routes."),
+            ("aural-settings", "Remember your setup", "Startup activation is optional. Save gain and routing separately for each microphone, and choose a default whose name stays saved while disconnected. Toolboks switches back when it reconnects."),
             ("aural-levels", "Check your levels", "Watch the left and right peaks. If clipping is reported, lower your gain, then clear the warning to check again."),
             ("aural-monitor", "Hear yourself", "Choose headphones and start the route. Listening volume affects only your headphones."),
             ("aural-cable", "Send audio to another app", "Install VB-CABLE separately. Choose CABLE Input here and CABLE Output as the microphone in your other app."),
@@ -903,6 +1111,212 @@ impl NativeAddon for Aural {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn settings_frame(
+        ctx: &egui::Context,
+        addon: &mut Aural,
+        width: f32,
+        enabled: bool,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, egui::Rect)> {
+        fn texts(shape: &egui::Shape, result: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(text) => result.push((
+                    text.galley.text().to_owned(),
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                )),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        texts(shape, result);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 1000.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| addon.settings_ui(ui, enabled),
+        );
+        let mut result = Vec::new();
+        for shape in &output.shapes {
+            texts(&shape.shape, &mut result);
+        }
+        output.textures_delta.clear();
+        result
+    }
+
+    #[test]
+    fn audio_settings_controls_change_only_when_interactive() {
+        let ctx = egui::Context::default();
+        look::apply_style(&ctx);
+        let mut addon = Aural {
+            preferences_allowed: true,
+            ..Default::default()
+        };
+        let texts = settings_frame(&ctx, &mut addon, 290.0, true, Vec::new());
+        let startup = texts
+            .iter()
+            .find(|(text, _)| text == "Enable microphone on startup")
+            .unwrap()
+            .1
+            .center();
+        assert!(!addon.preferences.auto_enable);
+        settings_frame(&ctx, &mut addon, 290.0, true, picker_pointer(startup, true));
+        settings_frame(
+            &ctx,
+            &mut addon,
+            290.0,
+            true,
+            picker_pointer(startup, false),
+        );
+        assert!(addon.preferences.auto_enable);
+        let texts = settings_frame(&ctx, &mut addon, 290.0, true, Vec::new());
+        let remember = texts
+            .iter()
+            .find(|(text, _)| text == "Remember settings for each microphone")
+            .unwrap()
+            .1
+            .center();
+        settings_frame(
+            &ctx,
+            &mut addon,
+            290.0,
+            true,
+            picker_pointer(remember, true),
+        );
+        settings_frame(
+            &ctx,
+            &mut addon,
+            290.0,
+            true,
+            picker_pointer(remember, false),
+        );
+        assert!(addon.preferences.remember_devices);
+        settings_frame(&ctx, &mut addon, 290.0, false, Vec::new());
+        settings_frame(
+            &ctx,
+            &mut addon,
+            290.0,
+            false,
+            picker_pointer(startup, true),
+        );
+        settings_frame(
+            &ctx,
+            &mut addon,
+            290.0,
+            false,
+            picker_pointer(startup, false),
+        );
+        assert!(
+            addon.preferences.auto_enable,
+            "disabled settings must not change"
+        );
+        assert!(addon.input.is_none());
+        assert!(
+            addon.discovery.is_none(),
+            "drawing settings must not start discovery"
+        );
+    }
+
+    #[test]
+    fn audio_settings_show_missing_default_and_fit_narrow_scaled_layouts() {
+        for width in [270.0, 400.0, 610.0] {
+            for scale in [1.0, 1.25, 2.0] {
+                let ctx = egui::Context::default();
+                ctx.set_pixels_per_point(scale);
+                look::apply_style(&ctx);
+                let mut addon = Aural {
+                    preferences_allowed: true,
+                    ..Default::default()
+                };
+                addon.preferences.default_input = Some(settings::DeviceIdentity {
+                    name: "Disconnected Razer microphone".into(),
+                });
+                for _ in 0..2 {
+                    settings_frame(&ctx, &mut addon, width, true, Vec::new());
+                }
+                let texts = settings_frame(&ctx, &mut addon, width, true, Vec::new());
+                assert!(texts
+                    .iter()
+                    .any(|(text, _)| text == "Disconnected Razer microphone"));
+                assert!(texts
+                    .iter()
+                    .any(|(text, _)| text.starts_with("Waiting for this microphone")));
+                for (text, rect) in texts {
+                    assert!(
+                        rect.right() <= width + 1.0,
+                        "{text} overflows at {width}, scale {scale}: {rect:?}"
+                    );
+                    assert!(rect.left() >= -1.0, "{text} starts outside settings card");
+                }
+                assert!(!addon.preferences.auto_enable);
+                assert!(addon.discovery.is_none());
+                assert!(addon.input.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn audio_settings_startup_switch_can_be_toggled_by_keyboard() {
+        let ctx = egui::Context::default();
+        look::apply_style(&ctx);
+        let mut addon = Aural {
+            preferences_allowed: true,
+            ..Default::default()
+        };
+        settings_frame(&ctx, &mut addon, 290.0, true, Vec::new());
+        settings_frame(&ctx, &mut addon, 290.0, true, picker_key(egui::Key::Tab));
+        assert!(ctx.memory(|memory| memory.focused()).is_some());
+        settings_frame(&ctx, &mut addon, 290.0, true, picker_key(egui::Key::Space));
+        assert!(addon.preferences.auto_enable);
+        assert!(addon.input.is_none());
+        assert!(addon.discovery.is_none());
+    }
+
+    #[test]
+    fn audio_settings_tutorial_does_not_load_startup_preferences_or_start_audio() {
+        let ctx = egui::Context::default();
+        let mut addon = Aural::default();
+        addon.set_capabilities(&[Capability::LiveAudio, Capability::LocalPreferences]);
+        let mut prefs = BTreeMap::from([(
+            settings::KEY.into(),
+            serde_json::json!({
+                "auto_enable": true,
+                "remember_devices": true,
+                "default_input": {"name": "Disconnected Razer microphone"}
+            }),
+        )]);
+        let original = prefs.clone();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 1000.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    tutorial::prepare(ui.ctx(), Some("aural-settings"), true);
+                    assert!(!addon.ui(ui, &mut prefs));
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert!(!addon.preferences_loaded);
+        assert!(!addon.loaded);
+        assert!(addon.discovery.is_none());
+        assert!(addon.input.is_none());
+        assert!(addon.routes.iter().all(Option::is_none));
+        assert_eq!(prefs, original);
+    }
 
     fn picker_frame(
         ctx: &egui::Context,

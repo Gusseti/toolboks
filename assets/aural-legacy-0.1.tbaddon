@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "manifest": {
+    "id": "toolboks.aural",
+    "title": "Audio Gainer",
+    "byline": "by aural",
+    "native_provider": "toolboks.aural",
+    "description": "Check your microphone level, hear yourself, and route your mic to other apps.",
+    "long_description": "Adjust microphone gain, watch live left and right levels, and monitor through headphones. Sending audio to another app uses a separately installed driver such as VB-Audio Virtual Cable. Aural includes setup instructions and a link to the official installer page.",
+    "version": "0.1.0",
+    "author": "Toolboks",
+    "publisher": "Toolboks",
+    "category": "Audio",
+    "icon": "activity",
+    "accent": "#8B5CF6",
+    "api_version": 2,
+    "min_toolboks_version": "0.11.0",
+    "license": "MIT",
+    "capabilities": ["live_audio"]
+  },
+  "pages": []
+}

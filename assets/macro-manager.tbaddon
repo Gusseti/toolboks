@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "manifest": {
+    "id": "toolboks.macro-manager",
+    "title": "Macro Manager",
+    "native_provider": "toolboks.macro-manager",
+    "description": "Record, edit and repeat keyboard and mouse actions.",
+    "long_description": "Record keystrokes, mouse movements, clicks and scrolling when you choose. Edit steps and movement paths, set timings, and replay with an optional repeat delay and duration. Configurable shortcuts control recording and playback; Escape stops active work. Macros and settings stay on this PC. Playback sends real input to the active desktop.",
+    "version": "0.1.0",
+    "author": "Toolboks",
+    "publisher": "Toolboks",
+    "category": "Automation",
+    "icon": "macro",
+    "accent": "#8B5CF6",
+    "api_version": 2,
+    "min_toolboks_version": "0.12.4",
+    "license": "MIT",
+    "capabilities": ["input_automation", "local_preferences"]
+  },
+  "pages": []
+}

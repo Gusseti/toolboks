@@ -58,7 +58,8 @@
             "layers",
             "storage",
             "wrench",
-            "leaf"
+            "leaf",
+            "macro"
           ]
         },
         "accent": {
@@ -118,7 +119,8 @@
               "user_exports",
               "drive_optimize",
               "live_audio",
-              "system_tuning"
+              "system_tuning",
+              "input_automation"
             ]
           }
         },

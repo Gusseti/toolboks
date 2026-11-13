@@ -70,6 +70,7 @@ pub enum Capability {
     DriveOptimize,
     LiveAudio,
     SystemTuning,
+    InputAutomation,
 }
 
 #[cfg(feature = "native-ui")]
@@ -220,7 +221,11 @@ impl Package {
         {
             return Err("Missing or oversized add-on metadata.".into());
         }
-        if !["grid", "activity", "layers", "storage", "wrench", "leaf"].contains(&m.icon.as_str()) {
+        if ![
+            "grid", "activity", "layers", "storage", "wrench", "leaf", "macro",
+        ]
+        .contains(&m.icon.as_str())
+        {
             return Err("Unknown sidebar icon.".into());
         }
         if m.accent.len() != 7
@@ -259,6 +264,7 @@ impl Package {
                         | Capability::DriveOptimize
                         | Capability::LiveAudio
                         | Capability::SystemTuning
+                        | Capability::InputAutomation
                 )
             })
         {
@@ -340,6 +346,12 @@ impl Package {
 #[cfg(feature = "native-ui")]
 pub trait NativeAddon {
     fn set_capabilities(&mut self, _capabilities: &[Capability]) {}
+    /// Initializes preferences before foreground UI or background work.
+    fn load_preferences(
+        &mut self,
+        _preferences: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) {
+    }
     fn take_host_request(&mut self) -> Option<HostRequest> {
         None
     }
@@ -360,6 +372,13 @@ pub trait NativeAddon {
         false
     }
     fn tick_background(&mut self) {}
+    /// Collects completed background changes without constructing the add-on UI.
+    fn save_preferences(
+        &mut self,
+        _preferences: &mut std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> bool {
+        false
+    }
     fn cancel(&mut self) {}
     fn tutorial_steps(&self) -> Vec<TutorialStep> {
         Vec::new()
@@ -407,7 +426,12 @@ mod tests {
         let mut v = example();
         v["manifest"]["capabilities"] = serde_json::json!([]);
         assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
-        for capability in ["drive_optimize", "live_audio", "system_tuning"] {
+        for capability in [
+            "drive_optimize",
+            "live_audio",
+            "system_tuning",
+            "input_automation",
+        ] {
             let mut v = example();
             v["manifest"]["capabilities"] =
                 serde_json::json!(["host_metrics", "local_preferences", capability]);

@@ -367,7 +367,11 @@ impl eframe::App for App {
         self.poll_update(ctx);
         self.tray_tick(ctx);
         self.sync_workspaces();
+        self.native.sync_preferences(&self.registry);
         self.native.tick(ctx);
+        if self.native.collect_preferences(&mut self.registry) {
+            self.preferences_dirty = Some(std::time::Instant::now());
+        }
         for (tool, manifest) in self.base.tools.iter_mut().zip(&self.registry.builtins) {
             if !self.registry.enabled(&manifest.id) {
                 *tool = None;

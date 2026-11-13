@@ -247,6 +247,17 @@ fn paint_glyph(p: &egui::Painter, r: egui::Rect, name: &str, color: Color32, siz
             ],
             stroke,
         );
+    } else if name == "macro" {
+        p.line(
+            vec![
+                pt(0.18, 0.12),
+                pt(0.85, 0.5),
+                pt(0.18, 0.88),
+                pt(0.18, 0.12),
+            ],
+            stroke,
+        );
+        p.circle_filled(pt(0.84, 0.85), size * 0.07, color);
     } else if name == "storage" {
         let body = egui::Rect::from_min_max(pt(0.12, 0.14), pt(0.88, 0.86));
         p.rect_stroke(body, 3, stroke, egui::StrokeKind::Inside);
@@ -1167,7 +1178,7 @@ impl App {
             if let Some(request) = self.native.take_host_request(provider) {
                 match request {
                     toolboks_addon_sdk::HostRequest::ReviewUpdate => {
-                        self.pending_package = Some(addons::official_disk_package())
+                        self.pending_package = addons::official_package(id)
                     }
                     toolboks_addon_sdk::HostRequest::RestartElevated { page } => {
                         if self.install_in_progress() {
@@ -1424,7 +1435,9 @@ impl App {
                         badge(ui, "Local package, not verified", look::AMBER, false);
                     }
                     ui.add_space(look::GAP);
-                    muted(ui, if p.manifest.native_provider.is_some() {
+                    muted(ui, if p.manifest.id == addons::MACRO_ID {
+                        "Recording captures keyboard and mouse input only while you record. Playback sends real input to your desktop. Escape stops recording or playback. Macros and settings are saved locally."
+                    } else if p.manifest.native_provider.is_some() {
                         "Folder scans read metadata. Reports are saved only when you choose. This update also adds administrator-only fragmentation analysis, HDD defrag and SSD TRIM; optimization modifies storage metadata only when you request it."
                     } else {
                         "This package uses Toolboks-rendered pages. It cannot run native code, open windows, or change system settings."
@@ -1440,6 +1453,7 @@ impl App {
                             toolboks_addon_sdk::Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
                             toolboks_addon_sdk::Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
                             toolboks_addon_sdk::Capability::SystemTuning => "Back up and change the Windows settings and power plan you select",
+                            toolboks_addon_sdk::Capability::InputAutomation => "Record keyboard and mouse input and replay it only when you start a macro",
                         });
                     }
                     ui.add_space(look::SPACE_L);

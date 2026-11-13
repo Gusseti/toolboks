@@ -36,11 +36,17 @@ pub fn official_disk_package() -> Package {
     serde_json::from_str(toolboks_disk_manager::PACKAGE).expect("bundled disk package")
 }
 pub const AURAL_ID: &str = "toolboks.aural";
+pub const LEGACY_AURAL_PACKAGE: &str = include_str!("../assets/aural-legacy-0.1.tbaddon");
 pub const PROFILES_ID: &str = "toolboks.system-profiles";
-pub const OFFICIAL_ADDONS: [&str; 3] = [toolboks_disk_manager::ID, AURAL_ID, PROFILES_ID];
+pub const MACRO_ID: &str = "toolboks.macro-manager";
+pub const OFFICIAL_ADDONS: [&str; 4] = [toolboks_disk_manager::ID, AURAL_ID, PROFILES_ID, MACRO_ID];
 
 pub fn official_package(id: &str) -> Option<Package> {
     match id {
+        MACRO_ID => Some(
+            serde_json::from_str(include_str!("../assets/macro-manager.tbaddon"))
+                .expect("bundled Macro Manager package"),
+        ),
         toolboks_disk_manager::ID => Some(official_disk_package()),
         AURAL_ID => Some(
             serde_json::from_str(include_str!("../assets/aural.tbaddon"))
@@ -58,15 +64,19 @@ pub fn trusted_native(p: &Package) -> bool {
     let Ok(value) = serde_json::to_value(p) else {
         return false;
     };
-    let package = official_package(&p.manifest.id);
-    let official = package.as_ref().and_then(|p| serde_json::to_value(p).ok());
+    let official = official_package(&p.manifest.id).and_then(|p| serde_json::to_value(p).ok());
     official.as_ref() == Some(&value)
         || (p.manifest.id == AURAL_ID
-            && package.is_some_and(|mut previous| {
-                previous.manifest.title = "Aural".into();
-                previous.manifest.byline = None;
-                serde_json::to_value(previous).ok().as_ref() == Some(&value)
-            }))
+            && serde_json::from_str::<Package>(LEGACY_AURAL_PACKAGE)
+                .ok()
+                .is_some_and(|mut previous| {
+                    if serde_json::to_value(&previous).ok().as_ref() == Some(&value) {
+                        return true;
+                    }
+                    previous.manifest.title = "Aural".into();
+                    previous.manifest.byline = None;
+                    serde_json::to_value(previous).ok().as_ref() == Some(&value)
+                }))
         || (p.manifest.id == toolboks_disk_manager::ID
             && serde_json::from_str::<Package>(toolboks_disk_manager::LEGACY_PACKAGE)
                 .ok()
@@ -186,14 +196,16 @@ fn read_package(path: &Path) -> Result<Package, String> {
     file.take(MAX_PACKAGE_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
-    let p = Package::parse(&bytes, env!("CARGO_PKG_VERSION"))?;
+    let mut p = Package::parse(&bytes, env!("CARGO_PKG_VERSION"))?;
     validate_provider(&p)?;
     if reserved(&p.manifest.id) {
         return Err("A bundled add-on cannot be replaced by a local package.".into());
     }
     if p.manifest.id == AURAL_ID {
-        // Use the current display metadata after validating the exact installed package.
-        return Ok(official_package(AURAL_ID).expect("bundled Audio Gainer package"));
+        // Normalize display metadata only. New capabilities require update review,
+        // not an implicit replacement of the installed package on startup.
+        p.manifest.title = "Audio Gainer".into();
+        p.manifest.byline = Some("by aural".into());
     }
     Ok(p)
 }
@@ -333,6 +345,18 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn official_macro_manager_package_validates_and_rejects_impersonation() {
+        let mut package = official_package(MACRO_ID).unwrap();
+        package.validate(env!("CARGO_PKG_VERSION")).unwrap();
+        assert!(trusted_native(&package));
+        assert!(package
+            .manifest
+            .capabilities
+            .contains(&toolboks_addon_sdk::Capability::InputAutomation));
+        package.manifest.publisher = "Other publisher".into();
+        assert!(validate_provider(&package).is_err());
+    }
 
     #[test]
     fn built_in_workspaces_load_on_demand_and_release_on_navigation() {
@@ -357,16 +381,64 @@ mod tests {
         assert_eq!(package.manifest.byline.as_deref(), Some("by aural"));
         assert_eq!(
             package.manifest.capabilities,
-            [toolboks_addon_sdk::Capability::LiveAudio]
+            [
+                toolboks_addon_sdk::Capability::LiveAudio,
+                toolboks_addon_sdk::Capability::LocalPreferences
+            ]
         );
 
-        let mut previous = package.clone();
+        let mut previous: Package = serde_json::from_str(LEGACY_AURAL_PACKAGE).unwrap();
+        assert!(trusted_native(&previous));
         previous.manifest.title = "Aural".into();
         previous.manifest.byline = None;
         assert!(trusted_native(&previous));
         let mut spoof = previous;
         spoof.manifest.native_provider = None;
         assert!(validate_provider(&spoof).is_err());
+    }
+
+    #[test]
+    fn legacy_aural_update_requires_explicit_saved_preferences_grant() {
+        use toolboks_addon_sdk::Capability;
+        let root =
+            std::env::temp_dir().join(format!("toolboks-aural-permissions-{}", std::process::id()));
+        let legacy: Package = serde_json::from_str(LEGACY_AURAL_PACKAGE).unwrap();
+        let mut registry = Registry::load(root.clone());
+        registry.install(legacy.clone()).unwrap();
+        let mut reloaded = Registry::load(root.clone());
+        let installed = reloaded
+            .packages
+            .iter()
+            .find(|p| p.manifest.id == AURAL_ID)
+            .unwrap();
+        assert!(reloaded.errors.is_empty());
+        assert!(trusted_native(installed));
+        assert_eq!(installed.manifest.version, "0.1.0");
+        assert!(!installed
+            .manifest
+            .capabilities
+            .contains(&Capability::LocalPreferences));
+        let mut forged = legacy;
+        forged
+            .manifest
+            .capabilities
+            .push(Capability::LocalPreferences);
+        assert!(validate_provider(&forged).is_err());
+        reloaded
+            .install(official_package(AURAL_ID).unwrap())
+            .unwrap();
+        let updated = Registry::load(root.clone());
+        let installed = updated
+            .packages
+            .iter()
+            .find(|p| p.manifest.id == AURAL_ID)
+            .unwrap();
+        assert_eq!(installed.manifest.version, "0.2.0");
+        assert!(installed
+            .manifest
+            .capabilities
+            .contains(&Capability::LocalPreferences));
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn system_profiles_requires_the_exact_official_package() {
