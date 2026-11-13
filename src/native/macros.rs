@@ -60,6 +60,8 @@ enum CanvasTool {
     Click,
 }
 
+type ShortcutBindings = (Option<Hotkey>, Vec<(usize, Hotkey)>);
+
 pub(super) struct MacroManager {
     prefs: Preferences,
     initialized: bool,
@@ -79,7 +81,7 @@ pub(super) struct MacroManager {
     new_name: Option<String>,
     focus_new_name: bool,
     confirm_delete: Option<usize>,
-    configured_hotkeys: Option<(Option<Hotkey>, Vec<(usize, Hotkey)>)>,
+    configured_hotkeys: Option<ShortcutBindings>,
     playing_macro: Option<usize>,
     was_recording: bool,
     pending_save: bool,
@@ -514,7 +516,7 @@ impl MacroManager {
         }
         let desired = if self.allowed {
             (
-                self.prefs.record_hotkey.clone(),
+                self.prefs.record_hotkey,
                 self.prefs
                     .macros
                     .iter()
@@ -530,7 +532,7 @@ impl MacroManager {
         }
         match self
             .engine
-            .configure_shortcuts(desired.0.clone(), desired.1.clone())
+            .configure_shortcuts(desired.0, desired.1.clone())
         {
             Ok(()) => self.configured_hotkeys = Some(desired),
             Err(error) => {

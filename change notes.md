@@ -5,7 +5,7 @@
 - **Macro Manager:** a verified installable add-on for recording and editing keystrokes, mouse movements, button presses/releases, clicks and scrolling inside Toolboks.
 - **Mouse-path editor:** place and drag path points, add clicks at points, and use timed or instant movement. The full-width timing slider reaches 10 seconds with clickable checkpoints; edit its duration directly using `ms`, `s` or `sec`.
 - **Macro playback:** use the prominent Play macro button, run once, repeat for a duration, or toggle repeating until stopped, with a configurable delay between completed runs. Each macro has its own saved activation key that triggers it even when another macro is selected. Recording shortcuts work across tools, and Esc stops active work.
-- **Local macro library:** starts empty, requires a name for each new macro, and saves changes automatically. The last macro can be deleted. No recording or playback starts automatically; recording excludes Toolboks control gestures, and stopping playback releases its held keys/buttons.
+- **Local macro library:** starts empty, requires a name for each new macro, and saves changes automatically. The last macro can be deleted. No recording or playback starts automatically; mouse recording excludes the Stop button click, and stopping playback releases its held keys/buttons.
 - **Audio Gainer settings:** optionally enable your microphone when Toolboks starts, even when another page opens first. The general startup option is off by default; a remembered per-microphone on/off state takes precedence when per-microphone settings are enabled.
 - **Per-microphone profiles:** remember microphone on/off state, gain, listening volume, output devices and routing separately for each microphone. Restore activation when switching microphones and when Toolboks launches; saved routes resume with an enabled microphone.
 - **Default microphone:** save your preferred microphone by name, keep it remembered while disconnected, and automatically switch back when it reconnects—even while using another tool.
@@ -25,7 +25,6 @@
 ## Fixed
 
 - Esc stops mouse recording independently of keyboard-hook delivery and immediately refreshes the recorder controls.
-
 - Macro activation and recording shortcuts preserve keypad keys instead of binding the number row. Keypad shortcuts are labelled explicitly; previously assigned keypad shortcuts need to be reassigned once.
 - Shortcut assignment waits without a timeout for the first non-modifier key, with Ctrl/Shift/Alt/Windows supported in combinations. A dedicated key-state listener avoids recording-hook waits on the editor thread.
 - Macro shortcuts wake the active editor immediately instead of waiting for its 200 ms background poll.

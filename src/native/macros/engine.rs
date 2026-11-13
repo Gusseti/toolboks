@@ -126,20 +126,11 @@ impl Default for RecordOptions {
         }
     }
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct RepeatOptions {
     pub repeat: bool,
     pub delay_ms: u64,
     pub duration_ms: Option<u64>,
-}
-impl Default for RepeatOptions {
-    fn default() -> Self {
-        Self {
-            repeat: false,
-            delay_ms: 0,
-            duration_ms: None,
-        }
-    }
 }
 #[derive(Clone, Debug, Default)]
 pub struct Status {
@@ -222,6 +213,8 @@ impl Worker {
         let _ = self.handle.join();
     }
 }
+type EventWaker = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
+
 #[derive(Default)]
 pub struct Engine {
     shared: Arc<Mutex<Shared>>,
@@ -229,7 +222,7 @@ pub struct Engine {
     hotkeys: Option<Worker>,
     events: Arc<Mutex<Vec<ControlEvent>>>,
     bindings: (Option<Hotkey>, Vec<(usize, Hotkey)>),
-    event_waker: Arc<Mutex<Option<Box<dyn Fn() + Send>>>>,
+    event_waker: EventWaker,
 }
 impl Engine {
     pub fn set_mouse_exclusion(&mut self, rect: Option<[i32; 4]>) {
@@ -253,15 +246,15 @@ impl Engine {
         let (ready, started) = std::sync::mpsc::sync_channel(1);
         let handle = thread::spawn(move || unsafe {
             let mut held = [false; 256];
-            for vk in 8..256 {
-                held[vk] = GetAsyncKeyState(vk as i32) < 0;
+            for (vk, was_held) in held.iter_mut().enumerate().skip(8) {
+                *was_held = GetAsyncKeyState(vk as i32) < 0;
             }
             let _ = ready.send(());
             while !flag.load(Ordering::SeqCst) {
-                for vk in 8..256 {
+                for (vk, was_held) in held.iter_mut().enumerate().skip(8) {
                     let state = GetAsyncKeyState(vk as i32);
                     let down = state < 0;
-                    if !control_key(vk as u16) && !held[vk] && (down || state & 1 != 0) {
+                    if !control_key(vk as u16) && !*was_held && (down || state & 1 != 0) {
                         let modifiers = (if GetAsyncKeyState(0x12) < 0 { 1 } else { 0 })
                             | (if GetAsyncKeyState(0x11) < 0 { 2 } else { 0 })
                             | (if GetAsyncKeyState(0x10) < 0 { 4 } else { 0 })
@@ -273,7 +266,7 @@ impl Engine {
                         shared.lock().unwrap().capture_key(vk as u32, modifiers);
                         return;
                     }
-                    held[vk] = down;
+                    *was_held = down;
                 }
                 thread::sleep(Duration::from_millis(2));
             }
