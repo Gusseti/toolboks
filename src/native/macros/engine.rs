@@ -934,6 +934,41 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires an interactive Windows desktop"]
+    fn windows_activation_key_delivers_target_macro() {
+        let mut engine = Engine::default();
+        engine
+            .configure_shortcuts(
+                None,
+                vec![(
+                    3,
+                    Hotkey {
+                        modifiers: 0,
+                        vk: 0x87,
+                    },
+                )],
+            )
+            .unwrap();
+        unsafe {
+            key(0x87, true).unwrap();
+            key(0x87, false).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let events = engine.poll_control_events();
+            if !events.is_empty() {
+                assert!(matches!(events.as_slice(), [ControlEvent::Play(3)]));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Windows did not deliver activation key"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
     fn timing_units_and_active_scope() {
         for input in ["2.5s", "2.5 sec", "2.5 seconds"] {
             assert_eq!(

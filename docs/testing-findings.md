@@ -296,3 +296,23 @@ The first UI test attempt also needed an egui test-harness correction: unused te
 I ran `cargo test --locked --offline -p toolboks --bin toolboks --target-dir ../toolboks/target macro -- --test-threads=1`. The six passing tests are `official_macro_manager_package_validates_and_rejects_impersonation`, `authored_and_recorded_model_round_trip`, `empty_play_does_not_start_input_worker`, `timing_units_and_active_scope`, `background_recording_results_use_namespaced_preferences`, and `editor_and_mouse_page_render_without_starting_input`. Sources are `src/addons.rs`, `src/native/macros.rs`, and `src/native/macros/engine.rs`. Formatting and the preview compilation check also passed.
 
 This was a smoke test only, not an exhaustive review or a real desktop-input check. Recording actual keyboard/mouse activity, playback against another application, global shortcut registration, Esc cancellation during live playback, multi-monitor coordinates and real elapsed repeat duration remain to be checked by hand. No claim of an end-to-end recording/playback pass is made.
+
+# Test-5: 🟠 [MEDIUM] Macro activation-key smoke test
+
+On 13 November 2026, I checked macro activation on staging at `b1c84f2`. The requested medium test was reduced to a smoke test by the user. In-app testing was then explicitly stopped; no further UI interaction was performed.
+
+## 🔵 [INFO] Windows delivered the assigned macro index — PASS
+
+I added an opt-in automated Windows integration test, `windows_activation_key_delivers_target_macro`. It registers F24 for macro index 3, sends a press/release through the existing input engine, and waits for the actual Windows hotkey queue to deliver `Play(3)`. This passed. The test is ignored during ordinary runs because it needs an interactive Windows desktop and injects an F24 key press. It does not launch macro actions or alter saved user macros.
+
+Command: `cargo test --locked --offline -p toolboks --bin toolboks --target-dir ../toolboks/target windows_activation_key_delivers_target_macro -- --ignored --test-threads=1`.
+
+## 🟠 [MEDIUM] Reported activation failure remains unresolved — NOT REPRODUCED
+
+Before the user stopped in-app testing, pressing the saved `4` activation key in the preview changed Play macro to Stop playback and disabled editing, showing that playback started. This observation does not establish that activation works in the user's failing context or that every playback action completed. The following attempt to check another selected macro was interrupted and has no result.
+
+The current smoke test found no confirmed implementation defect to fix. Responsibility for the preceding activation-key implementation is the main agent. Its current diagnosis is that Windows delivery works in the tested conditions; the cause of the user's failure is still unknown. This is not an explanation from the original engine author. Activation while a game has focus, minimized-window operation, and end-to-end playback in the failing environment remain unverified. No product behavior was changed and no issue should be marked resolved based on this test.
+
+## 🔵 [INFO] Existing macro checks — PASS
+
+The focused macro suite finished with 7 passed, 0 failed and the desktop integration test intentionally ignored. The separately invoked desktop integration test passed as described above. These checks cover saved per-macro keys, legacy shortcut migration, model serialization, timing, empty playback, package validation and headless editor rendering. They do not confirm the reported failing scenario.
