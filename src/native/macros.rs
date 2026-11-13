@@ -336,7 +336,11 @@ impl MacroManager {
             return;
         }
         if self.prefs.macros.is_empty() {
+            heading(ui, "Macro settings");
             muted(ui, "Create a macro to see its settings.");
+            ui.add_enabled(false, egui::Button::new("Play macro"));
+            ui.add_space(look::SPACE_M);
+            ui.add_enabled_ui(false, |ui| self.controls(ui, false));
             return;
         }
         heading(ui, &self.prefs.macros[self.prefs.selected].name);
@@ -740,7 +744,10 @@ impl MacroManager {
                         let binding = if record {
                             self.prefs.record_hotkey
                         } else {
-                            self.prefs.macros[self.prefs.selected].activation_key
+                            self.prefs
+                                .macros
+                                .get(self.prefs.selected)
+                                .and_then(|m| m.activation_key)
                         };
                         let label = if self.shortcut_capture == Some(record) {
                             "Press shortcut…".into()
@@ -827,6 +834,16 @@ impl MacroManager {
             }
             if self.prefs.macros.is_empty() {
                 muted(ui, "No macros yet. Choose New to create one.");
+                ui.add_space(look::SPACE_M);
+                heading(ui, "Steps");
+                muted(ui, "Create a macro to add steps.");
+                ui.add_enabled_ui(false, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let _ = ui.button("Add key");
+                        let _ = ui.button("Add path");
+                        let _ = ui.button("Add scroll");
+                    });
+                });
                 return;
             }
             ui.add_space(look::SPACE_M);
@@ -1373,15 +1390,14 @@ impl NativeAddon for MacroManager {
                 if width >= 1000.0 {
                     ui.vertical(|ui|{
                         ui.set_width((width-580.0).max(300.0));
-                        if !self.prefs.macros.is_empty() {self.canvas(ui,editable);ui.add_space(look::SPACE_M);self.timing(ui,editable);}
-                        else {muted(ui,"Create a named macro to start recording or adding steps.");}
+                        ui.add_enabled_ui(!self.prefs.macros.is_empty(), |ui| {self.canvas(ui,editable);ui.add_space(look::SPACE_M);self.timing(ui,editable);});
                     });
                     ui.vertical(|ui|{ui.set_width(ui.available_width().max(280.0));self.options(ui,interactive,editable);});
                 } else {
                     ui.vertical(|ui|{
                         ui.set_width(ui.available_width());
                         self.options(ui,interactive,editable);
-                        if !self.prefs.macros.is_empty() {ui.add_space(look::SPACE_M);self.canvas(ui,editable);self.timing(ui,editable);}
+                        ui.add_space(look::SPACE_M);ui.add_enabled_ui(!self.prefs.macros.is_empty(), |ui| {self.canvas(ui,editable);self.timing(ui,editable);});
                     });
                 }
             });
@@ -1474,6 +1490,24 @@ mod smoke_tests {
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             reopened.ui(ui, &mut prefs);
         });
+        let labels = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        for panel in [
+            "Steps",
+            "Mouse path",
+            "Movement timing",
+            "Macro settings",
+            "Playback",
+        ] {
+            assert!(labels.contains(panel), "Empty library must retain {panel}");
+        }
         output.textures_delta.clear();
         assert!(reopened.prefs.macros.is_empty());
         assert!(reopened.selected_step().is_none());

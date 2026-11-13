@@ -14,6 +14,7 @@
 ## Changed
 
 - Macro Manager keeps its title and feature description at the top. Selecting a macro shows its title, Play action, recording and playback controls in the right options panel; selecting a step shows step settings instead.
+- The steps list, mouse editor, timing and macro controls remain visible with disabled actions when the library is empty, including after deleting its last macro.
 - Step rows include editable delays and immediate deletion. Delete removes the selected step; deleting a macro requires confirmation. Add key starts key capture without inserting a default key. Selected buttons use readable light text.
 - Removed the duplicate Refresh devices button. Kept Refresh microphones, which updates the microphone list without stopping active audio or resetting output choices.
 
