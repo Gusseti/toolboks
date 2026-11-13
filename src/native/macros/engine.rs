@@ -342,9 +342,13 @@ impl Engine {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
         let shared = self.shared.clone();
+        let event_waker = self.event_waker.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let handle = thread::spawn(move || unsafe {
             run_worker(shared, flag, playback, tx);
+            if let Some(wake) = event_waker.lock().unwrap().as_ref() {
+                wake();
+            }
         });
         self.worker = Some(Worker { cancel, handle });
         match rx.recv() {
@@ -773,6 +777,11 @@ fn wait(ms: u64, cancel: &AtomicBool, deadline: Option<Instant>) -> bool {
     let start = Instant::now();
     loop {
         unsafe {
+            // Emergency stop must not depend on a low-level keyboard hook: Windows
+            // can drop a stalled hook, and mouse-only recording still needs Esc.
+            if GetAsyncKeyState(0x1b) < 0 {
+                cancel.store(true, Ordering::SeqCst);
+            }
             pump();
         }
         if cancel.load(Ordering::SeqCst) || deadline.is_some_and(|d| Instant::now() >= d) {
@@ -1175,6 +1184,40 @@ mod tests {
             })
         );
         assert!(!shared.capture_shortcut);
+    }
+    #[test]
+    #[ignore = "requires an interactive Windows desktop"]
+    fn windows_escape_stops_mouse_recording_without_keyboard_hook() {
+        let mut engine = Engine::default();
+        let woke = Arc::new(AtomicBool::new(false));
+        let notified = woke.clone();
+        engine.set_event_waker(move || notified.store(true, Ordering::SeqCst));
+        engine
+            .start_record(RecordOptions {
+                keys: false,
+                ..Default::default()
+            })
+            .unwrap();
+        // Injected events are deliberately ignored by the keyboard hook. This
+        // exercises the independent key-state stop path, including mouse mode.
+        unsafe {
+            key(0x1b, true).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while engine.status().recording && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        unsafe {
+            key(0x1b, false).unwrap();
+        }
+        let stopped = !engine.status().recording;
+        engine.stop();
+        assert!(stopped, "Esc did not stop mouse-only recording");
+        assert!(woke.load(Ordering::SeqCst), "Stop must refresh the UI");
+        assert!(!engine
+            .poll_recorded()
+            .iter()
+            .any(|s| matches!(s.action, Action::Key { .. })));
     }
     #[test]
     #[ignore = "requires an interactive Windows desktop"]
