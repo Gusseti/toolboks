@@ -324,3 +324,19 @@ The user clarified that the failing key was keypad 4 and that the Play button wo
 Assignment now reads the actual key and modifiers from the existing Windows input hook instead of converting the logical GUI event. Keypad numbers and operators receive explicit labels. Previously saved keypad assignments need to be assigned again; their original physical key cannot be recovered from the old number-row code. Esc still cancels assignment. No recording or playback actions are performed by shortcut capture.
 
 The automated smoke suite passed **8 tests, 0 failures**, with the interactive Windows delivery test intentionally ignored. The new `shortcut_capture_preserves_keypad_identity_and_modifiers` check covers keypad digits/operators, distinct top-row 4, modifiers and labels. Existing preference/migration and headless UI checks also passed. No further in-app test or physical keypad test was performed after the user's instruction, so real-keypad activation in the rebuilt preview still needs user confirmation.
+
+# Test-6: 🟡 [LOW] Activation-key responsiveness
+
+On 13 November 2026, I tested the user's saved Keypad 4 shortcut inside Toolboks, initially at staging `34beda6`. The existing macro contains a one-second mouse path. Pressing `KP_4` changed Play macro to Stop playback and disabled editing in the next accessibility observation. **PASS for starting playback**, but this observation is not a precise latency measurement and does not establish whether the user's longer delay occurred.
+
+## 🟡 [LOW] Shortcut handling waited for a polling frame — FIXED
+
+Source inspection found that queued Windows hotkeys did not notify the UI; the host instead requested frames every 200 ms. Responsibility: main agent for host polling integration. Its explanation is that polling was sufficient for background servicing but introduced an avoidable response delay. The Windows shortcut worker now requests an immediate repaint through an editor-installed callback after queuing an event. The fallback poll remains; playback timing and saved shortcuts are unchanged. This removes the polling wait but is not evidence of the cause of every reported long delay.
+
+## 🔵 [INFO] Native notification check — PASS
+
+The automated `windows_activation_key_delivers_target_macro` test passed with an added assertion that actual Windows hotkey delivery invokes the wake callback. It uses F24, verifies `Play(3)`, and completed successfully. The preview build also passed. No precise end-to-end response-time benchmark was performed.
+
+## 🔵 [INFO] Rebuilt in-app retest — BLOCKED by user stop
+
+I reopened the rebuilt preview. Computer Use was stopped with the physical Escape key when selecting its window, before a post-fix activation press. I performed no further UI actions. The pre-fix activation observation above is confirmed; post-fix responsiveness remains for user confirmation. The earlier instruction against in-app tests was explicitly superseded by this request, then the new stop was honored.

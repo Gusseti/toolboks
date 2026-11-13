@@ -188,8 +188,15 @@ pub struct Engine {
     hotkeys: Option<Worker>,
     events: Arc<Mutex<Vec<ControlEvent>>>,
     bindings: (Option<Hotkey>, Vec<(usize, Hotkey)>),
+    event_waker: Arc<Mutex<Option<Box<dyn Fn() + Send>>>>,
 }
 impl Engine {
+    pub fn set_event_waker(&mut self, wake: impl Fn() + Send + 'static) {
+        let mut current = self.event_waker.lock().unwrap();
+        if current.is_none() {
+            *current = Some(Box::new(wake));
+        }
+    }
     pub fn start_shortcut_capture(&mut self) -> Result<(), String> {
         self.stop();
         *self.shared.lock().unwrap() = Shared {
@@ -307,6 +314,7 @@ impl Engine {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
         let events = self.events.clone();
+        let event_waker = self.event_waker.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let handle = thread::spawn(move || unsafe {
             let mut registered = Vec::new();
@@ -334,6 +342,9 @@ impl Engine {
                             .and_then(|index| registrations.get(index))
                         {
                             events.lock().unwrap().push(*event);
+                            if let Some(wake) = event_waker.lock().unwrap().as_ref() {
+                                wake();
+                            }
                         }
                     }
                 }
@@ -992,6 +1003,9 @@ mod tests {
     #[ignore = "requires an interactive Windows desktop"]
     fn windows_activation_key_delivers_target_macro() {
         let mut engine = Engine::default();
+        let woke = Arc::new(AtomicBool::new(false));
+        let notified = woke.clone();
+        engine.set_event_waker(move || notified.store(true, Ordering::SeqCst));
         engine
             .configure_shortcuts(
                 None,
@@ -1013,6 +1027,10 @@ mod tests {
             let events = engine.poll_control_events();
             if !events.is_empty() {
                 assert!(matches!(events.as_slice(), [ControlEvent::Play(3)]));
+                assert!(
+                    woke.load(Ordering::SeqCst),
+                    "Shortcut must wake the app without waiting for a polling frame"
+                );
                 break;
             }
             assert!(

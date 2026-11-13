@@ -1225,7 +1225,9 @@ impl NativeAddon for MacroManager {
         }
         false
     }
-    fn tick(&mut self, _: &egui::Context) {
+    fn tick(&mut self, ctx: &egui::Context) {
+        let ctx = ctx.clone();
+        self.engine.set_event_waker(move || ctx.request_repaint());
         self.service();
     }
     fn tick_background(&mut self) {
