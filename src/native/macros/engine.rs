@@ -203,9 +203,52 @@ impl Engine {
             capture_shortcut: true,
             ..Default::default()
         };
-        self.start_worker(None)
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        let shared = self.shared.clone();
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let handle = thread::spawn(move || unsafe {
+            let mut held = [false; 256];
+            for vk in 8..256 {
+                held[vk] = GetAsyncKeyState(vk as i32) < 0;
+            }
+            let _ = ready.send(());
+            while !flag.load(Ordering::SeqCst) {
+                for vk in 8..256 {
+                    let state = GetAsyncKeyState(vk as i32);
+                    let down = state < 0;
+                    if !control_key(vk as u16) && !held[vk] && (down || state & 1 != 0) {
+                        let modifiers = (if GetAsyncKeyState(0x12) < 0 { 1 } else { 0 })
+                            | (if GetAsyncKeyState(0x11) < 0 { 2 } else { 0 })
+                            | (if GetAsyncKeyState(0x10) < 0 { 4 } else { 0 })
+                            | (if GetAsyncKeyState(0x5b) < 0 || GetAsyncKeyState(0x5c) < 0 {
+                                8
+                            } else {
+                                0
+                            });
+                        shared.lock().unwrap().capture_key(vk as u32, modifiers);
+                        return;
+                    }
+                    held[vk] = down;
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+        });
+        self.worker = Some(Worker { cancel, handle });
+        started
+            .recv()
+            .map_err(|_| "Shortcut listener could not start.".to_owned())
     }
     pub fn take_captured_shortcut(&mut self) -> Option<Hotkey> {
+        // Never join a live hook worker from the UI thread: Windows may still
+        // need that thread to dispatch the key currently being captured.
+        if self
+            .worker
+            .as_ref()
+            .is_some_and(|worker| !worker.handle.is_finished())
+        {
+            return None;
+        }
         self.shared.lock().unwrap().captured_shortcut.take()
     }
     pub fn shortcuts_configured(&self) -> bool {
@@ -527,24 +570,6 @@ unsafe extern "system" fn keyboard(code: i32, wp: usize, lp: isize) -> isize {
         let data = &*(lp as *const KeyboardHook);
         if data.flags & 0x10 == 0 {
             if let Some(hook) = HOOK.lock().unwrap().as_ref() {
-                {
-                    let mut s = hook.shared.lock().unwrap();
-                    if s.capture_shortcut
-                        && (wp == 0x100 || wp == 0x104)
-                        && !control_key(data.vk as u16)
-                    {
-                        let modifiers = (if GetAsyncKeyState(0x12) < 0 { 1 } else { 0 })
-                            | (if GetAsyncKeyState(0x11) < 0 { 2 } else { 0 })
-                            | (if GetAsyncKeyState(0x10) < 0 { 4 } else { 0 })
-                            | (if GetAsyncKeyState(0x5b) < 0 || GetAsyncKeyState(0x5c) < 0 {
-                                8
-                            } else {
-                                0
-                            });
-                        s.capture_key(data.vk, modifiers);
-                        hook.cancel.store(true, Ordering::SeqCst);
-                    }
-                }
                 if data.vk == 0x1b {
                     hook.cancel.store(true, Ordering::SeqCst);
                 } else {
@@ -809,12 +834,13 @@ unsafe fn run_worker(
     }
     let module = GetModuleHandleW(std::ptr::null());
     let kh = SetWindowsHookExW(13, keyboard, module, 0);
-    let mh = if playback.is_none() {
+    let needs_mouse = playback.is_none();
+    let mh = if needs_mouse {
         SetWindowsHookExW(14, mouse, module, 0)
     } else {
         0
     };
-    if kh == 0 || (playback.is_none() && mh == 0) {
+    if kh == 0 || (needs_mouse && mh == 0) {
         if kh != 0 {
             UnhookWindowsHookEx(kh);
         }
@@ -986,6 +1012,29 @@ unsafe fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires an interactive Windows desktop"]
+    fn windows_shortcut_assignment_captures_keypad_without_blocking() {
+        let mut engine = Engine::default();
+        engine.start_shortcut_capture().unwrap();
+        let started = Instant::now();
+        unsafe {
+            key(0x64, true).unwrap();
+            key(0x64, false).unwrap();
+        }
+        loop {
+            if let Some(captured) = engine.take_captured_shortcut() {
+                assert_eq!(captured.vk, 0x64);
+                engine.stop();
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "Shortcut assignment stalled"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
     #[test]
     fn shortcut_capture_preserves_keypad_identity_and_modifiers() {
         let mut shared = Shared::default();

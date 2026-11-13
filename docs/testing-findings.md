@@ -340,3 +340,21 @@ The automated `windows_activation_key_delivers_target_macro` test passed with an
 ## 🔵 [INFO] Rebuilt in-app retest — BLOCKED by user stop
 
 I reopened the rebuilt preview. Computer Use was stopped with the physical Escape key when selecting its window, before a post-fix activation press. I performed no further UI actions. The pre-fix activation observation above is confirmed; post-fix responsiveness remains for user confirmation. The earlier instruction against in-app tests was explicitly superseded by this request, then the new stop was honored.
+
+# Test-7: 🟠 [MEDIUM] Shortcut assignment responsiveness
+
+On 13 November 2026, the user clarified that the delay occurs while assigning a new shortcut, not while activating playback. Test-6 checked the wrong interaction and did not resolve this report. Responsibility: main agent, both for the native capture implementation and the earlier misdiagnosis.
+
+## 🟠 [MEDIUM] Assignment remained on Press shortcut — reproduced with automated input
+
+I clicked the activation-key button in the preview and observed Press shortcut. Sending keypad 4 left the prompt unchanged. The previous capture reused the recording hook and excluded injected input, which explains this automated-input failure; it does not establish that the user's physical-key delay had the same cause. The UI also synchronously stopped/joined that hook worker once a key arrived, creating a potential UI wait during hook cleanup. Removing that join and allowing capture of injected keys alone did not make the automated in-app assignment complete, so I did not accept that intermediate change as a verified fix.
+
+## 🔵 [INFO] Dedicated assignment listener — automated PASS
+
+Shortcut assignment now uses its own short-lived Windows key-state listener. It retains actual virtual keys, including keypad digits, and modifier combinations. Initial held keys and pre-existing transitions are cleared when arming; modifiers alone do not complete assignment. The listener exits on capture, and the UI consumes the result only after the worker has finished. Assignment no longer installs recording keyboard/mouse hooks or waits for their teardown. Recording/playback keep their original hooks.
+
+`windows_shortcut_assignment_captures_keypad_without_blocking` starts this listener, sends native keypad 4, polls the result and asserts completion within one second while retaining VK 0x64. It passed; the test body completed in about 0.01 seconds. This is a focused engine-level result, not an exact in-app timing benchmark. Preview compilation passed. The preceding focused suite had 8 passes and no failures, before the listener replacement; that earlier suite is not claimed as a post-replacement run.
+
+## 🔵 [INFO] Final in-app retest — BLOCKED by user stop
+
+I reopened the revised preview. Computer Use was stopped with physical Escape when finding its window, before the final assignment test. I made no further UI calls. The preview contains the new listener, but the user's physical-key assignment latency remains unconfirmed. No claim is made that the original long delay has been reproduced with physical input or definitively resolved.
