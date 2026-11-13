@@ -33,11 +33,7 @@ struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            macros: vec![Macro {
-                activation_key: None,
-                name: "New macro".into(),
-                steps: vec![],
-            }],
+            macros: vec![],
             selected: 0,
             keys: true,
             movement: true,
@@ -77,6 +73,10 @@ pub(super) struct MacroManager {
     message: Option<String>,
     shortcut_capture: Option<bool>,
     key_capture: bool,
+    new_key: bool,
+    new_name: Option<String>,
+    focus_new_name: bool,
+    confirm_delete: Option<usize>,
     configured_hotkeys: Option<(Option<Hotkey>, Vec<(usize, Hotkey)>)>,
     playing_macro: Option<usize>,
     was_recording: bool,
@@ -100,6 +100,10 @@ impl Default for MacroManager {
             message: None,
             shortcut_capture: None,
             key_capture: false,
+            new_key: false,
+            new_name: None,
+            focus_new_name: false,
+            confirm_delete: None,
             configured_hotkeys: None,
             playing_macro: None,
             was_recording: false,
@@ -246,6 +250,133 @@ fn hotkey_text(hotkey: &Option<Hotkey>) -> String {
 }
 
 impl MacroManager {
+    fn delete_step(&mut self, index: usize) {
+        if let Some(m) = self.prefs.macros.get_mut(self.prefs.selected) {
+            if index < m.steps.len() {
+                m.steps.remove(index);
+                self.step = None;
+                self.pending_save = true;
+            }
+        }
+    }
+    fn delete_macro(&mut self, index: usize) {
+        if index < self.prefs.macros.len() {
+            self.prefs.macros.remove(index);
+            self.prefs.selected = self
+                .prefs
+                .selected
+                .min(self.prefs.macros.len().saturating_sub(1));
+            self.step = None;
+            self.pending_save = true;
+            self.configure_hotkeys();
+        }
+    }
+    fn dialogs(&mut self, ctx: &egui::Context) {
+        if let Some(mut name) = self.new_name.take() {
+            let mut create = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::unique("macro-add-name")).show(ctx, |ui| {
+                heading(ui, "Add name");
+                ui.label("Name your new macro.");
+                let response =
+                    ui.add(egui::TextEdit::singleline(&mut name).hint_text("Macro name"));
+                if self.focus_new_name {
+                    response.request_focus();
+                    self.focus_new_name = false;
+                }
+                ui.horizontal(|ui| {
+                    create = ui
+                        .add_enabled(!name.trim().is_empty(), egui::Button::new("Create macro"))
+                        .clicked()
+                        || (!name.trim().is_empty()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    cancel = ui.button("Cancel").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                });
+            });
+            if create {
+                self.prefs.macros.push(Macro {
+                    name: name.trim().into(),
+                    ..Default::default()
+                });
+                self.prefs.selected = self.prefs.macros.len() - 1;
+                self.step = None;
+                self.pending_save = true;
+            } else if !cancel {
+                self.new_name = Some(name);
+            }
+        }
+        if let Some(index) = self.confirm_delete {
+            let name = self
+                .prefs
+                .macros
+                .get(index)
+                .map(|m| m.name.clone())
+                .unwrap_or_default();
+            egui::Modal::new(egui::Id::unique("macro-delete-confirm")).show(ctx, |ui| {
+                heading(ui, "Delete macro?");
+                ui.label(format!("Delete {name} and all its steps?"));
+                ui.horizontal(|ui| {
+                    if ui.button("Confirm delete").clicked() {
+                        self.delete_macro(index);
+                        self.confirm_delete = None;
+                    }
+                    if ui.button("Cancel").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
+                        self.confirm_delete = None;
+                    }
+                });
+            });
+        }
+    }
+    fn options(&mut self, ui: &mut egui::Ui, interactive: bool, editable: bool) {
+        if self.step.is_some() {
+            self.inspector(ui, editable);
+            return;
+        }
+        if self.prefs.macros.is_empty() {
+            muted(ui, "Create a macro to see its settings.");
+            return;
+        }
+        heading(ui, &self.prefs.macros[self.prefs.selected].name);
+        let playing = self.engine.status().playing;
+        if ui
+            .add_enabled(
+                interactive && !self.engine.status().recording,
+                egui::Button::new(
+                    RichText::new(if playing {
+                        "Stop playback"
+                    } else {
+                        "Play macro"
+                    })
+                    .color(look::TEXT),
+                )
+                .fill(look::ACCENT),
+            )
+            .clicked()
+        {
+            if playing {
+                self.engine.stop();
+                self.playing_macro = None;
+            } else {
+                self.play();
+            }
+        }
+        ui.add_enabled(
+            editable,
+            egui::TextEdit::singleline(&mut self.prefs.macros[self.prefs.selected].name)
+                .desired_width(ui.available_width()),
+        );
+        if ui
+            .add_enabled(editable, egui::Button::new("Delete macro"))
+            .clicked()
+        {
+            self.confirm_delete = Some(self.prefs.selected);
+        }
+        ui.add_space(look::SPACE_M);
+        self.controls(ui, interactive);
+    }
     pub(super) fn needs_background_preferences(
         prefs: &BTreeMap<String, serde_json::Value>,
     ) -> bool {
@@ -263,7 +394,7 @@ impl MacroManager {
         })
     }
     fn configure_hotkeys(&mut self) {
-        if self.shortcut_capture.is_some() {
+        if self.shortcut_capture.is_some() || self.new_key {
             return;
         }
         let desired = if self.allowed {
@@ -294,17 +425,13 @@ impl MacroManager {
         }
     }
     fn selected_macro(&mut self) -> &mut Macro {
-        if self.prefs.macros.is_empty() {
-            self.prefs.macros.push(Macro {
-                activation_key: None,
-                name: "New macro".into(),
-                steps: vec![],
-            })
-        }
         self.prefs.selected = self.prefs.selected.min(self.prefs.macros.len() - 1);
         &mut self.prefs.macros[self.prefs.selected]
     }
     fn selected_step(&mut self) -> Option<&mut Step> {
+        if self.prefs.macros.is_empty() {
+            return None;
+        }
         let index = self.step?;
         self.selected_macro().steps.get_mut(index)
     }
@@ -330,6 +457,10 @@ impl MacroManager {
     }
     fn record(&mut self) {
         if !self.allowed {
+            return;
+        }
+        if self.prefs.macros.is_empty() {
+            self.message = Some("Create a named macro before recording.".into());
             return;
         }
         if self.engine.status().recording {
@@ -423,6 +554,38 @@ impl MacroManager {
         }
     }
     fn capture_binding(&mut self, ui: &egui::Ui) {
+        if self.new_key {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(20));
+            if let Some(key) = self.engine.take_captured_shortcut() {
+                self.engine.stop();
+                self.new_key = false;
+                if key.vk != 0x1b && !self.prefs.macros.is_empty() {
+                    let m = self.selected_macro();
+                    let index = m.steps.len();
+                    m.steps.extend([
+                        Step {
+                            delay_ms: 0,
+                            action: Action::Key {
+                                vk: key.vk as u16,
+                                down: true,
+                            },
+                        },
+                        Step {
+                            delay_ms: 0,
+                            action: Action::Key {
+                                vk: key.vk as u16,
+                                down: false,
+                            },
+                        },
+                    ]);
+                    self.step = Some(index);
+                    self.pending_save = true;
+                }
+                self.configure_hotkeys();
+            }
+            return;
+        }
         if let Some(record) = self.shortcut_capture {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(20));
@@ -631,13 +794,8 @@ impl MacroManager {
             ui.horizontal(|ui| {
                 heading(ui, "Macros");
                 if ui.add_enabled(editable, egui::Button::new("New")).clicked() {
-                    self.prefs.macros.push(Macro {
-                        activation_key: None,
-                        name: format!("Macro {}", self.prefs.macros.len() + 1),
-                        steps: vec![],
-                    });
-                    self.prefs.selected = self.prefs.macros.len() - 1;
-                    self.step = None;
+                    self.new_name = Some(String::new());
+                    self.focus_new_name = true;
                 }
             });
             let names = self
@@ -667,25 +825,9 @@ impl MacroManager {
                     self.step = None;
                 }
             }
-            ui.separator();
-            ui.add_enabled(
-                editable,
-                egui::TextEdit::singleline(&mut self.selected_macro().name)
-                    .hint_text("Macro name")
-                    .desired_width(ui.available_width()),
-            );
-            if ui
-                .add_enabled(
-                    editable && self.prefs.macros.len() > 1,
-                    egui::Button::new("Delete macro"),
-                )
-                .clicked()
-            {
-                let i = self.prefs.selected;
-                self.prefs.macros.remove(i);
-                self.prefs.selected = 0;
-                self.step = None;
-                self.configure_hotkeys();
+            if self.prefs.macros.is_empty() {
+                muted(ui, "No macros yet. Choose New to create one.");
+                return;
             }
             ui.add_space(look::SPACE_M);
             heading(ui, "Steps");
@@ -696,54 +838,66 @@ impl MacroManager {
                 .enumerate()
                 .map(|(i, s)| (i, action_name(&s.action), s.delay_ms))
                 .collect::<Vec<_>>();
+            let mut remove_step = None;
             egui::ScrollArea::vertical()
                 .id_salt("macro-steps")
                 .max_height(430.0)
                 .show(ui, |ui| {
-                    for (index, label, delay) in rows {
-                        if ui
-                            .add_enabled(
-                                editable,
-                                egui::Button::selectable(
-                                    self.step == Some(index),
-                                    format!(
-                                        "{:02}  {label}\n      Delay {}",
-                                        index + 1,
-                                        duration_text(delay)
+                    for (index, label, _) in rows {
+                        ui.push_id(index, |ui| {
+                            if ui
+                                .add_enabled(
+                                    editable,
+                                    egui::Button::selectable(
+                                        self.step == Some(index),
+                                        format!("{:02}  {label}", index + 1),
                                     ),
-                                ),
-                            )
-                            .clicked()
-                        {
-                            self.step = Some(index);
-                            self.timing_text.clear();
-                        }
+                                )
+                                .clicked()
+                            {
+                                self.step = Some(index);
+                                self.timing_text.clear();
+                            }
+                            ui.horizontal(|ui| {
+                                ui.label("Delay");
+                                ui.add_enabled(
+                                    editable,
+                                    egui::DragValue::new(
+                                        &mut self.prefs.macros[self.prefs.selected].steps[index]
+                                            .delay_ms,
+                                    )
+                                    .range(0..=86_400_000)
+                                    .suffix(" ms"),
+                                );
+                                if ui
+                                    .add_enabled(editable, egui::Button::new("Delete"))
+                                    .clicked()
+                                {
+                                    remove_step = Some(index);
+                                }
+                            });
+                        });
                     }
                     if self.selected_macro().steps.is_empty() {
                         muted(ui, "Record actions or add a step to begin.");
                     }
                 });
+            if let Some(index) = remove_step {
+                self.delete_step(index);
+            }
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .add_enabled(editable, egui::Button::new("Add key"))
                     .clicked()
                 {
-                    let m = self.selected_macro();
-                    let i = m.steps.len();
-                    m.steps.extend([
-                        Step {
-                            delay_ms: 0,
-                            action: Action::Key { vk: 65, down: true },
-                        },
-                        Step {
-                            delay_ms: 0,
-                            action: Action::Key {
-                                vk: 65,
-                                down: false,
-                            },
-                        },
-                    ]);
-                    self.step = Some(i);
+                    self.new_key = true;
+                    let _ = self.engine.configure_shortcuts(None, Vec::new());
+                    self.configured_hotkeys = None;
+                    if let Err(error) = self.engine.start_shortcut_capture() {
+                        self.new_key = false;
+                        self.message = Some(error);
+                        self.configure_hotkeys();
+                    }
                 }
                 if ui
                     .add_enabled(editable, egui::Button::new("Add path"))
@@ -1154,9 +1308,11 @@ impl NativeAddon for MacroManager {
                 self.prefs = saved;
             }
         }
-        self.selected_macro();
+        if !self.prefs.macros.is_empty() {
+            self.selected_macro();
+        }
         if let Some(previous) = self.prefs.play_hotkey.take() {
-            if self.selected_macro().activation_key.is_none() {
+            if !self.prefs.macros.is_empty() && self.selected_macro().activation_key.is_none() {
                 self.selected_macro().activation_key = Some(previous);
                 self.pending_save = true;
             }
@@ -1187,30 +1343,52 @@ impl NativeAddon for MacroManager {
         if let Some(rect) = app_window_rect() {
             self.ignore_rect = Some(rect);
         }
-        egui::ScrollArea::vertical().id_salt("macro-manager-workspace").show(ui,|ui|{
-            ui.horizontal_wrapped(|ui|{
-                ui.label(RichText::new(&self.selected_macro().name).size(look::TEXT_TITLE).strong());
-                let playing=self.engine.status().playing;
-                if ui.add_enabled(interactive && !self.engine.status().recording,egui::Button::new(if playing{"Stop playback"}else{"Play macro"}).min_size(egui::vec2(110.0,32.0)).fill(look::ACCENT)).clicked(){
-                    if playing{self.engine.stop();self.playing_macro=None;}else{self.play();}
-                }
-                if ui.add_enabled(interactive && !busy,egui::Button::new("Save macro")).clicked(){self.pending_save=true;}
-            });
-            muted(ui,"Record actions, edit steps, and draw mouse paths. Playback sends real desktop input.");
-            if let Some(message)=self.message.clone(){if look::banner(ui,&message){self.message=None;}}
-            ui.add_space(look::SPACE_M);self.controls(ui,interactive);
-            ui.add_space(look::SPACE_M);
-            let editable=interactive && !busy;let width=ui.available_width();
-            if width>=1000.0 {
-                ui.horizontal_top(|ui|{
-                    ui.vertical(|ui|{ui.set_width(260.0);self.library(ui,editable);});
-                    ui.vertical(|ui|{ui.set_width((width-520.0).max(380.0));self.canvas(ui,editable);ui.add_space(look::SPACE_M);self.timing(ui,editable);});
-                    ui.vertical(|ui|{ui.set_width(ui.available_width().max(220.0));self.inspector(ui,editable);});
-                });
-            }else{
-                ui.horizontal_top(|ui|{ui.vertical(|ui|{ui.set_width(260.0_f32.min(width*0.4));self.library(ui,editable);});ui.vertical(|ui|{ui.set_width(ui.available_width());self.canvas(ui,editable);self.timing(ui,editable);self.inspector(ui,editable);});});
+        ui.visuals_mut().selection.stroke.color = look::TEXT;
+        if interactive
+            && !busy
+            && !self.new_key
+            && self.shortcut_capture.is_none()
+            && !self.key_capture
+            && self.new_name.is_none()
+            && self.confirm_delete.is_none()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && ui.input(|i| i.key_pressed(egui::Key::Delete))
+        {
+            if let Some(index) = self.step {
+                self.delete_step(index);
+            } else if !self.prefs.macros.is_empty() {
+                self.confirm_delete = Some(self.prefs.selected);
             }
+        }
+        egui::ScrollArea::vertical().id_salt("macro-manager-workspace").show(ui,|ui|{
+            ui.label(RichText::new("Macro Manager").size(look::TEXT_TITLE).strong());
+            muted(ui,"Record keystrokes and mouse actions, edit paths and delays, and replay macros with your own shortcuts. Changes save automatically.");
+            if let Some(message)=self.message.clone(){if look::banner(ui,&message){self.message=None;}}
+            if self.new_key { ui.label("Press a key to add it. Esc cancels."); }
+            ui.add_space(look::SPACE_M);
+            let editable=interactive && !busy && !self.new_key && self.shortcut_capture.is_none();
+            let width=ui.available_width();
+            ui.horizontal_top(|ui|{
+                ui.vertical(|ui|{ui.set_width(250.0_f32.min(width*0.25));self.library(ui,editable);});
+                if width >= 1000.0 {
+                    ui.vertical(|ui|{
+                        ui.set_width((width-580.0).max(300.0));
+                        if !self.prefs.macros.is_empty() {self.canvas(ui,editable);ui.add_space(look::SPACE_M);self.timing(ui,editable);}
+                        else {muted(ui,"Create a named macro to start recording or adding steps.");}
+                    });
+                    ui.vertical(|ui|{ui.set_width(ui.available_width().max(280.0));self.options(ui,interactive,editable);});
+                } else {
+                    ui.vertical(|ui|{
+                        ui.set_width(ui.available_width());
+                        self.options(ui,interactive,editable);
+                        if !self.prefs.macros.is_empty() {ui.add_space(look::SPACE_M);self.canvas(ui,editable);self.timing(ui,editable);}
+                    });
+                }
+            });
         });
+        if !tour {
+            self.dialogs(ui.ctx());
+        }
         if busy {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
@@ -1273,6 +1451,34 @@ impl NativeAddon for MacroManager {
 mod smoke_tests {
     use super::*;
     #[test]
+    fn empty_library_and_deleting_last_macro_stay_empty_after_save_and_render() {
+        let mut manager = MacroManager {
+            saving_allowed: true,
+            ..Default::default()
+        };
+        assert!(manager.prefs.macros.is_empty());
+        manager.prefs.macros.push(Macro {
+            name: "Only macro".into(),
+            ..Default::default()
+        });
+        manager.delete_macro(0);
+        let mut prefs = BTreeMap::new();
+        assert!(manager.save_preferences(&mut prefs));
+        let mut reopened = MacroManager {
+            saving_allowed: true,
+            ..Default::default()
+        };
+        reopened.load_preferences(&prefs);
+        let ctx = egui::Context::default();
+        look::apply_style(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            reopened.ui(ui, &mut prefs);
+        });
+        output.textures_delta.clear();
+        assert!(reopened.prefs.macros.is_empty());
+        assert!(reopened.selected_step().is_none());
+    }
+    #[test]
     fn activation_keys_are_saved_per_macro_and_legacy_key_is_migrated() {
         let mut manager = MacroManager {
             saving_allowed: true,
@@ -1287,6 +1493,12 @@ mod smoke_tests {
             modifiers: 2,
             vk: 0x75,
         };
+        if manager.prefs.macros.is_empty() {
+            manager.prefs.macros.push(Macro {
+                name: "Test macro".into(),
+                ..Default::default()
+            });
+        }
         manager.prefs.macros[0].activation_key = Some(first);
         manager.prefs.macros.push(Macro {
             name: "Second".into(),
@@ -1320,6 +1532,12 @@ mod smoke_tests {
             look::apply_style(&ctx);
             let mut manager = MacroManager::default();
             manager.set_capabilities(&[Capability::InputAutomation, Capability::LocalPreferences]);
+            if manager.prefs.macros.is_empty() {
+                manager.prefs.macros.push(Macro {
+                    name: "Test macro".into(),
+                    ..Default::default()
+                });
+            }
             manager.prefs.macros[0].steps.push(Step {
                 delay_ms: 100,
                 action: Action::Path {
@@ -1362,7 +1580,19 @@ mod smoke_tests {
             pending_save: true,
             ..Default::default()
         };
+        if manager.prefs.macros.is_empty() {
+            manager.prefs.macros.push(Macro {
+                name: "Test macro".into(),
+                ..Default::default()
+            });
+        }
         manager.prefs.macros[0].name = "Saved macro".into();
+        if manager.prefs.macros.is_empty() {
+            manager.prefs.macros.push(Macro {
+                name: "Test macro".into(),
+                ..Default::default()
+            });
+        }
         manager.prefs.macros[0].steps.push(Step {
             delay_ms: 100,
             action: Action::Key { vk: 65, down: true },

@@ -4,6 +4,10 @@ Install **Macro Manager** from Add-ons, review its input-automation and local-pr
 
 ## Record and edit
 
+The library starts empty. Choose New, enter a name in Add name, then Create macro. Changes save automatically; there is no Save button. Selecting a macro shows its title, Play button and recording/playback settings in the right options panel. Selecting a step replaces those controls with that step's settings.
+
+Edit delays or delete steps directly in the step list. Add key immediately waits for your key without inserting a placeholder. Delete removes the selected step without confirmation, or asks for confirmation when the macro itself is selected. The last macro can be deleted too.
+
 Choose keystrokes, mouse movements, clicks and/or scrolls, then press Record. Stop recording with the same button, your configured shortcut or Esc. Toolboks control gestures and injected playback input are excluded from recordings. New recordings append to the selected macro.
 
 Recorded delays preserve the elapsed time between captured actions. Fixed delays apply the chosen default between events. Custom delays retain recorded timings for individual editing in Selected step. Recorded key/button presses and releases stay separate so held keys and drags can be replayed.
