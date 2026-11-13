@@ -155,6 +155,8 @@ pub fn parse_timing(input: &str, scope: TimingScope) -> Result<u64, String> {
 
 #[derive(Default)]
 struct Shared {
+    capture_shortcut: bool,
+    captured_shortcut: Option<Hotkey>,
     status: Status,
     steps: Vec<Step>,
     last: Option<Instant>,
@@ -166,6 +168,12 @@ struct Shared {
 struct Worker {
     cancel: Arc<AtomicBool>,
     handle: JoinHandle<()>,
+}
+impl Shared {
+    fn capture_key(&mut self, vk: u32, modifiers: u32) {
+        self.captured_shortcut = Some(Hotkey { vk, modifiers });
+        self.capture_shortcut = false;
+    }
 }
 impl Worker {
     fn stop(self) {
@@ -182,6 +190,17 @@ pub struct Engine {
     bindings: (Option<Hotkey>, Vec<(usize, Hotkey)>),
 }
 impl Engine {
+    pub fn start_shortcut_capture(&mut self) -> Result<(), String> {
+        self.stop();
+        *self.shared.lock().unwrap() = Shared {
+            capture_shortcut: true,
+            ..Default::default()
+        };
+        self.start_worker(None)
+    }
+    pub fn take_captured_shortcut(&mut self) -> Option<Hotkey> {
+        self.shared.lock().unwrap().captured_shortcut.take()
+    }
     pub fn shortcuts_configured(&self) -> bool {
         self.hotkeys.is_some()
     }
@@ -467,6 +486,12 @@ pub fn key_name(vk: u16) -> String {
         0x28 => "Down".into(),
         0x2e => "Delete".into(),
         0x30..=0x39 | 0x41..=0x5a => (vk as u8 as char).to_string(),
+        0x60..=0x69 => format!("Keypad {}", vk - 0x60),
+        0x6a => "Keypad *".into(),
+        0x6b => "Keypad +".into(),
+        0x6d => "Keypad -".into(),
+        0x6e => "Keypad .".into(),
+        0x6f => "Keypad /".into(),
         0x70..=0x87 => format!("F{}", vk - 0x6f),
         _ => format!("Key {vk:#04X}"),
     }
@@ -491,6 +516,24 @@ unsafe extern "system" fn keyboard(code: i32, wp: usize, lp: isize) -> isize {
         let data = &*(lp as *const KeyboardHook);
         if data.flags & 0x10 == 0 {
             if let Some(hook) = HOOK.lock().unwrap().as_ref() {
+                {
+                    let mut s = hook.shared.lock().unwrap();
+                    if s.capture_shortcut
+                        && (wp == 0x100 || wp == 0x104)
+                        && !control_key(data.vk as u16)
+                    {
+                        let modifiers = (if GetAsyncKeyState(0x12) < 0 { 1 } else { 0 })
+                            | (if GetAsyncKeyState(0x11) < 0 { 2 } else { 0 })
+                            | (if GetAsyncKeyState(0x10) < 0 { 4 } else { 0 })
+                            | (if GetAsyncKeyState(0x5b) < 0 || GetAsyncKeyState(0x5c) < 0 {
+                                8
+                            } else {
+                                0
+                            });
+                        s.capture_key(data.vk, modifiers);
+                        hook.cancel.store(true, Ordering::SeqCst);
+                    }
+                }
                 if data.vk == 0x1b {
                     hook.cancel.store(true, Ordering::SeqCst);
                 } else {
@@ -932,6 +975,18 @@ unsafe fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shortcut_capture_preserves_keypad_identity_and_modifiers() {
+        let mut shared = Shared::default();
+        for vk in [0x34, 0x60, 0x64, 0x69, 0x6a, 0x6b, 0x6d, 0x6e, 0x6f] {
+            shared.capture_shortcut = true;
+            shared.capture_key(vk, 6);
+            assert_eq!(shared.captured_shortcut, Some(Hotkey { vk, modifiers: 6 }));
+            assert!(!shared.capture_shortcut);
+        }
+        assert_eq!(key_name(0x34), "4");
+        assert_eq!(key_name(0x64), "Keypad 4");
+    }
 
     #[test]
     #[ignore = "requires an interactive Windows desktop"]

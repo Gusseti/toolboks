@@ -423,6 +423,24 @@ impl MacroManager {
         }
     }
     fn capture_binding(&mut self, ui: &egui::Ui) {
+        if let Some(record) = self.shortcut_capture {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(20));
+            if let Some(key) = self.engine.take_captured_shortcut() {
+                self.engine.stop();
+                self.shortcut_capture = None;
+                if key.vk != 0x1b {
+                    if record {
+                        self.prefs.record_hotkey = Some(key);
+                    } else {
+                        self.selected_macro().activation_key = Some(key);
+                    }
+                    self.pending_save = true;
+                }
+                self.configure_hotkeys();
+            }
+            return;
+        }
         if self.shortcut_capture.is_none() && !self.key_capture {
             return;
         }
@@ -431,7 +449,6 @@ impl MacroManager {
                 key,
                 pressed: true,
                 repeat: false,
-                modifiers,
                 ..
             } = event
             {
@@ -470,19 +487,6 @@ impl MacroManager {
                         }
                     }
                     self.key_capture = false;
-                } else if let Some(record) = self.shortcut_capture.take() {
-                    let hotkey = Some(Hotkey {
-                        vk,
-                        modifiers: (if modifiers.ctrl { 2 } else { 0 })
-                            | (if modifiers.alt { 1 } else { 0 })
-                            | (if modifiers.shift { 4 } else { 0 }),
-                    });
-                    if record {
-                        self.prefs.record_hotkey = hotkey
-                    } else {
-                        self.selected_macro().activation_key = hotkey
-                    };
-                    self.configure_hotkeys();
                 }
                 self.pending_save = true;
                 break;
@@ -571,14 +575,14 @@ impl MacroManager {
                             },
                         );
                         let binding = if record {
-                            &self.prefs.record_hotkey
+                            self.prefs.record_hotkey
                         } else {
-                            &self.prefs.macros[self.prefs.selected].activation_key
+                            self.prefs.macros[self.prefs.selected].activation_key
                         };
                         let label = if self.shortcut_capture == Some(record) {
                             "Press shortcut…".into()
                         } else {
-                            hotkey_text(binding)
+                            hotkey_text(&binding)
                         };
                         if ui
                             .add_enabled(
@@ -592,6 +596,11 @@ impl MacroManager {
                             self.shortcut_capture = Some(record);
                             let _ = self.engine.configure_shortcuts(None, Vec::new());
                             self.configured_hotkeys = None;
+                            if let Err(error) = self.engine.start_shortcut_capture() {
+                                self.shortcut_capture = None;
+                                self.message = Some(error);
+                                self.configure_hotkeys();
+                            }
                         }
                         if binding.is_some()
                             && ui

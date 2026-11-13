@@ -22,4 +22,6 @@ Use Play macro beside the macro name to play the selected macro. Assign each mac
 
 The recording shortcut remains shared. Esc is reserved for stopping; shortcuts must be different and available in Windows. No input is recorded or played simply by opening Toolboks. Assigned shortcuts remain usable while working in another tool; active recording/playback continues without rendering Macro Manager's page.
 
+Shortcut assignment uses the native Windows key, so `Keypad 4` and top-row `4` stay separate. Reassign any keypad shortcut saved by an older build, which stored it as a top-row number. With Num Lock off, Windows reports keypad navigation keys instead of numbers.
+
 Macros and preferences are stored locally with the add-on's namespaced preferences. Playback sends real input to the active Windows desktop; Windows may reject input to an application with higher privileges. Stop releases keys/buttons held by playback.

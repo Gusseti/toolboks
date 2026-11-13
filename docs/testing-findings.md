@@ -316,3 +316,11 @@ The current smoke test found no confirmed implementation defect to fix. Responsi
 ## 🔵 [INFO] Existing macro checks — PASS
 
 The focused macro suite finished with 7 passed, 0 failed and the desktop integration test intentionally ignored. The separately invoked desktop integration test passed as described above. These checks cover saved per-macro keys, legacy shortcut migration, model serialization, timing, empty playback, package validation and headless editor rendering. They do not confirm the reported failing scenario.
+
+## 🟠 [MEDIUM] Keypad shortcuts were saved as number-row keys — FIXED, automated smoke PASS
+
+The user clarified that the failing key was keypad 4 and that the Play button worked. Source inspection confirmed the cause: shortcut assignment converted egui's logical `Num4` into Windows VK `0x34`, losing the keypad's VK `0x64`. Responsibility: main agent, which implemented the logical-key shortcut capture. Its explanation is that the GUI key enum merges keypad digits with number-row digits; the previous F24 delivery test did not cover this distinction.
+
+Assignment now reads the actual key and modifiers from the existing Windows input hook instead of converting the logical GUI event. Keypad numbers and operators receive explicit labels. Previously saved keypad assignments need to be assigned again; their original physical key cannot be recovered from the old number-row code. Esc still cancels assignment. No recording or playback actions are performed by shortcut capture.
+
+The automated smoke suite passed **8 tests, 0 failures**, with the interactive Windows delivery test intentionally ignored. The new `shortcut_capture_preserves_keypad_identity_and_modifiers` check covers keypad digits/operators, distinct top-row 4, modifiers and labels. Existing preference/migration and headless UI checks also passed. No further in-app test or physical keypad test was performed after the user's instruction, so real-keypad activation in the rebuilt preview still needs user confirmation.
