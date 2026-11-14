@@ -128,14 +128,15 @@ and `mesh::MeshCache` (host side).
 The host sends `FocusGained` and `FocusLost` and routes keys to the add-on only while the last frame
 said `wants_keyboard`. Focus that arrives by Tab carries the direction; the add-on then focuses its
 first (or last) widget. When Tab moves focus past the add-on's last (or first) widget, the frame
-carries `focus_escape` and the host moves focus to its own next widget. egui wraps focus, so the
-escape is detected from widget positions (forward to a widget above, or left on the same row, is a
-wrap).
+carries `focus_escape` and the host moves focus to its own next widget. The runtime places an
+invisible focusable sentinel before and after the page, so the ends of egui's own traversal order
+are exact: focus on the end sentinel is a forward escape, focus on the start sentinel a backward
+one. The sentinel gives focus back at once, so the add-on never takes it back on a later frame.
 
 ## Designed for, not yet tested in a real host
 
 These paths exist in the messages and in the runtime, but only #81 and the pilot (#88) can test
 them against real OS input: text editing and selection, IME (preedit, commit, output rectangle),
 clipboard round trip (copy out, paste in), drag released outside the view, focus and Tab routing
-including the escape heuristic, and high DPI other than 1.0 (`pixels_per_point` is clamped to
+against real input, and high DPI other than 1.0 (`pixels_per_point` is clamped to
 0.25 to 8).

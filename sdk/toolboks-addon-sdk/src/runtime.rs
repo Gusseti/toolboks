@@ -335,7 +335,6 @@ impl<W: Write> Runtime<W> {
                 tab = Some(direction);
             }
         }
-        let focused_before = ctx.memory(|memory| memory.focused());
         let mut raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             time: Some(self.clock.elapsed().as_secs_f64()),
@@ -352,21 +351,33 @@ impl<W: Write> Runtime<W> {
         }
         let mut changed = false;
         let preferences = &mut self.preferences;
+        let mut discard_requested = false;
         let mut output = ctx.run_ui(raw, |ui| {
+            // Invisible focusable sentinels before and after the page mark the two ends of
+            // egui's traversal order. Tab past the last widget lands on the end sentinel in
+            // the same pass; Shift+Tab before the first one is applied by egui one pass later,
+            // so a Tab frame asks for a second pass to settle focus before it is sent.
+            let anchor = egui::Rect::from_min_size(ui.max_rect().min, egui::Vec2::ZERO);
+            let sense = egui::Sense::focusable_noninteractive();
+            ui.interact(anchor, focus_id(FOCUS_START), sense);
             egui::CentralPanel::default().show(ui, |ui| {
                 changed |= addon.ui(ui, preferences);
             });
+            ui.interact(anchor, focus_id(FOCUS_END), sense);
+            if tab.is_some() && !discard_requested {
+                discard_requested = true;
+                ui.ctx().request_discard("focus traversal");
+            }
         });
-        let focus_escape = tab.filter(|direction| {
-            let after = ctx.memory(|memory| memory.focused());
-            focus_escaped(&ctx, *direction, focused_before, after)
-        });
-        if focus_escape.is_some() {
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
+        let focused = ctx.memory(|memory| memory.focused());
+        let focus_escape = match focused {
+            Some(id) if id == focus_id(FOCUS_END) => Some(TabDirection::Forward),
+            Some(id) if id == focus_id(FOCUS_START) => Some(TabDirection::Backward),
+            _ => None,
+        };
+        if let (Some(id), Some(_)) = (focused, focus_escape) {
+            // The host takes focus; the sentinel never keeps it.
+            ctx.memory_mut(|memory| memory.surrender_focus(id));
         }
         let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
         let repaint_after_ms = output
@@ -533,11 +544,17 @@ fn convert(
             after_chars: after_chars as usize,
         })),
         InputEvent::FocusGained { via_tab } => {
-            // Focus arriving by Tab lands on the first (or last) widget: egui moves focus
-            // from "nothing focused" to the first widget in that direction.
+            // Focus arriving by Tab starts on the sentinel at the other end, so one Tab press
+            // lands on the first (or last) real widget in egui's own traversal order.
             if let Some(direction) = via_tab {
+                let start = match direction {
+                    TabDirection::Forward => FOCUS_START,
+                    TabDirection::Backward => FOCUS_END,
+                };
+                ctx.memory_mut(|memory| memory.request_focus(focus_id(start)));
                 out.push(tab_key(direction, true));
                 out.push(tab_key(direction, false));
+                return Some(direction);
             }
         }
         InputEvent::FocusLost => ctx.memory_mut(|memory| {
@@ -549,33 +566,11 @@ fn convert(
     None
 }
 
-/// Tab left the add-on when focus vanished or wrapped around to the other end. egui wraps
-/// focus, so a wrap is detected from the widget positions: moving forward to a widget that
-/// sits above (or on the same row, left of) the one that had focus is a wrap.
-fn focus_escaped(
-    ctx: &egui::Context,
-    direction: TabDirection,
-    before: Option<egui::Id>,
-    after: Option<egui::Id>,
-) -> bool {
-    let Some(before) = before else {
-        return false;
-    };
-    let Some(after) = after else {
-        return true;
-    };
-    if before == after {
-        return false;
-    }
-    let (Some(from), Some(to)) = (ctx.read_response(before), ctx.read_response(after)) else {
-        return false;
-    };
-    let (from, to) = (from.rect.min, to.rect.min);
-    let earlier = to.y < from.y - 0.5 || ((to.y - from.y).abs() <= 0.5 && to.x < from.x);
-    match direction {
-        TabDirection::Forward => earlier,
-        TabDirection::Backward => !earlier,
-    }
+const FOCUS_START: &str = "toolboks-runtime-focus-start";
+const FOCUS_END: &str = "toolboks-runtime-focus-end";
+
+fn focus_id(name: &str) -> egui::Id {
+    egui::Id::NULL.with(name)
 }
 
 #[cfg(test)]

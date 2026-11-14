@@ -1,6 +1,6 @@
 //! A sample add-on built only against the SDK, driven by a test host over in-memory pipes.
 
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use toolboks_addon_sdk::runtime::proto::memory::{duplex, PipeWriter};
@@ -8,7 +8,7 @@ use toolboks_addon_sdk::runtime::proto::mesh::{MeshCache, MeshRef};
 use toolboks_addon_sdk::runtime::proto::pacing::{Heartbeat, HeartbeatMonitor};
 use toolboks_addon_sdk::runtime::proto::{
     self, egui as wire_egui, AddonMessage, Frame, FrameWriter, Hello, HostMessage, InputBatch,
-    InputEvent, ProtocolError, Theme, PROTOCOL_VERSION,
+    InputEvent, ProtocolError, TabDirection, Theme, PROTOCOL_VERSION,
 };
 use toolboks_addon_sdk::runtime::run_addon_on;
 use toolboks_addon_sdk::{NativeAddon, StatusItem, TutorialStep};
@@ -63,7 +63,7 @@ struct TestHost {
 }
 
 impl TestHost {
-    fn connect(addon: Counter) -> Self {
+    fn connect(addon: impl NativeAddon + Send + 'static) -> Self {
         let (host, addon_side) = duplex();
         let addon = std::thread::spawn(move || run_addon_on(addon_side, addon, "counter"));
         let (mut reader, mut writer) = host.split();
@@ -313,5 +313,107 @@ fn stalled_addon_is_detected() {
     };
     assert!(stalled >= Duration::from_millis(200));
     drop(unblock);
+    host.quit().unwrap();
+}
+
+/// Buttons stacked bottom to top, so traversal order is not visual order.
+#[derive(Default)]
+struct Buttons {
+    count: usize,
+    ctx: Arc<Mutex<Option<egui::Context>>>,
+}
+
+impl NativeAddon for Buttons {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _preferences: &mut std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> bool {
+        *self.ctx.lock().unwrap() = Some(ui.ctx().clone());
+        for index in 0..self.count {
+            let y = 200.0 - 40.0 * index as f32;
+            let rect = egui::Rect::from_min_size(egui::pos2(10.0, y), egui::vec2(80.0, 30.0));
+            ui.put(rect, egui::Button::new(format!("B{index}")));
+        }
+        false
+    }
+}
+
+fn tab(direction: TabDirection) -> InputEvent {
+    InputEvent::Key {
+        key: wire_egui::Key::Tab,
+        physical_key: Some(wire_egui::Key::Tab),
+        pressed: true,
+        repeat: false,
+        modifiers: wire_egui::Modifiers {
+            shift: direction == TabDirection::Backward,
+            ..Default::default()
+        },
+    }
+}
+
+fn walk(count: usize, direction: TabDirection) {
+    let label = format!("{count} widgets, {direction:?}");
+    let mut host = TestHost::connect(Buttons {
+        count,
+        ..Default::default()
+    });
+    host.frame(vec![]);
+    let (frame, _) = host.frame(vec![InputEvent::FocusGained {
+        via_tab: Some(direction),
+    }]);
+    assert!(frame.wants_keyboard, "{label}: focus entered");
+    assert_eq!(frame.focus_escape, None, "{label}");
+    for step in 1..count {
+        let (frame, _) = host.frame(vec![tab(direction)]);
+        assert_eq!(frame.focus_escape, None, "{label}: step {step}");
+        assert!(frame.wants_keyboard, "{label}: step {step}");
+    }
+    let (frame, _) = host.frame(vec![tab(direction)]);
+    assert_eq!(frame.focus_escape, Some(direction), "{label}: escape");
+    assert!(!frame.wants_keyboard, "{label}: escape");
+    // The host owns focus now: later frames must not take it back.
+    for _ in 0..3 {
+        let (frame, _) = host.frame(vec![]);
+        assert!(!frame.wants_keyboard, "{label}: focus came back");
+    }
+    host.quit().unwrap();
+}
+
+#[test]
+fn tab_escapes_at_both_ends() {
+    for count in [1, 3] {
+        walk(count, TabDirection::Forward);
+        walk(count, TabDirection::Backward);
+    }
+}
+
+#[test]
+fn delayed_repaint_between_frames_keeps_its_deadline() {
+    let shared = Arc::new(Mutex::new(None));
+    let mut host = TestHost::connect(Buttons {
+        count: 1,
+        ctx: shared.clone(),
+    });
+    let mut settled = false;
+    for _ in 0..20 {
+        let (frame, _) = host.frame(vec![]);
+        if frame.repaint_after_ms.is_none() {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "the page never went idle");
+    let ctx = shared.lock().unwrap().clone().unwrap();
+    ctx.request_repaint_after(Duration::from_millis(500));
+    match host.recv() {
+        AddonMessage::RequestRepaint { after_ms } => {
+            assert!((300..=500).contains(&after_ms), "after_ms {after_ms}")
+        }
+        other => panic!("expected a repaint request, got {other:?}"),
+    }
+    // An earlier deadline goes out at once.
+    ctx.request_repaint();
+    assert_eq!(host.recv(), AddonMessage::RequestRepaint { after_ms: 0 });
     host.quit().unwrap();
 }
