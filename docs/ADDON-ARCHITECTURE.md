@@ -48,7 +48,9 @@ Existing Windows drive maintenance can continue independently of the native UI.
 The plan in #77 moves every tool into its own exe that draws inside the Toolboks window. The
 pieces that exist today are not reachable from the app yet: the wire protocol and SDK runtime,
 the host view, the signed catalog, the installer, and the supervisor that starts, checks, watches
-and stops add-on processes. See [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md).
+and stops add-on processes. See [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md). What can go wrong, and
+what is still open before the first public add-on release, is in
+[ADDON-THREAT-MODEL.md](ADDON-THREAT-MODEL.md).
 
 ## Local state
 

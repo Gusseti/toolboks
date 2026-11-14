@@ -8,6 +8,7 @@
 - **Host services for add-ons (#87, not reachable from the app yet):** an out-of-process add-on can show status bar items, register tray entries, describe a guided tour with highlighted anchors, declare its pages for `--open "Title/Page"` links, be marked as a background add-on that starts at launch, and have its preferences saved in `config.json`. Status items and tray entries disappear when the add-on stops or is turned off. A tour forwards no input to the add-on, so it cannot run an action.
 - **Add-on protocol version 2:** adds the tray and tour-anchor messages. Version 1 add-ons are refused with the plain "update the add-on or Toolboks" message; none have been published.
 - **Catalog entries:** optional `pages` and `background` fields. The installer keeps the catalog entry beside each installed version, so they are known offline.
+- **Add-on threat model (#95):** `docs/ADDON-THREAT-MODEL.md` lists the threats to the add-on platform, what covers each, what is accepted, and seven findings to settle before the first public add-on release.
 
 ## Not verified
 
