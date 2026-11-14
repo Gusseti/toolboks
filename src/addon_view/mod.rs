@@ -201,6 +201,8 @@ pub struct AddonView {
     escape: Option<TabDirection>,
     cursor: egui::CursorIcon,
     ime: Option<ImeOutput>,
+    /// False while a guided tour runs: nothing the user does reaches the add-on.
+    interactive: bool,
 }
 
 impl AddonView {
@@ -226,7 +228,20 @@ impl AddonView {
             escape: None,
             cursor: egui::CursorIcon::Default,
             ime: None,
+            interactive: true,
         }
+    }
+
+    /// Turns input forwarding off (during a guided tour) or back on. While it is off the view
+    /// still paints and still tells the add-on when it loses focus.
+    pub fn set_interactive(&mut self, interactive: bool) {
+        self.interactive = interactive;
+    }
+
+    /// Asks the add-on for a fresh frame although there is no input, for example after the
+    /// host changed the tour step.
+    pub fn request_frame(&mut self) {
+        self.pacer.request();
     }
 
     pub fn state(&self) -> &ViewState {
@@ -375,6 +390,9 @@ impl AddonView {
             });
         }
         self.router.route(&events, rect, focused, &mut routed);
+        if !self.interactive {
+            routed.retain(|event| matches!(event, InputEvent::FocusLost));
+        }
 
         if self.link.is_some() {
             self.pace(&ctx, rect, routed, window_focused, now);

@@ -183,6 +183,37 @@ fn input_is_relative_to_the_page_at_high_dpi() {
 }
 
 #[test]
+fn a_tour_forwards_no_input_to_the_add_on() {
+    let ctx = egui::Context::default();
+    pass(&ctx, Vec::new(), |_| {});
+    let mut view = AddonView::new("Demo", &ctx);
+    let (link, recorder, _tx) = fake_link();
+    view.attach(link);
+    view.set_interactive(false);
+    let events = vec![
+        Event::PointerMoved(pos2(150.0, 80.0)),
+        button(150.0, 80.0, true),
+        button(150.0, 80.0, false),
+        Event::Text("x".into()),
+        Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        },
+    ];
+    pass(&ctx, events, |ui| {
+        view.show_at(ui, page(), Instant::now());
+    });
+    // The page still gets its size and scale, but no click, key or text.
+    let batches = recorder.batches();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].events, Vec::new());
+    assert_eq!(batches[0].size, [400.0, 300.0]);
+}
+
+#[test]
 fn drag_released_outside_after_a_drag_inside() {
     let mut router = InputRouter::default();
     let mut out = Vec::new();

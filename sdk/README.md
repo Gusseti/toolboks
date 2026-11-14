@@ -147,3 +147,12 @@ restores the requested native page after restart without automatically doing wor
 A tutorial route remains navigation only. The native example includes the updated
 Disk Manager source, Windows backend, legacy manifest and permission-gating example.
 See DRIVE-OPTIMIZATION.md for the execution boundaries and intentional test limits.
+
+## Out-of-process add-ons (in progress)
+
+A native add-on built as its own exe uses `runtime::run_addon` (SDK feature `runtime`) and the same
+`NativeAddon` trait. Besides the hooks above, the trait has `status_items` (status bar),
+`tray_items` and `tray_action` (optional tray entries). Tours work as for source providers: mark
+anchors with `tutorial::mark` or `tutorial::region`; the host draws the overlay. The wire protocol
+(version 2) and the host services are described in `docs/ADDON-PROTOCOL.md`.
+

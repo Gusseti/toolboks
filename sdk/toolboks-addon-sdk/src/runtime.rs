@@ -14,6 +14,8 @@
 //!   requested deadline and sending again only for an earlier one;
 //! - forwards navigation, suspend and resume, preferences, capabilities and the tutorial
 //!   calls to the add-on and sends back host requests, status items and log lines;
+//! - sends the add-on's tray entries when they change and forwards the entry the user
+//!   chose; reports the rectangle of the tour anchor the host asked for;
 //! - answers heartbeat pings from the main loop, so a stuck `ui` call shows as stalled;
 //! - while suspended with background work, calls `tick_background` every 200 ms;
 //! - returns `Ok(())` on `Quit` or when the host closes the connection, and an error for
@@ -31,7 +33,7 @@
 //!
 //! [`run_addon_on`] takes any `Read` and `Write` pair and is what tests use.
 
-use crate::{Capability, HostRequest, NativeAddon, StatusItem};
+use crate::{tutorial, Capability, HostRequest, NativeAddon, StatusItem, TrayItem};
 use proto::mesh::MeshEncoder;
 use proto::{
     AddonMessage, Frame, FrameWriter, Hello, HostMessage, ImeOutput, InputBatch, InputEvent,
@@ -223,6 +225,9 @@ where
         queued,
         theme: None,
         status: Vec::new(),
+        tray: Vec::new(),
+        tour: None,
+        anchor_sent: None,
     };
     let result = runtime.serve(&mut addon, &rx);
     addon.cancel();
@@ -246,6 +251,11 @@ struct Runtime<W> {
     repaint_deadline: Option<Instant>,
     theme: Option<Theme>,
     status: Vec<StatusItem>,
+    tray: Vec<TrayItem>,
+    /// The tour anchor the host asked for, and whether it still has to be scrolled into view.
+    tour: Option<(String, bool)>,
+    /// The anchor rectangle last reported to the host.
+    anchor_sent: Option<(String, Option<egui::Rect>)>,
 }
 
 impl<W: Write> Runtime<W> {
@@ -370,6 +380,16 @@ impl<W: Write> Runtime<W> {
             HostMessage::TutorialFinish => addon.tutorial_finish(),
             HostMessage::Ping { nonce } => self.send(&AddonMessage::Pong { nonce })?,
             HostMessage::Quit => return Ok(false),
+            HostMessage::TrayAction { id } => {
+                // Only an entry the add-on offers and has enabled.
+                if self.tray.iter().any(|item| item.id == id && item.enabled) {
+                    addon.tray_action(&id);
+                }
+            }
+            HostMessage::TutorialTarget { target, reveal } => {
+                self.tour = target.map(|target| (target, reveal));
+                self.anchor_sent = None;
+            }
         }
         Ok(true)
     }
@@ -402,6 +422,19 @@ impl<W: Write> Runtime<W> {
                 .collect();
             self.status = status;
             self.send(&AddonMessage::StatusItems(items))?;
+        }
+        let tray = addon.tray_items();
+        if tray != self.tray {
+            let items = tray
+                .iter()
+                .map(|item| proto::TrayItem {
+                    id: item.id.clone(),
+                    label: item.label.clone(),
+                    enabled: item.enabled,
+                })
+                .collect();
+            self.tray = tray;
+            self.send(&AddonMessage::TrayItems(items))?;
         }
         let lines = LOG
             .lock()
@@ -455,6 +488,11 @@ impl<W: Write> Runtime<W> {
             .native_pixels_per_point = Some(pixels_per_point);
         if !self.suspended {
             addon.tick(&ctx);
+        }
+        // The tour anchor the host wants; `mark` and `region` in the add-on's UI report it.
+        match &self.tour {
+            Some((target, reveal)) => tutorial::prepare(&ctx, Some(target), *reveal),
+            None => tutorial::prepare(&ctx, None, false),
         }
         let mut changed = false;
         let preferences = &mut self.preferences;
@@ -531,6 +569,16 @@ impl<W: Write> Runtime<W> {
         // Everything this batch caused goes out before the frame that acknowledges it.
         if changed {
             self.send_preferences(true)?;
+        }
+        if let Some((target, reveal)) = &mut self.tour {
+            // Scroll to the anchor once; later frames only report where it is.
+            *reveal = false;
+            let anchor = (target.clone(), tutorial::anchor(&ctx));
+            if self.anchor_sent.as_ref() != Some(&anchor) {
+                self.anchor_sent = Some(anchor.clone());
+                let (target, rect) = anchor;
+                self.send(&AddonMessage::TutorialAnchor { target, rect })?;
+            }
         }
         self.flush_side_channels(addon)?;
         self.send(&AddonMessage::Frame(frame))
