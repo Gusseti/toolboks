@@ -435,7 +435,7 @@ impl App {
                 });
             });
             #[cfg(feature = "preview")]
-            ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new("store-capture-rect"), store_frame.response.rect));
+            ui.ctx().data_mut(|data| data.insert_temp(egui::Id::unique("store-capture-rect"), store_frame.response.rect));
             #[cfg(not(feature = "preview"))]
             let _ = store_frame;
         });

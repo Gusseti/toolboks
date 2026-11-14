@@ -51,7 +51,7 @@ impl eframe::App for Check {
             let path = self.output.join(format!("{name}.png"));
             let saved = self.saved.clone();
             let store = if name == "07-browser" {
-                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new("store-capture-rect")))
+                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("store-capture-rect")))
             } else {
                 None
             };

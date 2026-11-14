@@ -11,6 +11,9 @@ impl App {
             self.help = Some("toolboks.addon-browser".into());
         }
         if self.screen == Screen::Browser {
+            if ui.button("View details").clicked() {
+                self.market.details = true;
+            }
             ui.checkbox(&mut self.market.installed_only, "Installed only");
             if ui.button("Refresh list").clicked() {
                 self.market.refresh(self.registry.root.clone(), ui.ctx());
@@ -318,7 +321,7 @@ impl App {
                 .to_lowercase()
                 .contains(&needle)
         });
-        entries.sort_by_key(|entry| (!entry.verified, entry.title.to_lowercase()));
+        entries.sort_by_key(|entry| !entry.verified);
         if self
             .market
             .focused
