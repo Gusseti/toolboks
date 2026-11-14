@@ -6,32 +6,33 @@ use super::*;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use windows::core::PWSTR;
+use windows::core::{HSTRING, PWSTR};
 use windows::Win32::Foundation::{HANDLE, HLOCAL, WAIT_OBJECT_0};
 use windows::Win32::Security::Authorization::{
-    ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
-    SE_KERNEL_OBJECT,
+    ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW,
+    ConvertStringSidToSidW, GetSecurityInfo, SDDL_REVISION_1, SE_KERNEL_OBJECT,
 };
-use windows::Win32::Security::{DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
+use windows::Win32::Security::{DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
 use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 
-const ID: &str = "test.fake-addon";
+pub(crate) const ID: &str = "test.fake-addon";
 const PATIENCE: Duration = Duration::from_secs(30);
 
 /// A folder with a copy of the fake add-on as `addon.exe`, set to `mode`.
-fn fake(test: &str, mode: &str) -> (PathBuf, LaunchSpec) {
-    let built = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .and_then(Path::parent)
-        .unwrap()
-        .join("examples")
-        .join("fake_addon.exe");
-    assert!(
-        built.is_file(),
-        "{} is missing; run the tests through cargo so the example is built",
-        built.display()
-    );
+pub(crate) fn fake(test: &str, mode: &str) -> (PathBuf, LaunchSpec) {
+    // The example lands in `<target>/<profile>/examples`; where the test exe itself sits below
+    // that folder differs between cargo versions, so look upwards from it.
+    let test_exe = std::env::current_exe().unwrap();
+    let built = test_exe
+        .ancestors()
+        .map(|folder| folder.join("examples").join("fake_addon.exe"))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| {
+            panic!(
+                "examples/fake_addon.exe was not found above {}; run the tests through cargo                  so the example is built",
+                test_exe.display()
+            )
+        });
     let dir =
         std::env::temp_dir().join(format!("toolboks-supervisor-{test}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -50,7 +51,7 @@ fn fake(test: &str, mode: &str) -> (PathBuf, LaunchSpec) {
     (dir, spec)
 }
 
-fn supervisor(timing: Timing) -> Supervisor {
+pub(crate) fn supervisor(timing: Timing) -> Supervisor {
     Supervisor::with_timing(&egui::Context::default(), timing).unwrap()
 }
 
@@ -285,6 +286,21 @@ fn an_addon_that_never_connects_is_ended() {
     assert_eq!(starts(&dir), 2, "one start and the one allowed restart");
 }
 
+/// The `S-1-…` form of a SID given in that form or as an SDDL alias such as `LA`.
+fn full_sid(trustee: &str) -> String {
+    let mut sid = PSID::default();
+    let mut text = PWSTR::null();
+    // SAFETY: the input is NUL-terminated; both results are freed below.
+    unsafe {
+        ConvertStringSidToSidW(&HSTRING::from(trustee), &mut sid).unwrap();
+        ConvertSidToStringSidW(sid, &mut text).unwrap();
+        let full = text.to_string().unwrap();
+        let _ = windows::Win32::Foundation::LocalFree(Some(HLOCAL(text.0.cast())));
+        let _ = windows::Win32::Foundation::LocalFree(Some(HLOCAL(sid.0)));
+        full
+    }
+}
+
 /// The pipe's access list as text (SDDL).
 fn access_list(pipe: HANDLE) -> String {
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
@@ -329,8 +345,11 @@ fn the_pipes_admit_only_the_current_user() {
         // Protected (nothing inherited) and exactly one entry: allow, for this user. Everyone
         // else, a second user on the PC included, has no entry and is denied.
         assert!(list.starts_with("D:P(A;;"), "{list}");
-        assert!(list.ends_with(&format!(";;;{sid})")), "{list}");
         assert_eq!(list.matches('(').count(), 1, "{list}");
+        // Windows may print a well-known account as an alias (`LA` for the built-in
+        // administrator), so compare the account itself, not its spelling.
+        let trustee = list.rsplit(';').next().unwrap().trim_end_matches(')');
+        assert_eq!(full_sid(trustee), sid, "{list}");
     }
     assert_ne!(pipes.to_addon_path, pipes.from_addon_path);
     assert_eq!(pipes.token.len(), super::pipe::TOKEN_CHARS);
