@@ -10,12 +10,11 @@ use eframe::egui;
 
 use super::Tool;
 
+// The UI-free engine lives in its own crate; re-exported so `debloat::<module>` paths keep working.
+pub use toolboks_debloat_engine::{backend, catalog, model, plan};
+
 pub mod apps;
-pub mod backend;
-pub mod catalog;
-pub mod model;
 mod page;
-pub mod plan;
 pub mod restore;
 pub mod services;
 pub mod startup;

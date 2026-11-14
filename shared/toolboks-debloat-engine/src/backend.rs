@@ -75,7 +75,7 @@ impl Registry for WinRegistry {
         value: &RegValue,
     ) -> Result<(), String> {
         if hive == Hive::CurrentUser {
-            crate::elevation::require_user_profile()?;
+            toolboks_shared::elevation::require_user_profile()?;
         }
         let path_w = wide(path);
         let name_w = wide(name);
@@ -119,7 +119,7 @@ impl Registry for WinRegistry {
 
     fn delete(&mut self, hive: Hive, path: &str, name: &str) -> Result<(), String> {
         if hive == Hive::CurrentUser {
-            crate::elevation::require_user_profile()?;
+            toolboks_shared::elevation::require_user_profile()?;
         }
         let path_w = wide(path);
         let name_w = wide(name);
@@ -249,7 +249,7 @@ pub fn detect_env() -> Env {
     };
     Env {
         edition,
-        elevated: crate::elevation::is_elevated(),
+        elevated: toolboks_shared::elevation::is_elevated(),
     }
 }
 
@@ -276,8 +276,8 @@ mod tests {
         assert_eq!(r, Ok(None));
     }
 
-    use crate::tools::debloat::model::{Group, Item, RegSetting, Risk};
-    use crate::tools::debloat::plan;
+    use crate::model::{Group, Item, RegSetting, Risk};
+    use crate::plan;
     use windows::Win32::System::Registry::RegDeleteTreeW;
 
     /// Deletes the whole scratch key on drop, even if an assert failed.

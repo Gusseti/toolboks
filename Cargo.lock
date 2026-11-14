@@ -3069,6 +3069,7 @@ dependencies = [
  "sha2",
  "sysinfo",
  "toolboks-addon-sdk",
+ "toolboks-debloat-engine",
  "toolboks-disk-manager",
  "toolboks-shared",
  "tray-icon",
@@ -3083,6 +3084,15 @@ dependencies = [
  "egui",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "toolboks-debloat-engine"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toolboks-shared",
+ "windows 0.62.2",
 ]
 
 [[package]]
