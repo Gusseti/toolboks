@@ -10,8 +10,8 @@ use windows::Win32::System::LibraryLoader::{
     GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
 };
 
-use super::backend::{Registry, WinRegistry};
-use super::model::{Hive, RegValue};
+use crate::backend::{Registry, WinRegistry};
+use crate::model::{Hive, RegValue};
 
 /// What happened when a restore point was requested.
 #[derive(Clone, Debug, PartialEq, Eq)]
