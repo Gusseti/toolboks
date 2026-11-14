@@ -1,0 +1,1166 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Toolboks Landing Snapshot</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the page is a graph card. A full-bleed live CPU trace you can hover, an app window that settles flat as you scroll,
+   then the app's own sidebar rail becomes the page navigation through the tools. Single dark world, by choice. */
+:root {
+  color-scheme: dark;
+  --ink: #070809;          /* page ground, darker than the app so the window lifts off it */
+  --rail: #0a0b0c;         /* sidebar, title bar, status bar */
+  --window: #0e0f11;
+  --card: #15161a;
+  --sel: #1b1c21;
+  --line: #24262c;
+  --line-soft: #1c1e22;
+  --fg: #e8e9ec;
+  --muted: #9a9ea8;
+  --accent: #8b5cf6;
+  --accent-text: #b39dfa;
+  --accent-wash: #8b5cf633;
+  --accent-fill: #7a4be8;  /* button fill: white text passes 4.5:1 here, the plain accent does not */
+  --mem: #b39dfa; --gpu: #3ecf8e; --disk: #f0a83a; --net: #45b8f0; --second: #9a9ea8;
+  --ok: #3ecf8e; --watch: #f0a83a; --bad: #e5534b;
+
+  --display: "Schibsted Grotesk", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --body: "Schibsted Grotesk", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --data: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --maxw: 1180px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--ink); color: var(--fg);
+  font: 400 1.0625rem/1.6 var(--body);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+::selection { background: var(--accent); color: #fff; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+a { color: inherit; }
+html { scrollbar-color: #2c2e35 var(--ink); }
+.num { font-family: var(--data); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.wrap { max-width: var(--maxw); margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+@media (min-width: 720px) { .wrap { padding-left: max(32px, env(safe-area-inset-left, 0px)); padding-right: max(32px, env(safe-area-inset-right, 0px)); } }
+h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; }
+p { margin: 0; }
+
+/* ---------- icons ---------- */
+.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* ---------- buttons ---------- */
+.btn { display: inline-flex; align-items: center; gap: 10px; font: 600 1rem/1 var(--body); text-decoration: none;
+  padding: 14px 20px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer;
+  transition: background .15s, border-color .15s, transform .15s var(--ease); }
+.btn:hover { background: var(--sel); border-color: #33363e; }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
+.btn.primary:hover { background: #6c3fdc; border-color: #6c3fdc; }
+.btn.small { padding: 9px 14px; font-size: .875rem; border-radius: 6px; }
+.btn[disabled] { opacity: .45; cursor: default; }
+
+/* ---------- nav ---------- */
+.nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 30; background: color-mix(in srgb, var(--ink) 88%, transparent);
+  border-bottom: 1px solid transparent; transition: border-color .2s; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 31; background: var(--ink); }
+.nav.scrolled { border-bottom-color: var(--line-soft); }
+.nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font: 700 1.125rem/1 var(--display); text-decoration: none; letter-spacing: -0.02em; }
+.mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; }
+.mark svg { width: 14px; height: 14px; stroke: #fff; stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.nav-links { display: flex; gap: 24px; margin-left: 8px; }
+.nav-links a { text-decoration: none; color: var(--muted); font-size: .9375rem; transition: color .15s; }
+.nav-links a:hover { color: var(--fg); }
+.nav .btn { margin-left: auto; }
+@media (max-width: 760px) { .nav-links { display: none; } }
+
+/* ---------- hero ---------- */
+.hero { position: relative; isolation: isolate; padding-block: 72px 0; }
+.trace { position: absolute; inset: 0 0 auto 0; height: var(--trace-h, 720px); z-index: -1; cursor: crosshair; }
+.trace canvas { width: 100%; height: 100%; display: block; }
+.trace-tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 12px; font-size: .8125rem; line-height: 1.45; color: var(--muted); white-space: nowrap;
+  box-shadow: 0 8px 24px -6px rgba(0,0,0,.6); opacity: 0; transition: opacity .15s; }
+.trace-tip b { color: var(--fg); font-weight: 600; }
+.trace-tip i { display: inline-block; width: 10px; height: 2px; background: var(--accent); vertical-align: middle; margin-right: 6px; }
+.trace-bar { position: absolute; left: 0; right: 0; top: calc(var(--trace-h, 720px) - 48px); z-index: -1; pointer-events: none; }
+.trace-bar .wrap { display: flex; gap: 20px; font-size: .8125rem; color: var(--muted); }
+.trace-bar b { color: var(--fg); font-weight: 600; }
+.trace-bar span:last-child { margin-left: auto; }
+
+.hero-copy { max-width: 760px; }
+.hero h1 { font-size: clamp(2.75rem, 7.2vw, 5.75rem); line-height: .98; letter-spacing: -0.04em; font-weight: 700; }
+.hero h1 em { font-style: normal; color: var(--accent-text); }
+.hero .lede { margin-top: 24px; max-width: 34em; color: var(--muted); font-size: clamp(1.0625rem, 1.6vw, 1.25rem); }
+.hero .lede strong { color: var(--fg); font-weight: 500; }
+.cta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; margin-top: 36px; }
+.cta-meta { font-size: .8125rem; color: var(--muted); }
+.cta-meta .num { color: var(--fg); }
+
+/* ---------- app window mock ---------- */
+.stage { perspective: 1800px; margin-top: 300px; }
+@media (max-width: 720px) { .stage { margin-top: 220px; } }
+.win { --tilt: 16deg; transform: rotateX(var(--tilt)) scale(calc(1 - var(--tilt) / 200deg)); transform-origin: 50% 0;
+  background: var(--window); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 40px 80px -30px rgba(0,0,0,.9), 0 2px 0 rgba(255,255,255,.02) inset;
+  display: grid; grid-template-rows: 34px 1fr 24px; height: 560px; font-size: 12px; line-height: 1.4; }
+.win-title { background: var(--rail); display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line-soft); font-weight: 600; font-size: 12px; }
+.win-title .mark { width: 14px; height: 14px; border-radius: 4px; }
+.win-title .mark svg { width: 9px; height: 9px; }
+.win-ctl { margin-left: auto; display: flex; gap: 20px; color: var(--muted); }
+.win-body { display: grid; grid-template-columns: 170px 240px 1fr; min-height: 0; }
+.win-side { background: var(--rail); border-right: 1px solid var(--line-soft); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.win-side .it { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 6px; color: var(--muted); }
+.win-side .it .ic { width: 15px; height: 15px; }
+.win-side .it.on { background: var(--accent-wash); color: var(--fg); }
+.win-side .sub { padding: 5px 8px 5px 33px; color: var(--muted); border-radius: 6px; }
+.win-side .sub.on { background: var(--sel); color: var(--fg); }
+.win-side .it:last-child { margin-top: auto; }
+.win-list { border-right: 1px solid var(--line-soft); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.res { display: grid; grid-template-columns: 58px 1fr auto; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 8px; }
+.res.on { background: var(--sel); }
+.res canvas { width: 58px; height: 22px; }
+.res b { display: block; font-weight: 600; color: var(--fg); }
+.res small { color: var(--muted); font-size: 11px; }
+.res .v { font-weight: 600; font-family: var(--data); font-size: 12px; font-variant-numeric: tabular-nums; }
+.win-main { padding: 12px 14px; display: grid; grid-template-rows: auto 1fr auto; gap: 8px; min-width: 0; }
+.win-main header { display: flex; align-items: baseline; gap: 10px; }
+.win-main header b { font-size: 15px; }
+.win-main header span { color: var(--muted); }
+.win-main header .pills { margin-left: auto; display: flex; background: var(--rail); border: 1px solid var(--line-soft); border-radius: 7px; padding: 2px; }
+.win-main header .pills i { font-style: normal; padding: 3px 8px; border-radius: 5px; color: var(--muted); }
+.win-main header .pills i.on { background: var(--sel); color: var(--fg); }
+.gcard { position: relative; border: 1px solid var(--line); border-radius: 10px; background: var(--card); min-height: 0; overflow: hidden; }
+.gcard canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cores { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; height: 92px; }
+.cores .gcard span { position: absolute; top: 7px; left: 9px; right: 9px; display: flex; justify-content: space-between; color: var(--muted); z-index: 1; }
+.cores .gcard span b { color: var(--fg); font-family: var(--data); font-weight: 500; }
+.win-status { background: var(--rail); border-top: 1px solid var(--line-soft); display: flex; gap: 18px; align-items: center; padding: 0 12px; color: var(--muted); font-size: 11px; }
+.win-status span:last-child { margin-left: auto; }
+@media (max-width: 900px) { .win-body { grid-template-columns: 52px 1fr; } .win-list { display: none; } .win-side .it span, .win-side .sub { display: none; } .win { height: 460px; } }
+@media (max-width: 520px) { .cores { grid-template-columns: repeat(2, 1fr); height: 110px; } .cores .gcard:nth-child(n+3) { display: none; } .win { height: 400px; } .win-main header span { display: none; } }
+
+/* ---------- section scaffolding ---------- */
+section.block { padding-block: 140px 0; }
+.sec-head { max-width: 760px; }
+.sec-head h2 { font-size: clamp(2.125rem, 4.6vw, 3.5rem); line-height: 1.02; letter-spacing: -0.035em; font-weight: 700; }
+.sec-head p { margin-top: 18px; color: var(--muted); max-width: 36em; font-size: 1.125rem; }
+
+/* ---------- tools tour ---------- */
+.tour { display: grid; grid-template-columns: 252px 1fr; gap: 48px; margin-top: 64px; align-items: start; }
+.rail { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 96px); background: var(--rail); border: 1px solid var(--line-soft);
+  border-radius: 12px; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.rail a { display: flex; align-items: center; gap: 12px; padding: 10px 10px; border-radius: 8px; text-decoration: none; color: var(--muted);
+  font-size: .9375rem; transition: background .15s, color .15s; }
+.rail a:hover { color: var(--fg); background: var(--sel); }
+.rail a.on { background: var(--accent-wash); color: var(--fg); }
+.rail-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 10px; font-size: .8125rem; font-weight: 600; color: var(--accent-text); }
+.rail-head .ic { width: 17px; height: 17px; }
+.vbadge { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; margin-left: 8px; padding: 3px 9px 3px 6px; border-radius: 99px;
+  background: var(--accent-wash); color: var(--accent-text); font: 500 .75rem/1.2 var(--body); letter-spacing: 0; white-space: nowrap; }
+.vbadge .ic { width: 15px; height: 15px; }
+.pcopy h3 .vbadge { display: flex; width: fit-content; margin: 12px 0 0; }
+.rail hr { border: 0; border-top: 1px solid var(--line-soft); margin: 6px 4px; }
+.rail .tag { margin-left: auto; font-size: .6875rem; color: var(--muted); }
+.panels { display: flex; flex-direction: column; gap: 120px; min-width: 0; }
+.panel { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 40px; align-items: center; scroll-margin-top: 120px; }
+.panel:nth-child(even) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+.panel:nth-child(even) .pcopy { order: 2; }
+.pcopy h3 { font-size: clamp(1.625rem, 2.6vw, 2.125rem); letter-spacing: -0.03em; line-height: 1.1; font-weight: 700; }
+.pcopy .by { font-size: .875rem; color: var(--muted); font-weight: 400; letter-spacing: 0; margin-left: 6px; }
+.pcopy p { margin-top: 14px; color: var(--muted); }
+.pcopy ul { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; font-size: .9375rem; }
+.pcopy li { display: flex; gap: 10px; }
+.pcopy li::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: .6em; flex: none; }
+.pcopy .addon { display: inline-block; margin-top: 18px; font-size: .8125rem; color: var(--accent-text); }
+.demo { background: var(--window); border: 1px solid var(--line); border-radius: 12px; padding: 16px; font-size: 13px; line-height: 1.45; min-width: 0; }
+.demo-note { margin-top: 10px; font-size: .75rem; color: var(--muted); }
+@media (max-width: 980px) {
+  .tour { grid-template-columns: 1fr; gap: 24px; }
+  .rail { flex-direction: row; overflow-x: auto; top: calc(env(safe-area-inset-top, 0px) + 64px); z-index: 20; border-radius: 10px; scrollbar-width: none; }
+  .rail a { white-space: nowrap; padding: 8px 12px; }
+  .rail a span.tag, .rail hr { display: none; }
+  .panel, .panel:nth-child(even) { grid-template-columns: 1fr; gap: 24px; }
+  .panel:nth-child(even) .pcopy { order: 0; }
+  .panels { gap: 88px; }
+}
+
+/* memory demo */
+.btn { white-space: nowrap; }
+.verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 14px; padding: 4px 4px 16px; border-bottom: 1px solid var(--line-soft); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--watch); flex: none; transition: background .3s; }
+.verdict b { display: block; font-size: 18px; font-weight: 600; }
+.verdict small { color: var(--muted); font-size: 12px; }
+.verdict .btn { margin-left: auto; }
+.membar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; margin-top: 16px; background: var(--card); }
+.membar i { display: block; height: 100%; transition: width 1.4s var(--ease); border-right: 2px solid var(--window); }
+.memkey { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.memkey span { display: inline-flex; align-items: center; gap: 6px; }
+.memkey span::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
+.mem-result { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12.5px; min-height: 2.9em; }
+.mem-result b { color: var(--fg); font-weight: 600; }
+
+/* resource demo */
+.rgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rcard { position: relative; height: 112px; }
+.rcard .lbl { position: absolute; z-index: 1; left: 10px; top: 8px; right: 10px; display: flex; justify-content: space-between; font-size: 12px; }
+.rcard .lbl b { font-weight: 600; }
+.rcard .lbl span { font-family: var(--data); font-size: 12px; }
+.rcard .foot { position: absolute; z-index: 1; left: 10px; bottom: 7px; font-size: 11px; color: var(--muted); }
+
+/* debloat demo */
+.dlist { display: grid; gap: 2px; }
+.drow { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 10px 8px; border-radius: 8px; }
+.drow:hover { background: var(--card); }
+.drow input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+.drow b { display: block; font-weight: 500; }
+.drow small { color: var(--muted); font-size: 12px; }
+.drow .st { font-size: 12px; color: var(--muted); }
+.drow .st.done { color: var(--ok); }
+.dfoot { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); flex-wrap: wrap; }
+.dfoot p { color: var(--muted); font-size: 12.5px; margin-right: auto; }
+
+/* system profiles */
+.prof-head { display: flex; align-items: center; gap: 12px; padding: 2px 4px 12px; border-bottom: 1px solid var(--line-soft); margin-bottom: 6px; }
+.prof-head .aic { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--card); border: 1px solid var(--line); }
+.prof-head .aic .ic { width: 18px; height: 18px; color: var(--accent-text); }
+.prof-head b { display: block; font-size: 15px; font-weight: 600; }
+.prof-head small { color: var(--muted); font-size: 12px; }
+.plog { list-style: none; margin: 10px 0 0; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.7 var(--data); color: var(--muted); }
+.plog:empty { display: none; }
+.plog li span { color: var(--ok); }
+
+/* event table */
+.etable { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; }
+.etable th { text-align: left; font-weight: 500; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.etable td { padding: 8px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.etable td:first-child { width: 78px; font-family: var(--data); color: var(--muted); }
+.etable tr.new td { animation: rowin .7s var(--ease); }
+@keyframes rowin { from { background: var(--accent-wash); } to { background: transparent; } }
+.lv { display: inline-flex; align-items: center; gap: 6px; }
+.lv::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.etable th:nth-child(2), .etable td:nth-child(2) { width: 92px; }
+
+/* disk treemap */
+.tree { display: grid; grid-template-columns: 5fr 3fr 2fr; grid-template-rows: 90px 70px 56px; gap: 3px; height: 222px; }
+.tree div { border-radius: 4px; padding: 7px 9px; font-size: 11.5px; display: flex; flex-direction: column; justify-content: space-between; color: #0b0b0d; font-weight: 600; transition: filter .15s; min-width: 0; overflow: hidden; }
+.tree div:hover { filter: brightness(1.15); }
+.tree div small { font-family: var(--data); font-weight: 500; opacity: .75; }
+.tree .a { grid-row: 1 / 3; background: #6a48c9; color: #fff; }
+.tree .a small, .tree .g small, .tree .e small, .tree .f small { opacity: 1; }
+.tree .b { background: #f0a83a; }
+.tree .c { background: #45b8f0; }
+.tree .d { grid-column: 2 / 4; background: #3ecf8e; }
+.tree .e { background: #2d2f37; color: var(--fg); }
+.tree .f { background: #3a3d46; color: var(--fg); }
+.tree .g { background: #24262c; color: var(--fg); }
+.disk-meta { display: flex; justify-content: space-between; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.disk-meta b { color: var(--fg); font-weight: 600; }
+
+/* macro */
+.mac { display: grid; grid-template-columns: 150px 1fr; gap: 12px; }
+.steps { display: grid; gap: 2px; align-content: start; font-size: 12px; }
+.steps div { padding: 7px 8px; border-radius: 6px; display: flex; justify-content: space-between; gap: 6px; color: var(--muted); }
+.steps div b { color: var(--fg); font-weight: 500; }
+.steps div.on { background: var(--sel); }
+.canvas-area { background: var(--card); border: 1px solid var(--line); border-radius: 8px; position: relative; aspect-ratio: 16 / 10; max-width: 100%; }
+.canvas-area svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.mpath { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 520; stroke-dashoffset: 0; }
+.inview .mpath { animation: draw 3.2s var(--ease) infinite; }
+@keyframes draw { 0% { stroke-dashoffset: 520; } 60%, 100% { stroke-dashoffset: 0; } }
+.mac .playrow { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; }
+.track { flex: 1; height: 4px; background: var(--card); border-radius: 2px; position: relative; overflow: hidden; }
+.track i { position: absolute; inset: 0 auto 0 0; width: 100%; background: var(--accent); }
+.inview .track i { animation: fill 3.2s linear infinite; }
+@keyframes fill { from { width: 0; } 60%, to { width: 100%; } }
+@media (max-width: 520px) { .mac { grid-template-columns: 1fr; } .steps { grid-template-columns: 1fr 1fr; } }
+
+/* audio */
+.meter { display: grid; grid-template-columns: repeat(28, 1fr); gap: 3px; height: 64px; align-items: end; }
+.meter i { display: block; background: var(--gpu); border-radius: 2px; height: 10%; transition: height .12s linear; }
+.meter i.hot { background: var(--watch); }
+.sliders { display: grid; gap: 14px; margin-top: 18px; }
+.sl { display: grid; grid-template-columns: 110px 1fr 54px; align-items: center; gap: 12px; font-size: 12.5px; color: var(--muted); }
+.sl input { width: 100%; accent-color: var(--accent); }
+.sl output { font-family: var(--data); color: var(--fg); text-align: right; }
+.switch-row { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-soft); font-size: 12.5px; }
+.sw { width: 34px; height: 20px; border-radius: 10px; background: var(--accent); position: relative; flex: none; }
+.sw::after { content: ""; position: absolute; top: 3px; right: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+
+/* ---------- add-on browser ---------- */
+.wall { margin-top: 56px; display: grid; gap: 10px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
+.wrow { display: flex; overflow: hidden; }
+.wtrack { display: flex; gap: 10px; flex: none; padding-right: 10px; animation: drift var(--dur, 90s) linear infinite; }
+.wrow.rev .wtrack { animation-direction: reverse; }
+.wall:hover .wtrack { animation-play-state: paused; }
+@keyframes drift { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.chip { display: inline-flex; align-items: center; gap: 10px; padding: 10px 16px 10px 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--line-soft); white-space: nowrap; font-size: .9375rem; color: var(--fg); }
+.chip .aic { width: 30px; height: 30px; border-radius: 8px; }
+.chip .aic .ic { width: 16px; height: 16px; color: var(--muted); }
+.chip small { color: var(--muted); font-size: .8125rem; }
+.chip.v .aic .ic { color: var(--accent-text); }
+.alist { max-height: 520px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2c2e35 transparent; }
+.lfoot { padding: 12px; color: var(--muted); font-size: .8125rem; border-top: 1px solid var(--line-soft); margin-top: 6px; }
+.store { margin-top: 56px; background: var(--window); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.store-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 14px 16px; border-bottom: 1px solid var(--line-soft); background: var(--rail); }
+.search { display: flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; flex: 1 1 220px; max-width: 320px; color: var(--muted); }
+.search:focus-within { border-color: var(--accent); }
+.search input { background: none; border: 0; outline: 0; color: var(--fg); font: inherit; font-size: .9375rem; padding: 10px 0; width: 100%; min-width: 0; }
+.search input::placeholder { color: var(--muted); }
+.search .ic { width: 17px; height: 17px; }
+.cats { display: flex; gap: 4px; flex-wrap: wrap; }
+.cats button { background: none; border: 0; color: var(--muted); font: inherit; font-size: .875rem; padding: 7px 12px; border-radius: 7px; cursor: pointer; }
+.cats button:hover { color: var(--fg); }
+.cats button.on { background: var(--sel); color: var(--fg); }
+.store-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: 440px; }
+.alist { list-style: none; margin: 0; padding: 8px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line-soft); }
+.arow { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px; border-radius: 8px; cursor: pointer; }
+.arow:hover { background: var(--card); }
+.arow.on { background: var(--sel); }
+.aic { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--card); border: 1px solid var(--line); color: var(--fg); }
+.arow.on .aic { border-color: #33363e; }
+.aic .ic { width: 20px; height: 20px; }
+.arow b { font-weight: 600; font-size: .9375rem; }
+.arow .pub { color: var(--muted); font-size: .8125rem; margin-left: 6px; }
+.arow .vbadge { margin-left: 6px; padding: 2px 7px 2px 4px; font-size: .6875rem; }
+.arow .vbadge .ic { width: 13px; height: 13px; }
+.arow p { color: var(--muted); font-size: .8125rem; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.astate { font-size: .8125rem; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.astate.ok { color: var(--ok); }
+.astate .ic { width: 15px; height: 15px; }
+.aempty { padding: 32px 16px; color: var(--muted); font-size: .9375rem; }
+.adetail { padding: 20px; display: flex; flex-direction: column; gap: 16px; font-size: .875rem; }
+.adetail h3 { font-size: 1.375rem; letter-spacing: -0.02em; }
+.adetail .meta { color: var(--muted); font-size: .8125rem; margin-top: 4px; }
+.adetail p { color: var(--muted); }
+.access { border-top: 1px solid var(--line-soft); padding-top: 14px; display: grid; gap: 10px; }
+.access h4 { margin: 0; font: 600 .8125rem/1.3 var(--body); color: var(--fg); }
+.access div { display: flex; gap: 10px; color: var(--muted); }
+.access div .ic { width: 16px; height: 16px; color: var(--accent-text); margin-top: 2px; }
+.trust { display: flex; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; color: var(--muted); font-size: .8125rem; }
+.trust .ic { width: 17px; height: 17px; flex: none; color: var(--accent-text); }
+.trust.plain .ic { color: var(--muted); }
+.adetail .btn { align-self: flex-start; margin-top: auto; }
+@media (max-width: 860px) {
+  .store-body { grid-template-columns: 1fr; }
+  .alist { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .search { max-width: none; }
+  .cats { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; width: 100%; }
+}
+
+/* ---------- honesty ---------- */
+.truths { margin-top: 72px; border-top: 1px solid var(--line-soft); }
+.truth { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: 48px; padding-block: 44px; border-bottom: 1px solid var(--line-soft); align-items: center; }
+.truth h3 { font-size: clamp(1.75rem, 3.4vw, 2.75rem); letter-spacing: -0.035em; line-height: 1.05; font-weight: 700; }
+.truth p { margin-top: 12px; color: var(--muted); max-width: 30em; }
+.statbar { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 10px 22px; font-size: 13px; }
+.statbar b { font-weight: 600; }
+.statbar span { color: var(--muted); }
+.statbar em { font-style: normal; color: var(--watch); font-size: 11px; border: 1px solid #f0a83a55; padding: 1px 6px; border-radius: 99px; margin-left: 4px; }
+.banner { display: flex; align-items: center; gap: 14px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; color: var(--muted); font-size: 13px; }
+.banner button { margin-left: auto; background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 4px; border-radius: 4px; }
+.banner button:hover { color: var(--fg); }
+.flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.flow span { padding: 9px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
+.flow span.last { border-color: var(--accent); color: var(--accent-text); }
+.flow .ic { width: 16px; height: 16px; color: var(--muted); }
+@media (max-width: 820px) { .truth { grid-template-columns: 1fr; gap: 22px; } }
+
+/* ---------- add-ons ---------- */
+.dev { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 56px; align-items: center; margin-top: 0; }
+.dev .caps { display: grid; gap: 10px; margin-top: 28px; font-size: .9375rem; }
+.dev .caps div { display: grid; grid-template-columns: 160px 1fr; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.dev .caps code { font-family: var(--data); font-size: .8125rem; color: var(--accent-text); }
+.dev .caps span { color: var(--muted); }
+.code { background: var(--window); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.code header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-soft); font-size: .8125rem; color: var(--muted); }
+.code header b { color: var(--fg); font-weight: 500; font-family: var(--data); font-size: .8125rem; }
+.code pre { margin: 0; padding: 16px 18px; overflow-x: auto; font: 400 .8125rem/1.7 var(--data); color: #c9cbd2; }
+.code .k { color: var(--accent-text); } .code .s { color: #8fd8b4; } .code .p { color: #6b6f7a; }
+.drop { margin: 0 14px 14px; border: 1px dashed #3a3d46; border-radius: 8px; padding: 14px; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: .8125rem; }
+.drop b { color: var(--fg); font-weight: 500; }
+@media (max-width: 900px) { .dev { grid-template-columns: 1fr; gap: 36px; } .dev .caps div { grid-template-columns: 1fr; gap: 2px; } }
+
+/* ---------- download close ---------- */
+.close { padding-block: 160px 120px; }
+.close h2 { font-size: clamp(2.75rem, 9vw, 7rem); line-height: .95; letter-spacing: -0.045em; font-weight: 800; }
+.close h2 .num { font-family: var(--display); letter-spacing: -0.045em; }
+.close h2 .exe { color: var(--accent-text); }
+.close-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; margin-top: 48px; align-items: start; }
+.facts { display: grid; gap: 0; border-top: 1px solid var(--line-soft); }
+.facts div { display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding-block: 14px; border-bottom: 1px solid var(--line-soft); font-size: .9375rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.close .warn { margin-top: 18px; color: var(--muted); font-size: .875rem; max-width: 34em; }
+@media (max-width: 820px) { .close-grid { grid-template-columns: 1fr; } .facts div { grid-template-columns: 1fr; gap: 2px; } }
+
+footer { border-top: 1px solid var(--line-soft); padding-block: 28px; color: var(--muted); font-size: .8125rem; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center; }
+footer a { text-decoration: none; } footer a:hover { color: var(--fg); }
+footer .brand { font-size: .9375rem; color: var(--fg); }
+
+.ref-tag { position: fixed; z-index: 40; left: max(12px, env(safe-area-inset-left, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--card); border: 1px solid var(--line); color: var(--muted); font-size: .75rem; padding: 6px 10px; border-radius: 6px; }
+
+/* entrance: content is visible at rest; this only adds a short rise */
+.rise { animation: rise .9s var(--ease) both; }
+.rise.d1 { animation-delay: .08s; } .rise.d2 { animation-delay: .16s; } .rise.d3 { animation-delay: .24s; }
+@keyframes rise { from { transform: translateY(14px); filter: blur(4px); } to { transform: none; filter: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  html { scroll-behavior: auto; }
+  .win { --tilt: 0deg !important; }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-2.9 7.9-7 10-4.1-2.1-7-5.4-7-10V6z"/><path d="M12 8v4M12 15.5v.01"/></symbol>
+  <symbol id="i-drive" viewBox="0 0 24 24"><path d="M5 13l2.2-7h9.6L19 13"/><rect x="3.5" y="13" width="17" height="6" rx="2"/><path d="M16.5 16h.01"/></symbol>
+  <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M6 4l12 7-5.5 1.5L10 18z"/><path d="M13 13l4 5"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><path d="M16.75 14v5.5M14 16.75h5.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-verified" viewBox="0 0 24 24"><path d="M12 3l2.3 1.7 2.8-.2.9 2.7 2.3 1.6-.9 2.7.9 2.7-2.3 1.6-.9 2.7-2.8-.2L12 21l-2.3-1.7-2.8.2-.9-2.7L3.7 15.2l.9-2.7-.9-2.7 2.3-1.6.9-2.7 2.8.2z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 13l3.5-4"/><circle cx="12" cy="13.5" r="1.3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-mark" viewBox="0 0 24 24"><path d="M4 10h16v9H4zM9 10V7h6v3M4 14h16"/></symbol>
+</svg>
+
+<nav class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="mark"><svg><use href="#i-mark"/></svg></span>Toolboks</a>
+    <div class="nav-links">
+      <a href="#tools">Our tools</a>
+      <a href="#browser">Add-on browser</a>
+      <a href="#addons">Developers</a>
+      <a href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">Source</a>
+    </div>
+    <a class="btn small primary" href="#download"><svg class="ic" style="width:16px;height:16px"><use href="#i-down"/></svg>Download</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="trace" id="trace" aria-label="Live CPU usage trace, demo data. Move the pointer over it to read a value.">
+    <canvas id="traceCanvas"></canvas>
+    <div class="trace-tip" id="traceTip"></div>
+  </div>
+  <div class="trace-bar" aria-hidden="true"><div class="wrap">
+    <span><b class="num" id="traceNow">44%</b> CPU usage</span><span><b>Last minute</b></span><span>Demo data. Hover the line.</span>
+  </div></div>
+
+  <div class="wrap">
+    <div class="hero-copy">
+      <h1 class="rise">One calm window for <em>every PC&nbsp;tool.</em></h1>
+      <p class="lede rise d1">Toolboks is <strong>a home for Windows system tools</strong>. Pick the ones you need from the add-on browser and they all open in the same window, look the same and follow the same rules. Tools from the Toolboks team carry the verified mark.</p>
+      <div class="cta-row rise d2">
+        <a class="btn primary" href="#download"><svg class="ic"><use href="#i-down"/></svg>Download for Windows</a>
+        <a class="btn" href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">View the source</a>
+        <span class="cta-meta"><span class="num">toolboks.exe</span> · v<span class="num">0.12.5</span> · one file, no installer</span>
+      </div>
+    </div>
+
+    <div class="stage rise d3">
+      <div class="win" id="win" role="img" aria-label="The Toolboks window showing Resource Monitor with live CPU, memory, GPU, disk and network graphs. Demo data.">
+        <div class="win-title"><span class="mark"><svg><use href="#i-mark"/></svg></span>Toolboks<span class="win-ctl"><span>&#8211;</span><span>&#9633;</span><span>&#215;</span></span></div>
+        <div class="win-body">
+          <div class="win-side">
+            <div class="it"><svg class="ic"><use href="#i-home"/></svg><span>Home</span></div>
+            <div class="it"><svg class="ic"><use href="#i-chip"/></svg><span>Memory Cleaner</span></div>
+            <div class="it on"><svg class="ic"><use href="#i-pulse"/></svg><span>Resource Monitor</span></div>
+            <div class="sub on">Overview</div>
+            <div class="sub">Details</div>
+            <div class="sub">Processes</div>
+            <div class="it"><svg class="ic"><use href="#i-sliders"/></svg><span>Debloater</span></div>
+            <div class="it"><svg class="ic"><use href="#i-shield"/></svg><span>Event Watch</span></div>
+            <div class="it"><svg class="ic"><use href="#i-drive"/></svg><span>Disk Manager</span></div>
+            <div class="it"><svg class="ic"><use href="#i-grid"/></svg><span>Add-ons</span></div>
+          </div>
+          <div class="win-list" id="winList"></div>
+          <div class="win-main">
+            <header><b>CPU</b><span>8 cores, 8 threads</span>
+              <span class="pills"><i class="on">1 min</i><i>5 min</i><i>1 h</i><i>24 h</i></span></header>
+            <div class="gcard"><canvas id="cpuBig"></canvas></div>
+            <div class="cores" id="cores"></div>
+          </div>
+        </div>
+        <div class="win-status"><span>RAM <b class="num" id="stRam">60%</b></span><span>CPU <b class="num" id="stCpu">44%</b></span><span>GPU <b class="num" id="stGpu">13%</b></span><span>v0.12.5</span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="block" id="tools">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Eight of ours. Room for thousands.</h2>
+      <p>Every tool in Toolboks is an add-on, including the ones we make, and the platform is built to hold as many as people build. These first eight come from the Toolboks team and carry the verified mark.</p>
+    </div>
+
+    <div class="tour">
+      <nav class="rail" id="rail" aria-label="Toolboks verified tools">
+        <span class="rail-head"><svg class="ic"><use href="#i-verified"/></svg>Toolboks verified</span>
+        <a href="#t-memory" class="on"><svg class="ic"><use href="#i-chip"/></svg>Memory Cleaner</a>
+        <a href="#t-monitor"><svg class="ic"><use href="#i-pulse"/></svg>Resource Monitor</a>
+        <a href="#t-debloat"><svg class="ic"><use href="#i-sliders"/></svg>Debloater</a>
+        <a href="#t-profiles"><svg class="ic"><use href="#i-gauge"/></svg>System Profiles</a>
+        <a href="#t-events"><svg class="ic"><use href="#i-shield"/></svg>Event Watch</a>
+        <a href="#t-disk"><svg class="ic"><use href="#i-drive"/></svg>Disk Manager</a>
+        <a href="#t-macro"><svg class="ic"><use href="#i-cursor"/></svg>Macro Manager</a>
+        <a href="#t-audio"><svg class="ic"><use href="#i-mic"/></svg>Audio Gainer</a>
+        <hr>
+        <a href="#browser"><svg class="ic"><use href="#i-grid"/></svg>Find more</a>
+      </nav>
+
+      <div class="panels">
+        <!-- Memory -->
+        <article class="panel" id="t-memory">
+          <div class="pcopy">
+            <h3>Memory Cleaner <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>One button asks running apps to hand back memory they aren't using. It closes nothing, deletes nothing and needs no admin rights. Afterwards it shows the measured drop, not a flattering sum.</p>
+            <ul><li>See where your memory goes, grouped by app</li><li>Clean automatically above a level you choose</li><li>Process list and protection on the Advanced page</li></ul>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="verdict">
+                <span class="dot" id="memDot"></span>
+                <div><b id="memVerdict">Memory is getting full</b><small id="memSub">78% in use. Games may stutter when it fills up.</small></div>
+                <button class="btn small primary" id="memBtn" type="button">Optimize memory</button>
+              </div>
+              <div class="membar" id="memBar" aria-label="Where your memory goes">
+                <i style="width:24%;background:var(--accent)"></i><i style="width:17%;background:var(--mem)"></i><i style="width:13%;background:var(--net)"></i><i style="width:11%;background:var(--gpu)"></i><i style="width:13%;background:#4a4d57"></i>
+              </div>
+              <div class="memkey">
+                <span style="--c:var(--accent)">Chrome 7.6 GB</span><span style="--c:var(--mem)">Game 5.4 GB</span><span style="--c:var(--net)">Discord 4.1 GB</span><span style="--c:var(--gpu)">Windows 3.5 GB</span><span style="--c:#4a4d57">Other</span>
+              </div>
+              <p class="mem-result" id="memResult">Last run: never on this PC.</p>
+            </div>
+            <p class="demo-note">Try it. Demo numbers on a 32 GB PC.</p>
+          </div>
+        </article>
+
+        <!-- Monitor -->
+        <article class="panel" id="t-monitor">
+          <div class="pcopy">
+            <h3>Resource Monitor <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>CPU, GPU, memory, disk and network on live graphs that fill the card. Hover any line for the exact value and how long ago it was. Per-core, per-drive and per-adapter detail is one page further.</p>
+            <ul><li>Ranges from one minute to 24 hours</li><li>Estimates such as GPU power are labelled</li><li>Top processes next to the graphs</li></ul>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="rgrid">
+                <div class="gcard rcard"><div class="lbl"><b>CPU</b><span id="rv0" style="color:var(--accent-text)">44%</span></div><canvas data-series="0"></canvas><div class="foot">4.8 GHz</div></div>
+                <div class="gcard rcard"><div class="lbl"><b>Memory</b><span id="rv1" style="color:var(--mem)">60%</span></div><canvas data-series="1"></canvas><div class="foot">19.0 of 31.9 GB</div></div>
+                <div class="gcard rcard"><div class="lbl"><b>GPU</b><span id="rv2" style="color:var(--gpu)">13%</span></div><canvas data-series="2"></canvas><div class="foot">57 °C</div></div>
+                <div class="gcard rcard"><div class="lbl"><b>Disk</b><span id="rv3" style="color:var(--disk)">4.6 MB/s</span></div><canvas data-series="3"></canvas><div class="foot">Write 4.4 MB/s</div></div>
+              </div>
+            </div>
+            <p class="demo-note">Demo data, updating every second.</p>
+          </div>
+        </article>
+
+        <!-- Debloater -->
+        <article class="panel" id="t-debloat">
+          <div class="pcopy">
+            <h3>Debloater <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Pick what you want gone and read what each change does before anything happens. Toolboks applies only what you ticked, and every change can be undone from the same list.</p>
+            <ul><li>Preview, confirm, apply, undo</li><li>Plain description for every item</li><li>Nothing runs in the background afterwards</li></ul>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="dlist" id="dlist">
+                <label class="drow"><input type="checkbox" id="d1" checked><span><b>Start menu suggestions</b><small>Stops app ads in Start. Reversible.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" id="d2" checked><span><b>Background web search</b><small>Search stays on this PC. Reversible.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" id="d3"><span><b>Preinstalled games</b><small>Removes 3 apps. Reinstall from the Store.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" id="d4"><span><b>Tips and notifications</b><small>Fewer pop-ups. Reversible.</small></span><span class="st">Ready</span></label>
+              </div>
+              <div class="dfoot"><p id="dmsg">2 changes selected. Nothing has changed yet.</p>
+                <button class="btn small" id="dUndo" type="button" disabled>Undo</button>
+                <button class="btn small primary" id="dApply" type="button">Apply 2 changes</button></div>
+            </div>
+            <p class="demo-note">Example items. The real list comes from the app.</p>
+          </div>
+        </article>
+
+        <!-- Events -->
+        <article class="panel" id="t-profiles">
+          <div class="pcopy">
+            <h3>System Profiles <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Set Windows up for gaming in one pass. Review each change in the Gaming profile, keep the ones you want, and follow guided steps for Windows and NVIDIA settings. Toolboks makes a restore point and a registry backup first, and can put back everything it changed.</p>
+            <ul><li>Choose each change before it's applied</li><li>Restore point and registry backup first</li><li>Activity log of every change made</li></ul>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="prof-head"><span class="aic"><svg class="ic"><use href="#i-gauge"/></svg></span><div><b>Gaming profile</b><small id="profSub">4 of 5 changes selected</small></div></div>
+              <div class="dlist" id="plist">
+                <label class="drow"><input type="checkbox" checked><span><b>Turn on Game Mode</b><small>Windows setting. Restorable.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" checked><span><b>Pause background apps while gaming</b><small>Windows setting. Restorable.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" checked><span><b>Use the high performance power plan</b><small>Uses more power on laptops. Restorable.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" checked><span><b>Hardware-accelerated GPU scheduling</b><small>Needs a restart. Restorable.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox"><span><b>NVIDIA settings</b><small>Guided steps. You change these yourself.</small></span><span class="st">Guided</span></label>
+              </div>
+              <ol class="plog" id="plog"></ol>
+              <div class="dfoot"><p id="pmsg">Nothing has changed yet.</p>
+                <button class="btn small" id="pRestore" type="button" disabled>Restore</button>
+                <button class="btn small primary" id="pApply" type="button">Apply profile</button></div>
+            </div>
+            <p class="demo-note">Example profile. The real changes come from the app.</p>
+          </div>
+        </article>
+
+        <article class="panel" id="t-events">
+          <div class="pcopy">
+            <h3>Event Watch <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Windows logs a lot and explains little. Event Watch lists what happened, says what it means in one line, and keeps the raw record one click away in the inspector.</p>
+            <ul><li>Filter by level, source and time</li><li>Plain summary above the raw event</li><li>Watch new events arrive live</li></ul>
+          </div>
+          <div>
+            <div class="demo" style="padding:10px 12px;overflow-x:auto">
+              <table class="etable" id="etable">
+                <thead><tr><th>Time</th><th>Level</th><th>What happened</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <p class="demo-note">Example events.</p>
+          </div>
+        </article>
+
+        <!-- Disk -->
+        <article class="panel" id="t-disk">
+          <div class="pcopy">
+            <h3>Disk Manager<span class="by">by stratum</span> <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>A background scan draws your drive as a space map, so the biggest folders are the biggest blocks. Fragmentation reports and Windows drive optimization sit on the same page.</p>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="tree" aria-label="Space map of drive C, example">
+                <div class="a">Games<small>412 GB</small></div>
+                <div class="b">Videos<small>138 GB</small></div>
+                <div class="c">Photos<small>71 GB</small></div>
+                <div class="d">Windows<small>96 GB</small></div>
+                <div class="e">Apps<small>54 GB</small></div>
+                <div class="f">Downloads<small>32 GB</small></div>
+                <div class="g">Other<small>18 GB</small></div>
+              </div>
+              <div class="disk-meta"><span>Drive C · <b class="num">821</b> of <b class="num">931 GB</b> used</span><span>Scanned in the background</span></div>
+            </div>
+            <p class="demo-note">Example drive.</p>
+          </div>
+        </article>
+
+        <!-- Macro -->
+        <article class="panel" id="t-macro">
+          <div class="pcopy">
+            <h3>Macro Manager <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Record keystrokes and mouse movement, edit every step and drag the path points, then play it back once, for a set time or until you stop it. Esc always stops it. Macros stay on your PC.</p>
+          </div>
+          <div>
+            <div class="demo" id="macroDemo">
+              <div class="mac">
+                <div class="steps">
+                  <div><b>Key Ctrl+S</b><span class="num">0 ms</span></div>
+                  <div class="on"><b>Mouse movement</b><span class="num">640 ms</span></div>
+                  <div><b>Left click</b><span class="num">40 ms</span></div>
+                  <div><b>Scroll down</b><span class="num">120 ms</span></div>
+                </div>
+                <div class="canvas-area">
+                  <svg viewBox="0 0 320 200" preserveAspectRatio="none" aria-hidden="true">
+                    <path class="mpath" d="M30 160 C 80 150, 90 60, 150 70 S 230 150, 290 40"/>
+                    <circle cx="30" cy="160" r="5" fill="var(--fg)"/><circle cx="290" cy="40" r="5" fill="var(--accent)"/>
+                    <circle cx="150" cy="70" r="4" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+                  </svg>
+                </div>
+                <div class="playrow"><button class="btn small primary" type="button" tabindex="-1">Play macro</button><div class="track"><i></i></div><span class="num" style="color:var(--muted);font-size:12px">1.2 s</span></div>
+              </div>
+            </div>
+            <p class="demo-note">Example macro.</p>
+          </div>
+        </article>
+
+        <!-- Audio -->
+        <article class="panel" id="t-audio">
+          <div class="pcopy">
+            <h3>Audio Gainer <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Boost a quiet microphone, listen to yourself and route it to other apps. Toolboks remembers the gain and routing for each microphone and switches back when your favourite one reconnects.</p>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="meter" id="meter" aria-hidden="true"></div>
+              <div class="sliders">
+                <div class="sl"><label for="gain">Gain</label><input type="range" id="gain" min="0" max="24" value="9"><output class="num" id="gainOut" for="gain">+9 dB</output></div>
+                <div class="sl"><label for="listen">Listening volume</label><input type="range" id="listen" min="0" max="100" value="35"><output class="num" id="listenOut" for="listen">35%</output></div>
+              </div>
+              <div class="switch-row"><span>Remember settings for this microphone</span><span class="sw" aria-hidden="true"></span></div>
+            </div>
+            <p class="demo-note">Demo meter.</p>
+          </div>
+        </article>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="browser">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Every tool you'll ever need, in one browser.</h2>
+      <p>Anyone can build a tool for Toolboks, so the add-on browser keeps growing. Search it, filter by category, see exactly what each tool is allowed to touch, and install in one click. Verified tools are listed first, and no add-on can give itself the mark.</p>
+    </div>
+  </div>
+  <div class="wall" aria-hidden="true">
+    <div class="wrow"><div class="wtrack" data-row="0"></div></div>
+    <div class="wrow rev"><div class="wtrack" data-row="1"></div></div>
+    <div class="wrow"><div class="wtrack" data-row="2"></div></div>
+  </div>
+  <div class="wrap">
+    <p class="demo-note" style="margin-top:4px">Example tool ideas, not real listings.</p>
+
+    <div class="store" id="store">
+      <div class="store-bar">
+        <label class="search" for="storeQ"><svg class="ic"><use href="#i-search"/></svg><input id="storeQ" type="search" placeholder="Search add-ons" autocomplete="off"></label>
+        <div class="cats" id="cats" role="group" aria-label="Category">
+          <button type="button" class="on" data-cat="all">All</button><button type="button" data-cat="System">System</button><button type="button" data-cat="Storage">Storage</button><button type="button" data-cat="Audio">Audio</button><button type="button" data-cat="Automation">Automation</button><button type="button" data-cat="Developer tools">Developer tools</button>
+        </div>
+      </div>
+      <div class="store-body">
+        <ul class="alist" id="alist"></ul>
+        <aside class="adetail" id="adetail" aria-live="polite"></aside>
+      </div>
+    </div>
+    <p class="demo-note">Example listing. Click a row to see what it asks for, then install it.</p>
+  </div>
+</section>
+
+<section class="block" id="honest">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>It tells you what it can't do.</h2>
+      <p>System tools love big numbers. Toolboks would rather be right. These rules are part of the platform, so every add-on follows them, ours and everyone else's.</p>
+    </div>
+    <div class="truths">
+      <div class="truth">
+        <div><h3>Measured is measured.</h3><p>A value Windows reports is shown as it is. A value Toolboks works out says "estimate", in the graph and in the tooltip.</p></div>
+        <div class="statbar"><span><b class="num">19.0 GB</b> in use</span><span><b class="num">44%</b> CPU</span><span><b class="num">41 W</b> CPU power<em>estimate</em></span></div>
+      </div>
+      <div class="truth">
+        <div><h3>Limits are said out loud.</h3><p>If something can't be read on your PC, a quiet line says so, instead of a made-up number or an empty gauge.</p></div>
+        <div class="banner" id="banner"><span>CPU temperature is not shown on this PC.</span><button type="button" aria-label="Dismiss" id="bannerX"><svg class="ic" style="width:16px;height:16px"><use href="#i-x"/></svg></button></div>
+      </div>
+      <div class="truth">
+        <div><h3>Nothing changes behind your back.</h3><p>Anything that touches your system shows what will happen, asks once, and keeps a way back.</p></div>
+        <div class="flow"><span>Preview</span><svg class="ic"><use href="#i-arrow"/></svg><span>Confirm</span><svg class="ic"><use href="#i-arrow"/></svg><span>Apply</span><svg class="ic"><use href="#i-arrow"/></svg><span class="last">Undo</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="addons">
+  <div class="wrap dev">
+    <div>
+      <div class="sec-head">
+        <h2>Build a tool. Toolboks gives it a home.</h2>
+        <p>An add-on is one <span class="num" style="font-size:.95em">.tbaddon</span> file. Write pages of headings, notes, live metrics and switches, and Toolboks draws them in its own style, next to every other tool. You never pick a font or a colour, and the window, sidebar and settings are already done.</p>
+      </div>
+      <div class="caps">
+        <div><code>host_metrics</code><span>Read memory use and uptime</span></div>
+        <div><code>local_preferences</code><span>Keep the add-on's own settings</span></div>
+        <div><code>filesystem_read</code><span>Native providers, with approval</span></div>
+      </div>
+      <div class="cta-row" style="margin-top:28px"><a class="btn" href="https://github.com/Gusseti/toolboks/tree/main/sdk" target="_blank" rel="noopener">Read the SDK guide<svg class="ic" style="width:16px;height:16px"><use href="#i-arrow"/></svg></a></div>
+    </div>
+    <div class="code">
+      <header><svg class="ic" style="width:16px;height:16px"><use href="#i-file"/></svg><b>hello-system.tbaddon</b><span style="margin-left:auto">SDK 0.4 preview</span></header>
+<pre><span class="p">{</span>
+  <span class="k">"manifest"</span>: <span class="p">{</span>
+    <span class="k">"id"</span>: <span class="s">"com.example.hello-system"</span>,
+    <span class="k">"title"</span>: <span class="s">"Hello System"</span>,
+    <span class="k">"icon"</span>: <span class="s">"leaf"</span>,
+    <span class="k">"accent"</span>: <span class="s">"#8B5CF6"</span>,
+    <span class="k">"capabilities"</span>: [<span class="s">"host_metrics"</span>, <span class="s">"local_preferences"</span>]
+  <span class="p">}</span>,
+  <span class="k">"pages"</span>: [<span class="p">{</span> <span class="k">"id"</span>: <span class="s">"overview"</span>, <span class="k">"widgets"</span>: [
+    <span class="p">{</span> <span class="k">"kind"</span>: <span class="s">"heading"</span>, <span class="k">"text"</span>: <span class="s">"Your system at a glance"</span> <span class="p">}</span>,
+    <span class="p">{</span> <span class="k">"kind"</span>: <span class="s">"metric"</span>, <span class="k">"label"</span>: <span class="s">"Memory in use"</span>,
+      <span class="k">"binding"</span>: <span class="s">"memory_percent"</span> <span class="p">}</span>
+  ]<span class="p">}</span>]
+<span class="p">}</span></pre>
+      <div class="drop"><svg class="ic"><use href="#i-down"/></svg><span><b>Drop the file on the window</b> to review its access and install it.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="close" id="download">
+  <div class="wrap">
+    <h2>One file.<br><span class="exe">toolboks.exe</span></h2>
+    <div class="close-grid">
+      <div>
+        <div class="cta-row" style="margin-top:0">
+          <a class="btn primary" href="https://github.com/Gusseti/toolboks/releases/latest" target="_blank" rel="noopener"><svg class="ic"><use href="#i-down"/></svg>Download v0.12.5</a>
+          <a class="btn" href="https://github.com/Gusseti/toolboks/blob/main/CHANGELOG.md" target="_blank" rel="noopener">What's new</a>
+        </div>
+        <p class="warn">Releases aren't code-signed yet, so Windows SmartScreen may warn you the first time. Choose More info, then Run anyway. The checksum is published next to every release.</p>
+      </div>
+      <dl class="facts">
+        <div><dt>Runs on</dt><dd>Windows 11</dd></div>
+        <div><dt>Install</dt><dd>None. Download and run.</dd></div>
+        <div><dt>Tools</dt><dd>Pick them in the add-on browser on first launch</dd></div>
+        <div><dt>Updates</dt><dd>Checked once at launch, verified with SHA-256, swapped in place</dd></div>
+        <div><dt>Admin rights</dt><dd>Only asked for when a task needs them</dd></div>
+        <div><dt>Licence</dt><dd>MIT, open source</dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer><div class="wrap">
+  <span class="brand"><span class="mark"><svg><use href="#i-mark"/></svg></span>Toolboks</span>
+  <a href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Gusseti/toolboks/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+  <a href="https://github.com/Gusseti/toolboks/tree/main/sdk" target="_blank" rel="noopener">Add-on SDK</a>
+  <span style="margin-left:auto">MIT licence</span>
+</div></footer>
+
+<div class="ref-tag">Design reference · demo data</div>
+
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const css = getComputedStyle(document.documentElement);
+  const tok = n => css.getPropertyValue(n).trim();
+  const C = { accent: tok('--accent'), mem: tok('--mem'), gpu: tok('--gpu'), disk: tok('--disk'), net: tok('--net'), line: tok('--line-soft'), muted: tok('--muted') };
+
+  // ----- series -----
+  const walk = (n, base, spread, lo, hi, spiky) => {
+    const a = []; let v = base;
+    for (let i = 0; i < n; i++) { v = next(v, base, spread, lo, hi, spiky); a.push(v); }
+    return a;
+  };
+  function next(v, base, spread, lo, hi, spiky) {
+    v += (Math.random() - .5) * spread + (base - v) * .12;
+    if (spiky && Math.random() < .08) v += spread * 2.5 * Math.random();
+    return Math.max(lo, Math.min(hi, v));
+  }
+  const S = [
+    { d: walk(90, 44, 10, 8, 96), base: 44, spread: 10, lo: 8, hi: 96, max: 100, color: C.accent, fmt: v => Math.round(v) + '%' },
+    { d: walk(90, 60, 1.2, 55, 66), base: 60, spread: 1.2, lo: 55, hi: 66, max: 100, color: C.mem, fmt: v => Math.round(v) + '%' },
+    { d: walk(90, 13, 5, 2, 70), base: 13, spread: 5, lo: 2, hi: 70, max: 100, color: C.gpu, fmt: v => Math.round(v) + '%' },
+    { d: walk(90, 4, 3, 0, 40, true), base: 4, spread: 3, lo: 0, hi: 40, max: 40, color: C.disk, fmt: v => v.toFixed(1) + ' MB/s' },
+    { d: walk(90, 3, 3, 0, 30, true), base: 3, spread: 3, lo: 0, hi: 30, max: 30, color: C.net, fmt: v => Math.round(v) + ' KB/s' },
+  ];
+  const coreS = Array.from({ length: 4 }, () => ({ d: walk(60, 45, 9, 5, 95), base: 45, spread: 9, lo: 5, hi: 95, max: 100 }));
+
+  function fit(cv) {
+    const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w: r.width, h: r.height };
+  }
+  function draw(cv, data, max, color, opt = {}) {
+    const { ctx, w, h } = fit(cv);
+    ctx.clearRect(0, 0, w, h);
+    const top = opt.top ?? 4, bot = opt.bot ?? 2, shift = opt.shift ?? 0;
+    const n = data.length, step = w / (n - 2);
+    const y = v => top + (1 - v / max) * (h - top - bot);
+    if (opt.grid) {
+      ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+      [0.5, 1].forEach(f => { const yy = Math.round(y(max * f)) + .5; ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(w, yy); ctx.stroke(); });
+    }
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { const x = i * step - shift * step; i ? ctx.lineTo(x, y(data[i])) : ctx.moveTo(x, y(data[i])); }
+    ctx.strokeStyle = color; ctx.lineWidth = opt.lw ?? 1.5; ctx.lineJoin = 'round'; ctx.stroke();
+    if (opt.fill !== false) {
+      ctx.lineTo((n - 1) * step - shift * step, h); ctx.lineTo(-shift * step, h); ctx.closePath();
+      ctx.fillStyle = color + (opt.alpha ?? '1f'); ctx.fill();
+    }
+    return { y, step };
+  }
+
+  // ----- window list -----
+  const names = [['CPU', 'i7, 4.8 GHz'], ['Memory', '19.0 of 31.9 GB'], ['GPU', 'RTX 3080, 57 °C'], ['Disk', 'Write 4.4 MB/s'], ['Network', 'Sending 1 KB/s']];
+  const list = document.getElementById('winList');
+  names.forEach(([n, s], i) => {
+    const el = document.createElement('div'); el.className = 'res' + (i === 0 ? ' on' : '');
+    el.innerHTML = `<canvas></canvas><div><b>${n}</b><small>${s}</small></div><span class="v"></span>`;
+    list.appendChild(el);
+  });
+  const coresEl = document.getElementById('cores');
+  coreS.forEach((c, i) => { const g = document.createElement('div'); g.className = 'gcard'; g.innerHTML = `<span>Core ${i}<b></b></span><canvas></canvas>`; coresEl.appendChild(g); });
+
+  function renderWindow() {
+    list.querySelectorAll('.res').forEach((el, i) => {
+      const s = S[i]; draw(el.querySelector('canvas'), s.d.slice(-30), s.max, s.color, { fill: false, lw: 1.3, top: 2 });
+      el.querySelector('.v').textContent = s.fmt(s.d[s.d.length - 1]);
+    });
+    draw(document.getElementById('cpuBig'), S[0].d, 100, C.accent, { grid: true, top: 10, alpha: '24' });
+    coresEl.querySelectorAll('.gcard').forEach((g, i) => {
+      const c = coreS[i]; draw(g.querySelector('canvas'), c.d, 100, C.accent, { top: 26, alpha: '24', lw: 1.2 });
+      g.querySelector('b').textContent = Math.round(c.d[c.d.length - 1]) + '%';
+    });
+    document.getElementById('stCpu').textContent = S[0].fmt(S[0].d.at(-1));
+    document.getElementById('stRam').textContent = S[1].fmt(S[1].d.at(-1));
+    document.getElementById('stGpu').textContent = S[2].fmt(S[2].d.at(-1));
+  }
+  const rcards = [...document.querySelectorAll('.rcard canvas')];
+  function renderCards() {
+    rcards.forEach(cv => { const s = S[+cv.dataset.series]; draw(cv, s.d.slice(-40), s.max, s.color, { top: 30, bot: 22, alpha: '22' }); });
+    [0, 1, 2, 3].forEach(i => { document.getElementById('rv' + i).textContent = S[i].fmt(S[i].d.at(-1)); });
+  }
+
+  // ----- hero trace -----
+  const traceCv = document.getElementById('traceCanvas'), trace = document.getElementById('trace'), tip = document.getElementById('traceTip');
+  const T = walk(62, 44, 12, 10, 92);
+  let tShift = 0, hoverX = null, lastTick = performance.now();
+  const hero = document.querySelector('.hero'), stage = document.querySelector('.stage');
+  const sizeTrace = () => hero.style.setProperty('--trace-h', (stage.offsetTop + 24) + 'px');
+  sizeTrace(); addEventListener('resize', sizeTrace);
+  function renderTrace() {
+    const { ctx, w, h } = fit(traceCv);
+    ctx.clearRect(0, 0, w, h);
+    const copyEnd = document.querySelector('.cta-row').getBoundingClientRect().bottom - trace.getBoundingClientRect().top;
+    const top = Math.max(40, copyEnd + 48), bot = 84, n = T.length, step = w / (n - 2);
+    const y = v => top + (1 - v / 100) * (h - top - bot);
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.fillStyle = C.muted; ctx.font = '12px ' + tok('--body');
+    [[50, '50%'], [100, '100%']].forEach(([v, l]) => { const yy = Math.round(y(v)) + .5; ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(w, yy); ctx.stroke(); ctx.fillText(l, w - ctx.measureText(l).width - 16, yy - 8); });
+    const pts = T.map((v, i) => [i * step - tShift * step, y(v)]);
+    ctx.beginPath(); pts.forEach(([x, yy], i) => i ? ctx.lineTo(x, yy) : ctx.moveTo(x, yy));
+    ctx.strokeStyle = C.accent; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.lineTo(pts.at(-1)[0], h - bot); ctx.lineTo(pts[0][0], h - bot); ctx.closePath(); ctx.fillStyle = C.accent + '14'; ctx.fill();
+    if (hoverX != null) {
+      let i = Math.max(1, Math.min(n - 1, Math.ceil(hoverX / step + tShift)));
+      const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], f = (hoverX - x0) / (x1 - x0 || 1);
+      const yy = y0 + (y1 - y0) * f, val = T[i - 1] + (T[i] - T[i - 1]) * f;
+      ctx.strokeStyle = '#3a3d46'; ctx.beginPath(); ctx.moveTo(Math.round(hoverX) + .5, top - 10); ctx.lineTo(Math.round(hoverX) + .5, h - bot); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.beginPath(); ctx.arc(hoverX, yy, 5, 0, 7); ctx.fill();
+      const secs = Math.round((1 - hoverX / w) * 60);
+      tip.innerHTML = `${secs < 1 ? 'Now' : secs + ' s ago'}<br><i></i><b>CPU ${Math.round(val)}%</b>`;
+      const tw = tip.offsetWidth; tip.style.left = Math.min(w - tw - 12, hoverX + 14) + 'px'; tip.style.top = Math.max(8, yy - 64) + 'px';
+      tip.style.opacity = 1;
+    } else tip.style.opacity = 0;
+  }
+  trace.addEventListener('pointermove', e => { const r = trace.getBoundingClientRect(); hoverX = e.clientX - r.left; if (reduce) renderTrace(); });
+  trace.addEventListener('pointerleave', () => { hoverX = null; if (reduce) renderTrace(); });
+
+  function tick() {
+    S.forEach(s => { s.d.push(next(s.d.at(-1), s.base, s.spread, s.lo, s.hi, s.max < 100)); s.d.shift(); });
+    coreS.forEach(s => { s.d.push(next(s.d.at(-1), s.base, s.spread, s.lo, s.hi)); s.d.shift(); });
+    renderWindow(); renderCards();
+  }
+  renderWindow(); renderCards(); renderTrace();
+
+  // hero trace scrolls smoothly; panels tick once a second
+  let acc = 0;
+  function frame(now) {
+    const dt = now - lastTick; lastTick = now;
+    tShift += dt / 1000; // one point per second
+    if (tShift >= 1) { tShift -= 1; T.push(next(T.at(-1), 44, 12, 10, 92)); T.shift(); document.getElementById('traceNow').textContent = Math.round(T.at(-2)) + '%'; }
+    acc += dt; if (acc >= 1000) { acc = 0; tick(); }
+    renderTrace(); requestAnimationFrame(frame);
+  }
+  if (!reduce) requestAnimationFrame(frame);
+  addEventListener('resize', () => { renderWindow(); renderCards(); renderTrace(); });
+
+  // ----- window settles flat as you scroll -----
+  const win = document.getElementById('win'), nav = document.getElementById('nav');
+  function onScroll() {
+    nav.classList.toggle('scrolled', scrollY > 8);
+    if (reduce) return;
+    const r = win.getBoundingClientRect(), p = Math.min(1, Math.max(0, (innerHeight - r.top) / (innerHeight * .9)));
+    win.style.setProperty('--tilt', (16 * (1 - p)).toFixed(2) + 'deg');
+  }
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+
+  // ----- rail scroll-spy -----
+  const railLinks = [...document.querySelectorAll('#rail a')];
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) railLinks.forEach(a => {
+      const on = a.getAttribute('href') === '#' + e.target.id; a.classList.toggle('on', on);
+      if (on && innerWidth <= 980) a.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reduce ? 'auto' : 'smooth' });
+    });
+  }), { rootMargin: '-45% 0px -50% 0px' });
+  document.querySelectorAll('.panel').forEach(p => io.observe(p));
+  const macro = document.getElementById('macroDemo');
+  new IntersectionObserver(es => es.forEach(e => macro.classList.toggle('inview', e.isIntersecting))).observe(macro);
+
+  // ----- memory demo -----
+  const memBtn = document.getElementById('memBtn'), bars = [...document.querySelectorAll('#memBar i')];
+  const before = [24, 17, 13, 11, 13], after = [17, 15, 8, 10, 13];
+  let cleaned = false;
+  memBtn.addEventListener('click', () => {
+    if (cleaned) { bars.forEach((b, i) => b.style.width = before[i] + '%'); cleaned = false;
+      document.getElementById('memDot').style.background = ''; document.getElementById('memVerdict').textContent = 'Memory is getting full';
+      document.getElementById('memSub').textContent = '78% in use. Games may stutter when it fills up.'; memBtn.textContent = 'Optimize memory'; memBtn.classList.add('primary');
+      document.getElementById('memResult').textContent = 'Last run: never on this PC.'; return; }
+    memBtn.disabled = true; memBtn.textContent = 'Optimizing…';
+    bars.forEach((b, i) => b.style.width = after[i] + '%');
+    const res = document.getElementById('memResult'); let gb = 0; const target = 4.1, t0 = performance.now();
+    const step = now => { const k = Math.min(1, (now - t0) / 1400); gb = target * (1 - Math.pow(1 - k, 3));
+      res.innerHTML = `Freed about <b class="num">${gb.toFixed(1)} GB</b> so far. Watching for 10 seconds while apps settle.`;
+      if (k < 1) requestAnimationFrame(step); else {
+        res.innerHTML = `Freed about <b class="num">${target} GB</b> from 7 apps. Apps load back what they need, so this drifts up over time.`;
+        document.getElementById('memDot').style.background = 'var(--ok)'; document.getElementById('memVerdict').textContent = 'Memory looks fine';
+        document.getElementById('memSub').textContent = '63% in use. Plenty of room.'; memBtn.disabled = false; memBtn.textContent = 'Reset demo'; memBtn.classList.remove('primary'); cleaned = true; } };
+    requestAnimationFrame(step);
+  });
+
+  // ----- debloater demo -----
+  const boxes = [...document.querySelectorAll('#dlist input')], apply = document.getElementById('dApply'), undo = document.getElementById('dUndo'), dmsg = document.getElementById('dmsg');
+  const count = () => boxes.filter(b => b.checked && !b.disabled).length;
+  function syncD() { const c = count(); apply.textContent = `Apply ${c} change${c === 1 ? '' : 's'}`; apply.disabled = !c; if (!undo.dataset.applied) dmsg.textContent = `${c} change${c === 1 ? '' : 's'} selected. Nothing has changed yet.`; }
+  boxes.forEach(b => b.addEventListener('change', syncD));
+  apply.addEventListener('click', () => {
+    let n = 0; boxes.forEach(b => { if (b.checked && !b.disabled) { b.disabled = true; n++; const st = b.closest('.drow').querySelector('.st'); st.textContent = 'Applied'; st.classList.add('done'); } });
+    undo.disabled = false; undo.dataset.applied = 1; dmsg.textContent = `Applied ${n} change${n === 1 ? '' : 's'}. Undo puts ${n === 1 ? 'it' : 'them'} back.`; syncD();
+  });
+  undo.addEventListener('click', () => {
+    boxes.forEach(b => { if (b.disabled) { b.disabled = false; const st = b.closest('.drow').querySelector('.st'); st.textContent = 'Ready'; st.classList.remove('done'); } });
+    undo.disabled = true; delete undo.dataset.applied; syncD(); dmsg.textContent = 'Undone. Your PC is as it was.';
+  });
+
+  // ----- system profiles -----
+  const pboxes = [...document.querySelectorAll('#plist input')], pApply = document.getElementById('pApply'), pRestore = document.getElementById('pRestore'),
+    pmsg = document.getElementById('pmsg'), plog = document.getElementById('plog'), psub = document.getElementById('profSub');
+  const auto = () => pboxes.slice(0, 4).filter(b => b.checked).length;
+  const syncP = () => { psub.textContent = `${pboxes.filter(b => b.checked).length} of 5 changes selected`; pApply.disabled = !pboxes.some(b => b.checked) || pApply.dataset.done; };
+  pboxes.forEach(b => b.addEventListener('change', syncP));
+  pApply.addEventListener('click', () => {
+    const steps = ['Restore point created', 'Registry backup saved'];
+    pboxes.forEach((b, i) => { if (b.checked) steps.push(i === 4 ? 'NVIDIA steps opened as a guide' : b.closest('.drow').querySelector('b').textContent); });
+    pApply.disabled = true; pApply.dataset.done = 1; pboxes.forEach(b => b.disabled = true); plog.innerHTML = '';
+    let t = 0; const t0 = new Date(2026, 10, 14, 21, 42, 5);
+    steps.forEach((s, i) => setTimeout(() => {
+      const ts = new Date(t0.getTime() + i * 1400).toTimeString().slice(0, 8);
+      plog.insertAdjacentHTML('beforeend', `<li>${ts} <svg class="ic" style="width:13px;height:13px;color:var(--ok);vertical-align:-2px"><use href="#i-check"/></svg> ${s}</li>`);
+      if (i === steps.length - 1) { pmsg.textContent = `Applied ${auto()} changes. Restore puts them back.`; pRestore.disabled = false;
+        pboxes.forEach((b, j) => { if (b.checked) { const st = b.closest('.drow').querySelector('.st'); st.textContent = j === 4 ? 'Guided' : 'Applied'; if (j < 4) st.classList.add('done'); } }); }
+    }, reduce ? 0 : (t += 380)));
+  });
+  pRestore.addEventListener('click', () => {
+    pboxes.forEach(b => { b.disabled = false; const st = b.closest('.drow').querySelector('.st'); st.classList.remove('done'); st.textContent = b === pboxes[4] ? 'Guided' : 'Ready'; });
+    const ts = new Date(2026, 10, 14, 21, 44, 30).toTimeString().slice(0, 8);
+    plog.insertAdjacentHTML('beforeend', `<li>${ts} <svg class="ic" style="width:13px;height:13px;color:var(--ok);vertical-align:-2px"><use href="#i-check"/></svg> Restored the settings Toolboks changed</li>`);
+    pRestore.disabled = true; delete pApply.dataset.done; pmsg.textContent = 'Restored. Windows is set as it was before.'; syncP();
+  });
+  pboxes[4].closest('.drow').querySelector('.st').textContent = 'Guided';
+
+  // ----- event watch -----
+  const evs = [
+    ['ok', 'Info', 'Windows Update installed 2 updates'], ['watch', 'Warning', 'A driver took 4 s to start'], ['ok', 'Info', 'Your PC woke from sleep'],
+    ['bad', 'Error', 'Discord stopped responding and was closed'], ['ok', 'Info', 'A USB drive was connected'], ['watch', 'Warning', 'Disk C is nearly full'],
+    ['ok', 'Info', 'Time was synced with the internet'], ['ok', 'Info', 'Defender finished a quick scan, nothing found'],
+  ];
+  const tb = document.querySelector('#etable tbody'); let ei = 0, clock = new Date(2026, 10, 14, 21, 40, 12);
+  function addEv(anim) {
+    const [c, l, t] = evs[ei++ % evs.length]; clock = new Date(clock.getTime() + 37000 + Math.random() * 90000);
+    const tr = document.createElement('tr'); if (anim) tr.className = 'new';
+    tr.innerHTML = `<td>${clock.toTimeString().slice(0, 8)}</td><td><span class="lv" style="--c:var(--${c})">${l}</span></td><td>${t}</td>`;
+    tb.prepend(tr); while (tb.children.length > 6) tb.lastChild.remove();
+  }
+  for (let i = 0; i < 6; i++) addEv(false);
+  if (!reduce) setInterval(() => addEv(true), 2600);
+
+  // ----- audio -----
+  const meter = document.getElementById('meter'); const mb = Array.from({ length: 28 }, () => meter.appendChild(document.createElement('i')));
+  let ph = 0; const gain = document.getElementById('gain');
+  function meterTick() { ph += .35; const g = +gain.value / 24;
+    mb.forEach((b, i) => { const v = Math.max(.06, Math.min(1, (.25 + .45 * g) * (0.55 + 0.45 * Math.sin(ph + i * .5)) + Math.random() * .22)); b.style.height = (v * 100).toFixed(0) + '%'; b.classList.toggle('hot', v > .86); }); }
+  meterTick(); if (!reduce) setInterval(meterTick, 120);
+  gain.addEventListener('input', () => { document.getElementById('gainOut').textContent = '+' + gain.value + ' dB'; if (reduce) meterTick(); });
+  const listen = document.getElementById('listen'); listen.addEventListener('input', () => document.getElementById('listenOut').textContent = listen.value + '%');
+
+  // ----- add-on browser -----
+  const vb = '<span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span>';
+  const ACCESS = { host_metrics: 'Read memory use and uptime', local_preferences: 'Keep its own settings on this PC', filesystem_read: 'Read file and folder sizes on drives you choose',
+    user_exports: 'Save reports when you ask', system_changes: 'Change Windows settings, with a preview and undo each time', input_capture: 'Record keyboard and mouse while you record', system_tuning: 'Change Windows performance settings after a restore point and registry backup', audio_devices: 'Use your microphone and audio outputs' };
+  const ADDONS = [
+    { id: 'mem', name: 'Memory Cleaner', icon: 'i-chip', cat: 'System', v: true, pub: 'Toolboks', d: 'Free up memory without closing anything.', caps: ['host_metrics', 'local_preferences'], inst: true },
+    { id: 'mon', name: 'Resource Monitor', icon: 'i-pulse', cat: 'System', v: true, pub: 'Toolboks', d: 'Live graphs for CPU, GPU, memory, disk and network.', caps: ['host_metrics'], inst: true },
+    { id: 'deb', name: 'Debloater', icon: 'i-sliders', cat: 'System', v: true, pub: 'Toolboks', d: 'Remove clutter from Windows, with undo for every change.', caps: ['system_changes', 'local_preferences'], inst: false },
+    { id: 'prof', name: 'System Profiles', icon: 'i-gauge', cat: 'System', v: true, pub: 'Toolboks', d: 'Set Windows up for gaming, with a restore point first.', caps: ['system_tuning'], inst: false },
+    { id: 'evt', name: 'Event Watch', icon: 'i-shield', cat: 'System', v: true, pub: 'Toolboks', d: 'Windows events, explained in one line each.', caps: ['host_metrics'], inst: false },
+    { id: 'disk', name: 'Disk Manager', by: 'by stratum', icon: 'i-drive', cat: 'Storage', v: true, pub: 'Toolboks', d: 'See what fills your drives and optimize them.', caps: ['filesystem_read', 'user_exports'], inst: false },
+    { id: 'mac', name: 'Macro Manager', icon: 'i-cursor', cat: 'Automation', v: true, pub: 'Toolboks', d: 'Record, edit and replay keyboard and mouse actions.', caps: ['input_capture', 'local_preferences'], inst: false },
+    { id: 'aud', name: 'Audio Gainer', icon: 'i-mic', cat: 'Audio', v: true, pub: 'Toolboks', d: 'Boost a quiet microphone and route it to other apps.', caps: ['audio_devices', 'local_preferences'], inst: false },
+    { id: 'hello', name: 'Hello System', icon: 'i-grid', cat: 'Developer tools', v: false, pub: 'Example developer', d: 'The SDK starter: live memory readings and saved preferences.', caps: ['host_metrics', 'local_preferences'], inst: false },
+    { id: 'bat', name: 'Battery Report', icon: 'i-pulse', cat: 'System', v: false, pub: 'Example publisher', d: 'Battery wear and charge history in plain words.', caps: ['host_metrics', 'user_exports'], inst: false },
+    { id: 'dup', name: 'Duplicate Finder', icon: 'i-file', cat: 'Storage', v: false, pub: 'Example publisher', d: 'Find identical files and choose which copy to keep.', caps: ['filesystem_read'], inst: false },
+    { id: 'clip', name: 'Clipboard History', icon: 'i-file', cat: 'Automation', v: false, pub: 'Example publisher', d: 'The last 50 things you copied, searchable.', caps: ['local_preferences'], inst: false },
+    { id: 'boot', name: 'Startup Timer', icon: 'i-pulse', cat: 'System', v: false, pub: 'Example publisher', d: 'How long each app adds to your boot time.', caps: ['host_metrics'], inst: false },
+    { id: 'eq', name: 'Mic Noise Gate', icon: 'i-mic', cat: 'Audio', v: false, pub: 'Example publisher', d: 'Mute your microphone between words.', caps: ['audio_devices', 'local_preferences'], inst: false },
+    { id: 'big', name: 'Large File Sweep', icon: 'i-drive', cat: 'Storage', v: false, pub: 'Example publisher', d: 'The biggest files you haven\'t opened in a year.', caps: ['filesystem_read'], inst: false },
+    { id: 'win', name: 'Window Snapper', icon: 'i-grid', cat: 'Automation', v: false, pub: 'Example publisher', d: 'Save window layouts and restore them with one key.', caps: ['input_capture', 'local_preferences'], inst: false },
+  ];
+  // the drifting wall of tool ideas: shows scale, not real listings
+  const IDEAS = [
+    ['Fan curves', 'System', 'i-sliders'], ['Wi-Fi signal map', 'Network', 'i-pulse'], ['Battery report', 'System', 'i-pulse'], ['Duplicate finder', 'Storage', 'i-file'],
+    ['Clipboard history', 'Automation', 'i-file'], ['Startup timer', 'System', 'i-pulse'], ['Mic noise gate', 'Audio', 'i-mic'], ['Driver checker', 'System', 'i-shield'],
+    ['Game mode switch', 'Gaming', 'i-sliders'], ['Port viewer', 'Network', 'i-grid'], ['Hotkey launcher', 'Automation', 'i-cursor'], ['Temp file sweep', 'Storage', 'i-drive'],
+    ['Screen color picker', 'Developer tools', 'i-grid'], ['Power plan swap', 'System', 'i-sliders'], ['Audio device switcher', 'Audio', 'i-mic'], ['Folder size watch', 'Storage', 'i-drive'],
+    ['Ping graph', 'Network', 'i-pulse'], ['Window snapper', 'Automation', 'i-grid'], ['Service manager', 'System', 'i-shield'], ['JSON viewer', 'Developer tools', 'i-file'],
+    ['FPS overlay', 'Gaming', 'i-pulse'], ['Bluetooth battery', 'System', 'i-chip'], ['Download sorter', 'Automation', 'i-file'], ['SMART health', 'Storage', 'i-drive'],
+  ];
+  const VER = [['Memory Cleaner', 'i-chip'], ['Resource Monitor', 'i-pulse'], ['Debloater', 'i-sliders'], ['Event Watch', 'i-shield'], ['System Profiles', 'i-gauge'], ['Disk Manager', 'i-drive'], ['Macro Manager', 'i-cursor'], ['Audio Gainer', 'i-mic']];
+  document.querySelectorAll('.wtrack').forEach((t, r) => {
+    const chips = [];
+    IDEAS.slice(r * 8, r * 8 + 8).forEach((x, i) => {
+      chips.push(`<span class="chip"><span class="aic"><svg class="ic"><use href="#${x[2]}"/></svg></span>${x[0]}<small>${x[1]}</small></span>`);
+      if (i % 3 === 1) { const v = VER[(r * 3 + i) % VER.length]; chips.push(`<span class="chip v"><span class="aic"><svg class="ic"><use href="#${v[1]}"/></svg></span>${v[0]}${vb}</span>`); }
+    });
+    const html = chips.join(''); t.innerHTML = html + html; t.style.setProperty('--dur', (80 + r * 18) + 's');
+  });
+  const alist = document.getElementById('alist'), adetail = document.getElementById('adetail'), q = document.getElementById('storeQ');
+  let cat = 'all', sel = 'mac';
+  function renderList() {
+    const term = q.value.trim().toLowerCase();
+    const rows = ADDONS.filter(a => (cat === 'all' || a.cat === cat) && (!term || (a.name + ' ' + a.d + ' ' + a.pub).toLowerCase().includes(term)));
+    alist.innerHTML = rows.length ? rows.map(a => `<li class="arow${a.id === sel ? ' on' : ''}" data-id="${a.id}" tabindex="0">
+      <span class="aic"><svg class="ic"><use href="#${a.icon}"/></svg></span>
+      <span style="min-width:0"><b>${a.name}</b>${a.v ? vb : `<span class="pub">${a.pub}</span>`}<p>${a.d}</p></span>
+      <span class="astate${a.inst ? ' ok' : ''}">${a.inst ? '<svg class="ic"><use href="#i-check"/></svg>Installed' : a.cat}</span></li>`).join('')
+      : `<li class="aempty">No add-ons match "${q.value.replace(/[<>&"]/g, '')}". Try another word or pick All.</li>`;
+    if (rows.length) alist.insertAdjacentHTML('beforeend', `<li class="lfoot">${rows.length} example listings. The real browser grows as people publish tools.</li>`);
+    if (rows.length && !rows.some(a => a.id === sel)) { sel = rows[0].id; renderList(); return; }
+    renderDetail();
+  }
+  function renderDetail() {
+    const a = ADDONS.find(x => x.id === sel); if (!a) { adetail.innerHTML = ''; return; }
+    adetail.innerHTML = `<div><h3>${a.name}</h3><div class="meta">${a.by ? a.by + ' · ' : ''}${a.pub} · ${a.cat}</div></div>
+      <p>${a.d}</p>
+      ${a.v ? `<div class="trust"><svg class="ic"><use href="#i-verified"/></svg><span>Toolboks verified. Built and checked by the Toolboks team.</span></div>`
+            : `<div class="trust plain"><svg class="ic"><use href="#i-file"/></svg><span>Not verified. The publisher name is what the package says; review the access below before you install.</span></div>`}
+      <div class="access"><h4>It can</h4>${a.caps.map(c => `<div><svg class="ic"><use href="#i-check"/></svg><span>${ACCESS[c]}</span></div>`).join('')}</div>
+      <button class="btn ${a.inst ? '' : 'primary'}" type="button" id="aBtn">${a.inst ? 'Turn off' : 'Install'}</button>`;
+    document.getElementById('aBtn').addEventListener('click', e => {
+      const b = e.currentTarget;
+      if (a.inst) { a.inst = false; renderList(); return; }
+      b.disabled = true; b.textContent = 'Installing…';
+      setTimeout(() => { a.inst = true; renderList(); }, reduce ? 0 : 900);
+    });
+  }
+  alist.addEventListener('click', e => { const r = e.target.closest('.arow'); if (r) { sel = r.dataset.id; renderList(); } });
+  alist.addEventListener('keydown', e => { const r = e.target.closest('.arow'); if (r && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sel = r.dataset.id; renderList(); alist.querySelector(`[data-id="${sel}"]`)?.focus(); } });
+  document.getElementById('cats').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return;
+    cat = b.dataset.cat; document.querySelectorAll('#cats button').forEach(x => x.classList.toggle('on', x === b)); renderList(); });
+  q.addEventListener('input', renderList);
+  renderList();
+
+  document.getElementById('bannerX').addEventListener('click', () => { document.getElementById('banner').style.opacity = .4; });
+})();
+</script>

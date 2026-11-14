@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "docs/design/landing-snapshot.html"
+        ],
+        "createdAt": "2026-11-14T15:51:06.866Z",
+        "reason": "Claude triage: flagged containers are full-bleed by design (graph cards whose canvas fills the card per DESIGN.md, window chrome bars, 2px segmented control) or hairline-divided rows whose spacing is padding-block on the rows; verified in desktop and mobile renders"
+      }
+    ]
+  }
+}
