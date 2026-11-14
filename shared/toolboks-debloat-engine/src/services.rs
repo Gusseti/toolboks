@@ -15,7 +15,7 @@ use windows::Win32::System::Services::{
     SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START_TYPE, SERVICE_STATUS_PROCESS,
 };
 
-use super::model::Risk;
+use crate::model::Risk;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StartType {
@@ -644,10 +644,10 @@ fn read_start(svc: &dyn Services, name: &str) -> Result<StartType, String> {
 /// type we never write, and a Disabled target while a dependent service is running. Re-reads the
 /// state to confirm; if it did not stick, the previous start type is put back and an error returned.
 /// Undo with `undo`, which puts `UndoStep::previous` back.
-pub(super) fn set_off(
+pub fn set_off(
     svc: &mut dyn Services,
     def: &ServiceDef,
-) -> Result<UndoStep, super::ChangeError<UndoStep>> {
+) -> Result<UndoStep, crate::ChangeError<UndoStep>> {
     let known = catalog()
         .iter()
         .find(|d| d.name.eq_ignore_ascii_case(def.name) && d.id == def.id)
@@ -710,7 +710,7 @@ pub(super) fn set_off(
                 ),
                 Err(e) => format!("Could not confirm the change ({e})"),
             };
-            Err(super::rollback(message, step, |step| undo(svc, step)))
+            Err(crate::rollback(message, step, |step| undo(svc, step)))
         }
     }
 }
