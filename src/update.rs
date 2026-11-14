@@ -268,12 +268,13 @@ impl From<HttpError> for UpdateError {
             HttpError::Status(404) => UpdateError::NotFound,
             HttpError::Status(code) => UpdateError::Network(format!("server answered {code}")),
             HttpError::Other(msg) => UpdateError::Network(msg),
+            HttpError::Cancelled => UpdateError::Network("cancelled".into()),
         }
     }
 }
 
 /// Only GitHub's own hosts, over HTTPS, may serve an update.
-fn is_trusted_url(url: &str) -> bool {
+pub(crate) fn is_trusted_url(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://") else {
         return false;
     };

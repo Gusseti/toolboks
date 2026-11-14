@@ -163,7 +163,14 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let temp = path.with_extension("pending");
+    // Append to the whole name: `with_extension` would turn `0.12.5` into `0.12.pending`, so
+    // two version folders could share one staging name.
+    let mut name = path
+        .file_name()
+        .ok_or_else(|| format!("No file name in {}", path.display()))?
+        .to_owned();
+    name.push(".pending");
+    let temp = path.with_file_name(name);
     fs::write(&temp, bytes).map_err(|e| e.to_string())?;
     #[cfg(windows)]
     {
@@ -239,12 +246,21 @@ impl Registry {
         match fs::read_dir(&folder) {
             Ok(entries) => {
                 for entry in entries.flatten() {
-                    let path = entry.path();
+                    let mut path = entry.path();
+                    // A catalog install: `addons/<id>/<active version>/package.tbaddon`.
+                    let mut expected = path.file_stem().map(|f| f.to_owned());
+                    if path.is_dir() {
+                        let Some(active) = crate::installer::active_package(&path) else {
+                            continue;
+                        };
+                        expected = path.file_name().map(|f| f.to_owned());
+                        path = active;
+                    }
                     if path.extension().is_some_and(|x| x == "tbaddon") {
                         match read_package(&path) {
                             Ok(p) => {
-                                if path
-                                    .file_stem()
+                                if expected
+                                    .as_deref()
                                     .is_some_and(|f| f == p.manifest.id.as_str())
                                     && !r.packages.iter().any(|a| a.manifest.id == p.manifest.id)
                                 {
@@ -332,14 +348,27 @@ impl Registry {
         Ok(())
     }
     pub fn uninstall(&mut self, id: &str) -> Result<(), String> {
+        self.remove(id, false)
+    }
+    /// Removes an add-on. With `keep_data` its preferences and data folder stay, so a later
+    /// install picks them up again.
+    pub fn remove(&mut self, id: &str, keep_data: bool) -> Result<(), String> {
         if reserved(id) || !self.packages.iter().any(|p| p.manifest.id == id) {
             return Err("This add-on cannot be removed.".into());
         }
-        fs::remove_file(self.root.join("addons").join(format!("{id}.tbaddon")))
-            .map_err(|e| e.to_string())?;
+        let flat = self.root.join("addons").join(format!("{id}.tbaddon"));
+        if flat.exists() {
+            fs::remove_file(flat).map_err(|e| e.to_string())?;
+        } else {
+            // Installed from the catalog: drop every version folder.
+            crate::installer::remove(&self.root, id, keep_data)?;
+        }
+        if !keep_data {
+            crate::installer::remove_data(&self.root, id)?;
+            self.config.preferences.remove(id);
+        }
         self.packages.retain(|p| p.manifest.id != id);
         self.config.disabled.retain(|s| s != id);
-        self.config.preferences.remove(id);
         self.save()
     }
 }
