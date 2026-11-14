@@ -218,18 +218,25 @@ impl<W: Write> Runtime<W> {
         addon: &mut A,
         rx: &mpsc::Receiver<Wake>,
     ) -> Result<(), ProtocolError> {
+        // An absolute deadline, so a steady stream of wakes cannot postpone background ticks.
+        let mut next_tick: Option<Instant> = None;
         loop {
             let wake = if self.suspended && addon.has_background_work() {
-                match rx.recv_timeout(BACKGROUND_TICK) {
+                let now = Instant::now();
+                let due = *next_tick.get_or_insert(now + BACKGROUND_TICK);
+                if now >= due {
+                    next_tick = Some(now + BACKGROUND_TICK);
+                    addon.tick_background();
+                    self.flush_side_channels(addon)?;
+                    continue;
+                }
+                match rx.recv_timeout(due - now) {
                     Ok(wake) => wake,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        addon.tick_background();
-                        self.flush_side_channels(addon)?;
-                        continue;
-                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
                     Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
                 }
             } else {
+                next_tick = None;
                 match rx.recv() {
                     Ok(wake) => wake,
                     Err(_) => return Ok(()),
