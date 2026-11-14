@@ -1,0 +1,602 @@
+//! Out-of-process add-on runtime (feature `runtime`).
+//!
+//! [`run_addon`] runs a [`NativeAddon`] in a headless egui loop (an `egui::Context`, no
+//! window, no eframe) and talks to the Toolboks host over the wire protocol in
+//! [`toolboks_addon_proto`] (see `docs/ADDON-PROTOCOL.md`).
+//!
+//! The loop:
+//! - answers the host's `Hello`, refusing a protocol mismatch in plain words;
+//! - renders exactly one frame per `Input` batch (messages the batch caused, such as
+//!   changed preferences, are sent before the frame that acknowledges it), with the add-on's own clock (the host
+//!   sends no time), tessellates it and sends cached meshes plus texture deltas;
+//! - asks the host for a frame (`RequestRepaint`) when something calls
+//!   `ctx.request_repaint()` between frames, at most once per input batch;
+//! - forwards navigation, suspend and resume, preferences, capabilities and the tutorial
+//!   calls to the add-on and sends back host requests, status items and log lines;
+//! - answers heartbeat pings from the main loop, so a stuck `ui` call shows as stalled;
+//! - while suspended with background work, calls `tick_background` every 200 ms;
+//! - returns `Ok(())` on `Quit` or when the host closes the connection, and an error for
+//!   anything malformed. It never panics on bad input.
+//!
+//! Connection, a placeholder until #80 defines the real pipe setup:
+//! - `--pipe-in <path> --pipe-out <path>` (or the environment variables
+//!   `TOOLBOKS_ADDON_PIPE_IN` and `TOOLBOKS_ADDON_PIPE_OUT`) open two paths, for example
+//!   the two halves of a named pipe pair; the add-on reads host messages from `pipe-in`
+//!   and writes its own messages to `pipe-out`;
+//! - with neither, the add-on reads from stdin and writes to stdout, so it must never
+//!   print to stdout itself (use [`log`] or stderr).
+//!
+//! [`run_addon_on`] takes any `Read` and `Write` pair and is what tests use.
+
+use crate::{Capability, HostRequest, NativeAddon, StatusItem};
+use proto::mesh::MeshEncoder;
+use proto::{
+    AddonMessage, Frame, FrameWriter, Hello, HostMessage, ImeOutput, InputBatch, InputEvent,
+    LogLevel, ProtocolError, TabDirection, TextureUpdate, Theme, Transport,
+};
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::sync::{mpsc, Mutex};
+use std::time::{Duration, Instant};
+
+pub use toolboks_addon_proto as proto;
+
+/// The SDK version an add-on reports in its `Hello`.
+pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+const BACKGROUND_TICK: Duration = Duration::from_millis(200);
+
+static LOG: Mutex<Vec<(LogLevel, String)>> = Mutex::new(Vec::new());
+
+/// Queues a log line for the host. Lines are sent after the current message is handled.
+pub fn log(level: LogLevel, line: impl Into<String>) {
+    if let Ok(mut queue) = LOG.lock() {
+        queue.push((level, line.into()));
+    }
+}
+
+/// Connects from the command line or the environment (see the module docs) and runs the
+/// add-on until the host quits or closes the connection.
+pub fn run_addon<A: NativeAddon>(addon: A, addon_id: &str) -> Result<(), ProtocolError> {
+    let paths = pipe_paths(
+        std::env::args().skip(1),
+        std::env::var("TOOLBOKS_ADDON_PIPE_IN").ok(),
+        std::env::var("TOOLBOKS_ADDON_PIPE_OUT").ok(),
+    );
+    match paths {
+        Some((input, output)) => {
+            let reader = std::fs::File::open(input)?;
+            let writer = std::fs::OpenOptions::new().write(true).open(output)?;
+            run_addon_on(Transport::new(reader, writer), addon, addon_id)
+        }
+        None => run_addon_on(
+            Transport::new(std::io::stdin(), std::io::stdout()),
+            addon,
+            addon_id,
+        ),
+    }
+}
+
+fn pipe_paths(
+    args: impl IntoIterator<Item = String>,
+    env_in: Option<String>,
+    env_out: Option<String>,
+) -> Option<(String, String)> {
+    let (mut input, mut output) = (env_in, env_out);
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--pipe-in" => input = args.next(),
+            "--pipe-out" => output = args.next(),
+            _ => {}
+        }
+    }
+    input.zip(output)
+}
+
+enum Wake {
+    Host(Result<HostMessage, ProtocolError>),
+    Repaint { pass: u64 },
+}
+
+/// Runs the add-on over any transport. The reader moves to its own thread; the add-on and
+/// the writer stay on the calling thread.
+pub fn run_addon_on<R, W, A>(
+    transport: Transport<R, W>,
+    mut addon: A,
+    addon_id: &str,
+) -> Result<(), ProtocolError>
+where
+    R: Read + Send + 'static,
+    W: Write,
+    A: NativeAddon,
+{
+    let (mut reader, mut writer) = transport.split();
+    proto::addon_handshake(&mut reader, &mut writer, &Hello::new(addon_id, SDK_VERSION))?;
+    let (tx, rx) = mpsc::channel();
+    let host_tx = tx.clone();
+    std::thread::Builder::new()
+        .name("toolboks-addon-reader".into())
+        .spawn(move || loop {
+            let message = reader.read::<HostMessage>();
+            let end = message.is_err();
+            if host_tx.send(Wake::Host(message)).is_err() || end {
+                break;
+            }
+        })?;
+    let ctx = egui::Context::default();
+    ctx.set_request_repaint_callback(move |info| {
+        let _ = tx.send(Wake::Repaint {
+            pass: info.current_cumulative_pass_nr,
+        });
+    });
+    let mut runtime = Runtime {
+        ctx,
+        writer,
+        clock: Instant::now(),
+        encoder: MeshEncoder::default(),
+        preferences: BTreeMap::new(),
+        suspended: false,
+        repaint_sent: false,
+        theme: None,
+        status: Vec::new(),
+    };
+    let result = runtime.serve(&mut addon, &rx);
+    addon.cancel();
+    match result {
+        Err(error) if error.is_closed() => Ok(()),
+        other => other,
+    }
+}
+
+struct Runtime<W> {
+    ctx: egui::Context,
+    writer: FrameWriter<W>,
+    clock: Instant,
+    encoder: MeshEncoder,
+    preferences: BTreeMap<String, serde_json::Value>,
+    suspended: bool,
+    repaint_sent: bool,
+    theme: Option<Theme>,
+    status: Vec<StatusItem>,
+}
+
+impl<W: Write> Runtime<W> {
+    fn send(&mut self, message: &AddonMessage) -> Result<(), ProtocolError> {
+        self.writer.write(message)
+    }
+
+    fn serve<A: NativeAddon>(
+        &mut self,
+        addon: &mut A,
+        rx: &mpsc::Receiver<Wake>,
+    ) -> Result<(), ProtocolError> {
+        loop {
+            let wake = if self.suspended && addon.has_background_work() {
+                match rx.recv_timeout(BACKGROUND_TICK) {
+                    Ok(wake) => wake,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        addon.tick_background();
+                        self.flush_side_channels(addon)?;
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                }
+            } else {
+                match rx.recv() {
+                    Ok(wake) => wake,
+                    Err(_) => return Ok(()),
+                }
+            };
+            match wake {
+                // A request made during a pass is already in that frame's repaint hint.
+                Wake::Repaint { pass } => {
+                    if pass >= self.ctx.cumulative_pass_nr() && !self.repaint_sent {
+                        self.repaint_sent = true;
+                        self.send(&AddonMessage::RequestRepaint { after_ms: 0 })?;
+                    }
+                }
+                Wake::Host(message) => {
+                    if !self.handle(addon, message?)? {
+                        return Ok(());
+                    }
+                }
+            }
+            self.flush_side_channels(addon)?;
+        }
+    }
+
+    /// Handles one host message. Returns false when the add-on should exit.
+    fn handle<A: NativeAddon>(
+        &mut self,
+        addon: &mut A,
+        message: HostMessage,
+    ) -> Result<bool, ProtocolError> {
+        match message {
+            HostMessage::Hello(_) => return Err(ProtocolError::Unexpected("second Hello")),
+            HostMessage::Refuse { reason, .. } => return Err(ProtocolError::Refused(reason)),
+            HostMessage::Input(batch) => {
+                self.repaint_sent = false;
+                self.frame(addon, batch)?;
+            }
+            HostMessage::Navigate { page } => addon.navigate(&page),
+            HostMessage::Suspend => {
+                addon.suspend();
+                self.suspended = true;
+            }
+            HostMessage::Resume => {
+                addon.resume();
+                self.suspended = false;
+            }
+            HostMessage::LoadPreferences { json } => {
+                self.preferences = serde_json::from_str(&json)
+                    .map_err(|error| ProtocolError::Malformed(format!("preferences: {error}")))?;
+                addon.load_preferences(&self.preferences);
+            }
+            HostMessage::SavePreferences => {
+                let changed = addon.save_preferences(&mut self.preferences);
+                self.send_preferences(changed)?;
+            }
+            HostMessage::Capabilities(names) => {
+                // Names this SDK does not know (from a newer host) are ignored.
+                let capabilities: Vec<Capability> = names
+                    .into_iter()
+                    .filter_map(|name| serde_json::from_value(name.into()).ok())
+                    .collect();
+                addon.set_capabilities(&capabilities);
+            }
+            HostMessage::TutorialQuery => {
+                let steps = addon
+                    .tutorial_steps()
+                    .into_iter()
+                    .map(|step| proto::TutorialStep {
+                        page: step.page,
+                        target: step.target,
+                        title: step.title,
+                        description: step.description,
+                    })
+                    .collect();
+                let location = addon.tutorial_location();
+                self.send(&AddonMessage::Tutorial { steps, location })?;
+            }
+            HostMessage::TutorialStart => addon.tutorial_start(),
+            HostMessage::TutorialNavigate { page } => addon.tutorial_navigate(&page),
+            HostMessage::TutorialFinish => addon.tutorial_finish(),
+            HostMessage::Ping { nonce } => self.send(&AddonMessage::Pong { nonce })?,
+            HostMessage::Quit => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    fn send_preferences(&mut self, changed: bool) -> Result<(), ProtocolError> {
+        let json = serde_json::to_string(&self.preferences)
+            .map_err(|error| ProtocolError::Malformed(format!("preferences: {error}")))?;
+        self.send(&AddonMessage::Preferences { json, changed })
+    }
+
+    /// Host requests, status items and log lines, sent after every handled message.
+    fn flush_side_channels<A: NativeAddon>(&mut self, addon: &mut A) -> Result<(), ProtocolError> {
+        while let Some(request) = addon.take_host_request() {
+            let request = match request {
+                HostRequest::RestartElevated { page } => {
+                    proto::HostRequest::RestartElevated { page }
+                }
+                HostRequest::ReviewUpdate => proto::HostRequest::ReviewUpdate,
+            };
+            self.send(&AddonMessage::HostRequest(request))?;
+        }
+        let status = addon.status_items();
+        if status != self.status {
+            let items = status
+                .iter()
+                .map(|item| proto::StatusItem {
+                    text: item.text.clone(),
+                    tooltip: item.tooltip.clone(),
+                })
+                .collect();
+            self.status = status;
+            self.send(&AddonMessage::StatusItems(items))?;
+        }
+        let lines = LOG
+            .lock()
+            .map(|mut queue| std::mem::take(&mut *queue))
+            .unwrap_or_default();
+        for (level, line) in lines {
+            self.send(&AddonMessage::Log { level, line })?;
+        }
+        Ok(())
+    }
+
+    fn frame<A: NativeAddon>(
+        &mut self,
+        addon: &mut A,
+        batch: InputBatch,
+    ) -> Result<(), ProtocolError> {
+        let ctx = self.ctx.clone();
+        if self.theme != Some(batch.theme) {
+            self.theme = Some(batch.theme);
+            ctx.set_theme(match batch.theme {
+                Theme::Light => egui::Theme::Light,
+                Theme::Dark => egui::Theme::Dark,
+            });
+        }
+        let pixels_per_point = if batch.pixels_per_point.is_finite() {
+            batch.pixels_per_point.clamp(0.25, 8.0)
+        } else {
+            1.0
+        };
+        let size = egui::vec2(
+            sanitize(batch.size[0]).max(1.0),
+            sanitize(batch.size[1]).max(1.0),
+        );
+        let mut events = Vec::with_capacity(batch.events.len());
+        let mut tab = None;
+        for event in batch.events {
+            if let Some(direction) = convert(event, &mut events, &ctx) {
+                tab = Some(direction);
+            }
+        }
+        let focused_before = ctx.memory(|memory| memory.focused());
+        let mut raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            time: Some(self.clock.elapsed().as_secs_f64()),
+            events,
+            focused: batch.window_focused,
+            ..Default::default()
+        };
+        raw.viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(pixels_per_point);
+        if !self.suspended {
+            addon.tick(&ctx);
+        }
+        let mut changed = false;
+        let preferences = &mut self.preferences;
+        let mut output = ctx.run_ui(raw, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                changed |= addon.ui(ui, preferences);
+            });
+        });
+        let focus_escape = tab.filter(|direction| {
+            let after = ctx.memory(|memory| memory.focused());
+            focus_escaped(&ctx, *direction, focused_before, after)
+        });
+        if focus_escape.is_some() {
+            ctx.memory_mut(|memory| {
+                if let Some(id) = memory.focused() {
+                    memory.surrender_focus(id);
+                }
+            });
+        }
+        let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+        let repaint_after_ms = output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map(|viewport| viewport.repaint_delay)
+            .filter(|delay| *delay != Duration::MAX)
+            .map(|delay| u32::try_from(delay.as_millis()).unwrap_or(u32::MAX));
+        let platform = output.platform_output;
+        let mut copied_text = None::<String>;
+        let mut open_urls = Vec::new();
+        for command in platform.commands {
+            match command {
+                egui::OutputCommand::CopyText(text) => {
+                    copied_text.get_or_insert_with(String::new).push_str(&text)
+                }
+                egui::OutputCommand::OpenUrl(url) => open_urls.push(url.url),
+                _ => {}
+            }
+        }
+        let mut textures_set = Vec::new();
+        for (id, deltas) in std::mem::take(&mut output.textures_delta.set) {
+            textures_set.extend(deltas.into_iter().map(|delta| TextureUpdate { id, delta }));
+        }
+        let frame = Frame {
+            seq: batch.seq,
+            meshes: self.encoder.encode(primitives),
+            textures_set,
+            textures_free: std::mem::take(&mut output.textures_delta.free)
+                .into_iter()
+                .collect(),
+            repaint_after_ms,
+            cursor: platform.cursor_icon,
+            copied_text,
+            open_urls,
+            ime: platform.ime.map(|ime| ImeOutput {
+                rect: ime.rect,
+                cursor_rect: ime.cursor_rect,
+            }),
+            wants_keyboard: focus_escape.is_none() && ctx.egui_wants_keyboard_input(),
+            focus_escape,
+            page_index: u32::try_from(addon.page_index()).unwrap_or(u32::MAX),
+        };
+        // Everything this batch caused goes out before the frame that acknowledges it.
+        if changed {
+            self.send_preferences(true)?;
+        }
+        self.flush_side_channels(addon)?;
+        self.send(&AddonMessage::Frame(frame))
+    }
+}
+
+fn sanitize(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(-1.0e6, 1.0e6)
+    } else {
+        0.0
+    }
+}
+
+fn pos(value: [f32; 2]) -> egui::Pos2 {
+    egui::pos2(sanitize(value[0]), sanitize(value[1]))
+}
+
+fn tab_key(direction: TabDirection, pressed: bool) -> egui::Event {
+    egui::Event::Key {
+        key: egui::Key::Tab,
+        physical_key: Some(egui::Key::Tab),
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers {
+            shift: direction == TabDirection::Backward,
+            ..Default::default()
+        },
+    }
+}
+
+/// Maps one wire event to egui events. Returns the direction of a Tab press the user made.
+fn convert(
+    event: InputEvent,
+    out: &mut Vec<egui::Event>,
+    ctx: &egui::Context,
+) -> Option<TabDirection> {
+    match event {
+        InputEvent::PointerMoved { pos: p } => out.push(egui::Event::PointerMoved(pos(p))),
+        InputEvent::PointerButton {
+            pos: p,
+            button,
+            pressed,
+            modifiers,
+        } => out.push(egui::Event::PointerButton {
+            pos: pos(p),
+            button,
+            pressed,
+            modifiers,
+        }),
+        InputEvent::PointerLeft => out.push(egui::Event::PointerGone),
+        InputEvent::DragReleasedOutside {
+            pos: p,
+            button,
+            modifiers,
+        } => {
+            out.push(egui::Event::PointerButton {
+                pos: pos(p),
+                button,
+                pressed: false,
+                modifiers,
+            });
+            out.push(egui::Event::PointerGone);
+        }
+        InputEvent::Scroll {
+            delta,
+            unit,
+            phase,
+            source,
+            modifiers,
+        } => out.push(egui::Event::MouseWheel {
+            unit,
+            delta: egui::vec2(sanitize(delta[0]), sanitize(delta[1])),
+            phase,
+            source,
+            modifiers,
+        }),
+        InputEvent::Zoom(factor) if factor.is_finite() && factor > 0.0 => {
+            out.push(egui::Event::Zoom(factor))
+        }
+        InputEvent::Zoom(_) => {}
+        InputEvent::Key {
+            key,
+            physical_key,
+            pressed,
+            repeat,
+            modifiers,
+        } => {
+            out.push(egui::Event::Key {
+                key,
+                physical_key,
+                pressed,
+                repeat,
+                modifiers,
+            });
+            if key == egui::Key::Tab && pressed {
+                return Some(if modifiers.shift {
+                    TabDirection::Backward
+                } else {
+                    TabDirection::Forward
+                });
+            }
+        }
+        InputEvent::Text(text) => out.push(egui::Event::Text(text)),
+        InputEvent::Paste(text) => out.push(egui::Event::Paste(text)),
+        InputEvent::Copy => out.push(egui::Event::Copy),
+        InputEvent::Cut => out.push(egui::Event::Cut),
+        InputEvent::ImePreedit(text) => out.push(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text,
+            active_range_chars: None,
+        })),
+        InputEvent::ImeCommit(text) => out.push(egui::Event::Ime(egui::ImeEvent::Commit(text))),
+        InputEvent::ImeDeleteSurrounding {
+            before_chars,
+            after_chars,
+        } => out.push(egui::Event::Ime(egui::ImeEvent::DeleteSurrounding {
+            before_chars: before_chars as usize,
+            after_chars: after_chars as usize,
+        })),
+        InputEvent::FocusGained { via_tab } => {
+            // Focus arriving by Tab lands on the first (or last) widget: egui moves focus
+            // from "nothing focused" to the first widget in that direction.
+            if let Some(direction) = via_tab {
+                out.push(tab_key(direction, true));
+                out.push(tab_key(direction, false));
+            }
+        }
+        InputEvent::FocusLost => ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        }),
+    }
+    None
+}
+
+/// Tab left the add-on when focus vanished or wrapped around to the other end. egui wraps
+/// focus, so a wrap is detected from the widget positions: moving forward to a widget that
+/// sits above (or on the same row, left of) the one that had focus is a wrap.
+fn focus_escaped(
+    ctx: &egui::Context,
+    direction: TabDirection,
+    before: Option<egui::Id>,
+    after: Option<egui::Id>,
+) -> bool {
+    let Some(before) = before else {
+        return false;
+    };
+    let Some(after) = after else {
+        return true;
+    };
+    if before == after {
+        return false;
+    }
+    let (Some(from), Some(to)) = (ctx.read_response(before), ctx.read_response(after)) else {
+        return false;
+    };
+    let (from, to) = (from.rect.min, to.rect.min);
+    let earlier = to.y < from.y - 0.5 || ((to.y - from.y).abs() <= 0.5 && to.x < from.x);
+    match direction {
+        TabDirection::Forward => earlier,
+        TabDirection::Backward => !earlier,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pipe_paths_from_args_or_env() {
+        let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(pipe_paths(args(&[]), None, None), None);
+        assert_eq!(
+            pipe_paths(args(&["--pipe-in", "a", "--pipe-out", "b"]), None, None),
+            Some(("a".into(), "b".into()))
+        );
+        assert_eq!(
+            pipe_paths(args(&["--pipe-out", "b"]), Some("x".into()), None),
+            Some(("x".into(), "b".into()))
+        );
+        assert_eq!(
+            pipe_paths(args(&["--pipe-in"]), None, Some("b".into())),
+            None
+        );
+    }
+}
