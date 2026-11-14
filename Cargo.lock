@@ -515,6 +515,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "catalog-sign"
+version = "0.1.0"
+dependencies = [
+ "ed25519-compact",
+ "serde_json",
+ "toolboks-catalog",
+]
+
+[[package]]
 name = "cc"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -830,6 +839,15 @@ dependencies = [
  "bytemuck",
  "emath",
  "serde",
+]
+
+[[package]]
+name = "ed25519-compact"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9547879431a90e352a35863a54416d92898a787b9af09e6ae2e09a96bd78be80"
+dependencies = [
+ "getrandom 0.4.3",
 ]
 
 [[package]]
@@ -1274,8 +1292,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3117,6 +3137,7 @@ name = "toolboks"
 version = "0.12.5"
 dependencies = [
  "cpal",
+ "ed25519-compact",
  "eframe",
  "egui_extras",
  "serde",
@@ -3125,6 +3146,7 @@ dependencies = [
  "sysinfo",
  "toolboks-addon-proto",
  "toolboks-addon-sdk",
+ "toolboks-catalog",
  "toolboks-debloat-engine",
  "toolboks-disk-manager",
  "toolboks-shared",
@@ -3150,6 +3172,17 @@ dependencies = [
  "serde",
  "serde_json",
  "toolboks-addon-proto",
+]
+
+[[package]]
+name = "toolboks-catalog"
+version = "0.1.0"
+dependencies = [
+ "ed25519-compact",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toolboks-addon-sdk",
 ]
 
 [[package]]

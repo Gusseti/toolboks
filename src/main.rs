@@ -10,6 +10,7 @@ use toolboks_shared::{format, ui, win};
 mod addon_view;
 mod addons;
 mod app;
+mod catalog;
 mod crash;
 mod elevation;
 mod instance;
