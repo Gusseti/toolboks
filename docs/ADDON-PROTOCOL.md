@@ -104,9 +104,11 @@ and `mesh::MeshCache` (host side).
   pointer moves collapse into one (`pacing::FramePacer`).
 - **60 fps cap.** The host sends at most one batch per `pacing::FRAME_INTERVAL`.
 - **Add-on-initiated repaints.** `RequestRepaint` and the frame's `repaint_after_ms` go through
-  `pacing::RepaintLimiter`, so two of them are at least one frame interval apart. The add-on sends
-  at most one `RequestRepaint` per input batch and ignores repaint requests made during a pass,
-  because those are already in that frame's hint.
+  `pacing::RepaintLimiter`, so two of them are at least one frame interval apart. `after_ms` is the
+  time left until the deadline the add-on asked for. Between two input batches the add-on sends
+  another `RequestRepaint` only for an earlier deadline, and it ignores repaint requests made
+  during a pass, because those are already in that frame's hint. The add-on's message queue is
+  bounded: when it is full, the add-on stops reading the pipe.
 - The host drives every frame. The add-on renders only when an `Input` arrives.
 
 ## What may block

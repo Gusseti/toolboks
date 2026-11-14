@@ -9,8 +9,9 @@
 //! - renders exactly one frame per `Input` batch (messages the batch caused, such as
 //!   changed preferences, are sent before the frame that acknowledges it), with the add-on's own clock (the host
 //!   sends no time), tessellates it and sends cached meshes plus texture deltas;
-//! - asks the host for a frame (`RequestRepaint`) when something calls
-//!   `ctx.request_repaint()` between frames, at most once per input batch;
+//! - asks the host for a frame (`RequestRepaint { after_ms }`) when something calls
+//!   `ctx.request_repaint()` or `request_repaint_after` between frames, keeping the
+//!   requested deadline and sending again only for an earlier one;
 //! - forwards navigation, suspend and resume, preferences, capabilities and the tutorial
 //!   calls to the add-on and sends back host requests, status items and log lines;
 //! - answers heartbeat pings from the main loop, so a stuck `ui` call shows as stalled;
@@ -36,7 +37,7 @@ use proto::{
 };
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub use toolboks_addon_proto as proto;
@@ -44,6 +45,9 @@ pub use toolboks_addon_proto as proto;
 /// The SDK version an add-on reports in its `Hello`.
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 const BACKGROUND_TICK: Duration = Duration::from_millis(200);
+/// Host messages waiting for the main loop. When it is full the reader stops reading, so a
+/// fast host is held back by the pipe instead of growing memory.
+const WAKE_QUEUE: usize = 64;
 
 static LOG: Mutex<Vec<(LogLevel, String)>> = Mutex::new(Vec::new());
 
@@ -95,7 +99,41 @@ fn pipe_paths(
 
 enum Wake {
     Host(Result<HostMessage, ProtocolError>),
-    Repaint { pass: u64 },
+    Repaint,
+}
+
+/// Repaint requests from egui's callback, coalesced to the earliest deadline per pass number.
+/// The pass number tells requests made during a pass (already in that frame's hint) from
+/// requests made between frames.
+#[derive(Default)]
+struct RepaintRequests {
+    pending: Mutex<Vec<(u64, Instant)>>,
+}
+
+impl RepaintRequests {
+    /// Records a request. Returns true when the main loop needs a wake-up.
+    fn add(&self, pass: u64, deadline: Instant) -> bool {
+        let Ok(mut pending) = self.pending.lock() else {
+            return false;
+        };
+        let wake = pending.is_empty();
+        match pending.iter_mut().find(|(seen, _)| *seen == pass) {
+            Some((_, earliest)) => *earliest = (*earliest).min(deadline),
+            None => pending.push((pass, deadline)),
+        }
+        wake
+    }
+
+    /// Drains every request and returns the earliest deadline among those made at or after
+    /// pass `painted` (the first pass not yet rendered).
+    fn take_since(&self, painted: u64) -> Option<Instant> {
+        let pending = std::mem::take(&mut *self.pending.lock().ok()?);
+        pending
+            .into_iter()
+            .filter(|(pass, _)| *pass >= painted)
+            .map(|(_, deadline)| deadline)
+            .min()
+    }
 }
 
 /// Runs the add-on over any transport. The reader moves to its own thread; the add-on and
@@ -112,7 +150,7 @@ where
 {
     let (mut reader, mut writer) = transport.split();
     proto::addon_handshake(&mut reader, &mut writer, &Hello::new(addon_id, SDK_VERSION))?;
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::sync_channel(WAKE_QUEUE);
     let host_tx = tx.clone();
     std::thread::Builder::new()
         .name("toolboks-addon-reader".into())
@@ -124,10 +162,17 @@ where
             }
         })?;
     let ctx = egui::Context::default();
+    let requests = Arc::new(RepaintRequests::default());
+    let signal = requests.clone();
     ctx.set_request_repaint_callback(move |info| {
-        let _ = tx.send(Wake::Repaint {
-            pass: info.current_cumulative_pass_nr,
-        });
+        // `request_repaint_after` carries a delay: keep its deadline. Never block here; the
+        // callback also runs on the main loop's thread, which is the queue's only reader.
+        let Some(deadline) = Instant::now().checked_add(info.delay) else {
+            return;
+        };
+        if signal.add(info.current_cumulative_pass_nr, deadline) {
+            let _ = tx.try_send(Wake::Repaint);
+        }
     });
     let mut runtime = Runtime {
         ctx,
@@ -136,7 +181,8 @@ where
         encoder: MeshEncoder::default(),
         preferences: BTreeMap::new(),
         suspended: false,
-        repaint_sent: false,
+        requests,
+        repaint_deadline: None,
         theme: None,
         status: Vec::new(),
     };
@@ -155,7 +201,9 @@ struct Runtime<W> {
     encoder: MeshEncoder,
     preferences: BTreeMap<String, serde_json::Value>,
     suspended: bool,
-    repaint_sent: bool,
+    requests: Arc<RepaintRequests>,
+    /// The earliest repaint deadline sent to the host since the last input batch.
+    repaint_deadline: Option<Instant>,
     theme: Option<Theme>,
     status: Vec<StatusItem>,
 }
@@ -188,13 +236,8 @@ impl<W: Write> Runtime<W> {
                 }
             };
             match wake {
-                // A request made during a pass is already in that frame's repaint hint.
-                Wake::Repaint { pass } => {
-                    if pass >= self.ctx.cumulative_pass_nr() && !self.repaint_sent {
-                        self.repaint_sent = true;
-                        self.send(&AddonMessage::RequestRepaint { after_ms: 0 })?;
-                    }
-                }
+                // Handled below with every wake, so a wake dropped on a full queue is not lost.
+                Wake::Repaint => {}
                 Wake::Host(message) => {
                     if !self.handle(addon, message?)? {
                         return Ok(());
@@ -202,7 +245,23 @@ impl<W: Write> Runtime<W> {
                 }
             }
             self.flush_side_channels(addon)?;
+            self.forward_repaint()?;
         }
+    }
+
+    /// Sends a repaint request made between frames, with its remaining delay, unless an
+    /// earlier one is already pending at the host.
+    fn forward_repaint(&mut self) -> Result<(), ProtocolError> {
+        let Some(deadline) = self.requests.take_since(self.ctx.cumulative_pass_nr()) else {
+            return Ok(());
+        };
+        if self.repaint_deadline.is_some_and(|sent| sent <= deadline) {
+            return Ok(());
+        }
+        self.repaint_deadline = Some(deadline);
+        let after = deadline.saturating_duration_since(Instant::now());
+        let after_ms = u32::try_from(after.as_millis()).unwrap_or(u32::MAX);
+        self.send(&AddonMessage::RequestRepaint { after_ms })
     }
 
     /// Handles one host message. Returns false when the add-on should exit.
@@ -215,7 +274,7 @@ impl<W: Write> Runtime<W> {
             HostMessage::Hello(_) => return Err(ProtocolError::Unexpected("second Hello")),
             HostMessage::Refuse { reason, .. } => return Err(ProtocolError::Refused(reason)),
             HostMessage::Input(batch) => {
-                self.repaint_sent = false;
+                self.repaint_deadline = None;
                 self.frame(addon, batch)?;
             }
             HostMessage::Navigate { page } => addon.navigate(&page),
