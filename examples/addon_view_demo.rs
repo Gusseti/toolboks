@@ -1,6 +1,7 @@
 //! Debug-only preview of the add-on host view (#81): a window that paints a sample add-on
 //! through `AddonView`. The add-on runs on a thread over in-memory pipes with the SDK
-//! runtime, so it speaks the real wire protocol without a child process (that is #80).
+//! runtime, so it speaks the real wire protocol without a child process (the supervisor in
+//! `src/supervisor/` starts real ones).
 //!
 //! ```text
 //! cargo run --example addon_view_demo
