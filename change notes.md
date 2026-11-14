@@ -4,10 +4,11 @@
 
 - **Add-on browser and first run (#86):** choose tools with nothing preselected, review several installs together, and download them through the checked catalog and existing installer. Browse by search, category or installed state; inspect screenshots, access and release notes; update, open or remove without leaving Toolboks. Installs show progress and failures stay in the sidebar until dismissed, including after a restart. Removal keeps data by default, with an explicit option to delete it. Local `.tbaddon` review and a browser walkthrough remain available.
 - **Installed native add-ons:** catalog-installed programs open through the existing supervisor and drawing view in the Toolboks window. Updates wait for the old program to stop. A signed local test catalog is available only to preview builds for first-run checks; release builds never accept its keys or file transport.
+- **Catalog-only startup:** a fresh install contains no tools. First-run choices come only from the signed runtime catalog at the single `src/catalog.rs::URL` constant. The marketplace uses the landing page's wide rows, 340 px detail pane, icon tiles, verified pills and category buttons, with source-derived values in `visual-spec.md`. Final visual verification remains outstanding.
 
 ## Release prerequisites
 
-- Public downloads still need the owner's real offline catalog public keys and a published signed catalog in `fredhakon/toolboks-addons`. Placeholder keys continue to reject downloads. The catalog repository is currently private and has no entries. Publish the catalog and release assets before shipping. Legacy provider source extraction remains separate work in #88?#94; no bundled manifests or sample packages are offered or loaded by this build.
+- Public downloads still need the owner's real offline catalog public keys and a published signed catalog in `fredhakon/toolboks-addons`. Placeholder keys continue to reject downloads. The catalog repository is currently private and has no entries. Publish the catalog and release assets before shipping. Legacy provider source extraction remains separate work in #88 through #94; no bundled manifests or sample packages are offered or loaded by this build.
 
 ## Existing platform work
 
@@ -34,4 +35,3 @@
 - The "only the current user" rule for the pipes is tested by reading the pipe's access list, not with a second Windows account.
 - The test host window ran with the sample add-on without errors, but its page was not looked at on screen.
 
-- **Catalog-only startup:** a fresh install contains no tools. First-run choices come only from the signed runtime catalog at the single `src/catalog.rs::URL` constant. The marketplace now follows the landing page?s wide rows, 340 px detail pane, icon tiles, verified pills, category buttons and exact color/spacing/type values in `visual-spec.md`.
