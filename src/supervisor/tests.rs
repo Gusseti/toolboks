@@ -46,6 +46,7 @@ pub(crate) fn fake(test: &str, mode: &str) -> (PathBuf, LaunchSpec) {
         sha256: toolboks_catalog::sha256_hex(&fs::read(&exe).unwrap()),
         exe,
         may_elevate: false,
+        background: false,
         installed_root: None,
     };
     (dir, spec)
@@ -183,7 +184,6 @@ fn starts_connects_and_stops_on_request() {
 
     // Opening the page again does not start a second process.
     supervisor.open(spec.clone(), Instant::now());
-    supervisor.hide(ID);
     supervisor.open(spec, Instant::now());
     assert!(supervisor.send(ID, &HostMessage::Navigate { page: "x".into() }));
 
@@ -406,4 +406,199 @@ fn only_the_started_process_with_the_token_gets_in() {
         pipes.connect(None, soon, &mut wait).unwrap_err(),
         ConnectError::TimedOut
     );
+}
+
+#[test]
+fn hiding_a_foreground_addon_ends_its_process_and_reopening_starts_a_new_one() {
+    let (dir, spec) = fake("hide-foreground", "normal");
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec.clone(), Instant::now());
+    run_until(&mut supervisor, connected);
+    let first = watch(supervisor.pid(ID).unwrap());
+    supervisor.hide(ID);
+    let events = run_until(&mut supervisor, stopped);
+    assert_eq!(stop_reason(&events), &StopReason::ByHost);
+    assert!(ended_within(&first, Duration::from_secs(5)));
+    assert!(!supervisor.is_running(ID));
+    supervisor.open(spec, Instant::now());
+    run_until(&mut supervisor, connected);
+    assert_eq!(starts(&dir), 2);
+}
+
+#[test]
+fn reopening_while_hidden_addon_is_quitting_restarts_after_exit() {
+    let (dir, spec) = fake("hide-reopen", "normal");
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec.clone(), Instant::now());
+    run_until(&mut supervisor, connected);
+    let first = watch(supervisor.pid(ID).unwrap());
+    supervisor.hide(ID);
+    supervisor.open(spec, Instant::now());
+    run_until(&mut supervisor, connected);
+    assert!(ended_within(&first, Duration::from_secs(5)));
+    assert_eq!(starts(&dir), 2);
+}
+
+#[test]
+fn hidden_background_addon_keeps_its_process() {
+    let (dir, mut spec) = fake("hide-background", "normal");
+    spec.background = true;
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.start_background(spec.clone(), Instant::now());
+    run_until(&mut supervisor, connected);
+    let pid = supervisor.pid(ID).unwrap();
+    supervisor.open(spec.clone(), Instant::now());
+    supervisor.hide(ID);
+    supervisor.tick(Instant::now());
+    assert_eq!(supervisor.pid(ID), Some(pid));
+    supervisor.open(spec, Instant::now());
+    assert_eq!(starts(&dir), 1);
+}
+
+#[test]
+fn hiding_during_launch_cancels_without_a_hidden_restart() {
+    let (dir, spec) = fake("hide-starting", "silent");
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec, Instant::now());
+    supervisor.hide(ID);
+    assert!(!supervisor.is_running(ID));
+    for _ in 0..20 {
+        supervisor.tick(Instant::now());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(starts(&dir) <= 1);
+    assert!(matches!(
+        supervisor.status(ID),
+        Some(Status::Stopped(StopReason::ByHost))
+    ));
+}
+
+#[test]
+fn installed_folder_refuses_dlls_extra_files_and_directories() {
+    let dir = std::env::temp_dir().join(format!("toolboks-folder-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let exe = dir.join("addon.exe");
+    fs::write(&exe, b"exe").unwrap();
+    fs::write(dir.join("entry.json"), b"{}").unwrap();
+    assert!(process::verify_folder(&exe).is_ok());
+    for name in ["winhttp.dll", "D3DCompiler_47.DLL", "notes.txt"] {
+        fs::write(dir.join(name), b"unexpected").unwrap();
+        assert!(matches!(
+            process::verify_folder(&exe),
+            Err(VerifyError::UnexpectedFile(_))
+        ));
+        fs::remove_file(dir.join(name)).unwrap();
+    }
+    fs::create_dir(dir.join("nested")).unwrap();
+    assert!(process::verify_folder(&exe).is_err());
+    fs::remove_dir(dir.join("nested")).unwrap();
+    fs::remove_file(&exe).unwrap();
+    assert!(process::verify_folder(&exe).is_err());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn installed_folder_refuses_junctions_in_its_path() {
+    let dir = std::env::temp_dir().join(format!("toolboks-junction-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("real/1.0.0")).unwrap();
+    fs::write(dir.join("real/1.0.0/addon.exe"), b"exe").unwrap();
+    // Junction creation needs no developer mode or administrator rights.
+    let status = std::process::Command::new("cmd")
+        .args(["/c", "mklink", "/J"])
+        .arg(dir.join("redirected"))
+        .arg(dir.join("real"))
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert!(process::verify_folder(&dir.join("redirected/1.0.0/addon.exe")).is_err());
+    fs::remove_dir(dir.join("redirected")).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// Inspect the built PE, rather than merely checking the Cargo configuration text.
+#[cfg(target_env = "msvc")]
+#[test]
+fn built_executables_limit_implicit_dll_loads_to_system32() {
+    let bytes = fs::read(std::env::current_exe().unwrap()).unwrap();
+    let word = |offset: usize| u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
+    let dword = |offset: usize| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+    let pe = dword(0x3c) as usize;
+    assert_eq!(&bytes[pe..pe + 4], b"PE\0\0");
+    let optional = pe + 24;
+    let (directories, flag_offset) = match word(optional) {
+        0x20b => (optional + 112, 0x4e), // PE32+
+        0x10b => (optional + 96, 0x36),  // PE32
+        magic => panic!("unexpected PE magic {magic:x}"),
+    };
+    let config_rva = dword(directories + 10 * 8);
+    assert_ne!(config_rva, 0, "load configuration directory is missing");
+    let sections = optional + word(pe + 20) as usize;
+    let config = (0..word(pe + 6) as usize)
+        .find_map(|index| {
+            let section = sections + index * 40;
+            let start = dword(section + 12);
+            let size = dword(section + 16);
+            (config_rva >= start && config_rva - start < size)
+                .then(|| (dword(section + 20) + config_rva - start) as usize)
+        })
+        .expect("load configuration must be in a section");
+    assert!(dword(config) as usize >= flag_offset + 2);
+    assert_eq!(
+        word(config + flag_offset),
+        0x800,
+        "System32 must be the only implicit DLL search path"
+    );
+}
+
+#[test]
+fn a_forged_install_record_cannot_launch_an_elevated_process_without_a_signed_catalog() {
+    let (root, mut spec) = fake("elevation-forged-record", "normal");
+    let version = root.join("addons").join(ID).join("1.0.0");
+    fs::create_dir_all(&version).unwrap();
+    fs::copy(&spec.exe, version.join("addon.exe")).unwrap();
+    fs::write(
+        version.parent().unwrap().join("active.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version": "1.0.0", "confirmed": true, "launched": false, "sha256": spec.sha256,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    spec.installed_root = Some(root.clone());
+    spec.may_elevate = true;
+    let supervisor = supervisor(Timing::default());
+    // Call the real launch path; refusal must happen before ShellExecute/UAC or any child.
+    let result = launch(&supervisor.shared, &spec, true, &AtomicBool::new(false));
+    assert!(matches!(
+        result,
+        Err(LaunchError::Stop(StopReason::Refused(_)))
+    ));
+    assert_eq!(starts(&root), 0);
+    assert!(!version.join("starts.txt").exists());
+}
+
+#[test]
+fn an_installed_addon_with_a_planted_dll_is_never_started() {
+    let (root, mut spec) = fake("planted-dll-launch", "normal");
+    let version = root.join("addons").join(ID).join("1.0.0");
+    fs::create_dir_all(&version).unwrap();
+    fs::copy(&spec.exe, version.join("addon.exe")).unwrap();
+    fs::write(version.join("winhttp.dll"), b"planted DLL").unwrap();
+    fs::write(
+        version.parent().unwrap().join("active.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version": "1.0.0", "confirmed": true, "launched": false, "sha256": spec.sha256,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    spec.installed_root = Some(root.clone());
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec, Instant::now());
+    let events = run_until(&mut supervisor, stopped);
+    assert!(matches!(stop_reason(&events), StopReason::Refused(_)));
+    assert_eq!(starts(&root), 0);
+    assert!(!version.join("starts.txt").exists());
 }
