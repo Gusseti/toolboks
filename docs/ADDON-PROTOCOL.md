@@ -5,6 +5,7 @@ the host tessellated meshes. The host forwards input and paints those meshes ins
 page rectangle. This document describes protocol version **2**
 (version 1 plus the tray and tour-anchor messages).
 
+- New to this? Start with the [add-on author guide](ADDON-AUTHOR-GUIDE.md).
 - Messages and framing: crate `sdk/toolboks-addon-proto` (`toolboks-addon-proto`).
 - Add-on side loop: `toolboks_addon_sdk::runtime` (SDK feature `runtime`), entry points
   `run_addon(addon, addon_id)` and `run_addon_on(transport, addon, addon_id)`.

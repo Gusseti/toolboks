@@ -148,11 +148,15 @@ A tutorial route remains navigation only. The native example includes the update
 Disk Manager source, Windows backend, legacy manifest and permission-gating example.
 See DRIVE-OPTIMIZATION.md for the execution boundaries and intentional test limits.
 
-## Out-of-process add-ons (in progress)
+## Add-ons as their own exe
 
-A native add-on built as its own exe uses `runtime::run_addon` (SDK feature `runtime`) and the same
-`NativeAddon` trait. Besides the hooks above, the trait has `status_items` (status bar),
-`tray_items` and `tray_action` (optional tray entries). Tours work as for source providers: mark
-anchors with `tutorial::mark` or `tutorial::region`; the host draws the overlay. The wire protocol
-(version 2) and the host services are described in `docs/ADDON-PROTOCOL.md`.
+A native add-on can be built as its own program with `runtime::run_addon` (SDK feature `runtime`)
+and the same `NativeAddon` trait. Toolboks starts it and shows its page inside the Toolboks
+window. Besides the hooks above, the trait has `status_items` (status bar), `tray_items` and
+`tray_action` (optional tray entries). Tours work as for source providers: mark anchors with
+`tutorial::mark` or `tutorial::region`; the host draws the overlay.
 
+Start with the [add-on author guide](../docs/ADDON-AUTHOR-GUIDE.md): it builds and runs the sample
+in `examples/hello-addon` with the test host. The wire protocol (version 2) and the host services
+are described in [ADDON-PROTOCOL.md](../docs/ADDON-PROTOCOL.md). Toolboks itself does not start
+add-on exes yet; that arrives with the add-on browser.

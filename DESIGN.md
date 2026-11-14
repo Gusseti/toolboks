@@ -81,14 +81,14 @@ Text at least 4.5:1, large text 3:1. Nothing is conveyed by colour alone (data l
 
 ## Native notes (egui)
 
-The mockups are web; the app is native egui. Tokens live in `ui::apply_style` and the shared helpers in `src/ui.rs` (`graph_card`, `pill`, `card`, `toggle_switch`). Build new pages from those helpers; do not restyle widgets per page. Nothing here may write to disk: sidebar state, selected resource and range are in memory.
+The mockups are web; the app is native egui. Tokens live in `ui::apply_style` and the shared helpers in `shared/toolboks-shared/src/ui.rs` (`toolboks_shared::ui`: `graph_card`, `pill`, `card`, `toggle_switch`), which the host and every add-on use. Build new pages from those helpers; do not restyle widgets per page. Nothing here may write to disk: sidebar state, selected resource and range are in memory.
 
 ## For add-on authors
 
 An add-on renders inside the host workspace, so it inherits the shell: sidebar entry, header and breadcrumb, status bar and the tokens above.
 
 - Use the SDK's standard page parts (headings, notes, metrics, preference controls) before anything custom; they already follow this file.
-- A native add-on draws with the host's helpers (graph card, resource row, stat, table, button) and the tokens. Do not bring your own palette, font, corner radius or icon style.
+- A native add-on draws with the host's helpers (graph card, resource row, stat, table, button) and the tokens. Do not bring your own palette, font, corner radius or icon style. An add-on built as its own exe calls `toolboks_shared::ui::apply_style` once so its process has the same fonts, colours and spacing; see the [author guide](docs/ADDON-AUTHOR-GUIDE.md).
 - Pick your accent from the manifest's accent options; the accent is used for selection only. Data colours must be distinct from the accent and always labelled.
 - Icons: 1.7 px stroke, 24 px grid, rounded caps and joins, drawn in the host's icon style. No emoji or Unicode glyphs as icons.
 - Page types: **overview** (cards or master and detail), **table** (list with filters), **settings** (labelled controls), **tool** (preview, confirm, apply, undo). Name pages with one or two words; they appear in the sidebar under your add-on.
