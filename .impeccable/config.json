@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-11-14T15:51:06.866Z",
         "reason": "Claude triage: flagged containers are full-bleed by design (graph cards whose canvas fills the card per DESIGN.md, window chrome bars, 2px segmented control) or hairline-divided rows whose spacing is padding-block on the rows; verified in desktop and mobile renders"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "site/index.html"
+        ],
+        "createdAt": "2026-11-14T16:16:39.017Z",
+        "reason": "Claude triage: same full-bleed graph cards, window chrome bars and hairline-divided rows as the approved snapshot; spacing sits on the rows; verified in desktop and mobile renders"
       }
     ]
   }
