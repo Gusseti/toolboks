@@ -616,10 +616,8 @@ mod tests {
     #[test]
     fn local_packages_cannot_take_the_retired_combined_id() {
         let mut r = Registry::load(std::env::temp_dir());
-        for id in [LEGACY_BASE_ID] {
-            let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
-            p.manifest.id = id.into();
-            assert!(r.install(p).is_err());
-        }
+        let mut package = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
+        package.manifest.id = LEGACY_BASE_ID.into();
+        assert!(r.install(package).is_err());
     }
 }

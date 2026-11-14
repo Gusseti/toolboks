@@ -329,8 +329,8 @@ pub fn size(bytes: u64) -> String {
 }
 pub fn access(name: &str) -> String {
     match name {
-        "host_metrics" => "Read basic system readings",
-        "local_preferences" => "Save its own settings on this PC",
+        "host_metrics" => "Read memory use and uptime",
+        "local_preferences" => "Keep its own settings on this PC",
         "filesystem_read" => "Read file and folder details in locations you select",
         "user_exports" => "Save reports where you choose",
         "drive_optimize" => {

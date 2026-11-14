@@ -140,19 +140,24 @@ fn icon(painter: &egui::Painter, rect: Rect, name: &str, color: Color32) {
             }
         }
         "shield" => {
-            line(&[
-                [12.0, 3.0],
-                [19.0, 6.0],
-                [19.0, 11.0],
-                [18.0, 15.0],
-                [15.0, 19.0],
-                [12.0, 21.0],
-                [9.0, 19.0],
-                [6.0, 15.0],
-                [5.0, 11.0],
-                [5.0, 6.0],
-                [12.0, 3.0],
-            ]);
+            let mut points = vec![point([12.0, 3.0]), point([19.0, 6.0]), point([19.0, 11.0])];
+            for controls in [
+                [[19.0, 11.0], [19.0, 15.6], [16.1, 18.9], [12.0, 21.0]],
+                [[12.0, 21.0], [7.9, 18.9], [5.0, 15.6], [5.0, 11.0]],
+            ] {
+                for index in 1..=16 {
+                    let fraction = index as f32 / 16.0;
+                    let inverse = 1.0 - fraction;
+                    points.push(
+                        point(controls[0]) * inverse.powi(3)
+                            + point(controls[1]).to_vec2() * (3.0 * inverse.powi(2) * fraction)
+                            + point(controls[2]).to_vec2() * (3.0 * inverse * fraction.powi(2))
+                            + point(controls[3]).to_vec2() * fraction.powi(3),
+                    );
+                }
+            }
+            points.extend([point([5.0, 6.0]), point([12.0, 3.0])]);
+            painter.line(points, stroke);
             line(&[[12.0, 8.0], [12.0, 12.0]]);
             painter.circle_filled(point([12.0, 15.5]), stroke.width / 2.0, color);
         }
@@ -195,8 +200,8 @@ fn icon(painter: &egui::Painter, rect: Rect, name: &str, color: Color32) {
         "gauge" => {
             let points = (0..=32)
                 .map(|index| {
-                    let angle = std::f32::consts::PI * (1.16 + 1.68 * index as f32 / 32.0);
-                    point([12.0 + 8.0 * angle.cos(), 13.5 + 8.0 * angle.sin()])
+                    let angle = (159.635_f32 + 220.73 * index as f32 / 32.0).to_radians();
+                    point([12.0 + 8.0 * angle.cos(), 14.216 + 8.0 * angle.sin()])
                 })
                 .collect();
             painter.line(points, stroke);

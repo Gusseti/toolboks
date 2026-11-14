@@ -102,6 +102,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         package["manifest"]["description"] = "Local test package, not the real tool.".into();
         package["pages"][0]["widgets"][0]["text"] = format!("{title} is open in Toolboks").into();
         package["pages"][0]["widgets"][1]["text"] = "This harmless SDK test package proves first-run install and open. It is not the real tool.".into();
+        if slug == "event-watch" {
+            package["manifest"]["capabilities"] = serde_json::json!(["host_metrics"]);
+            package["pages"].as_array_mut().unwrap().truncate(1);
+        }
+        let capabilities = package["manifest"]["capabilities"].clone();
         let bytes = serde_json::to_vec(&package)?;
         let filename = format!("{slug}.tbaddon");
         fs::write(folder.join(&filename), &bytes)?;
@@ -113,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "protocol_version": toolboks_addon_proto::PROTOCOL_VERSION,
             "download_url": format!("https://github.com/Gusseti/toolboks-addons/releases/download/fixture/{filename}"),
             "size": bytes.len(), "sha256": sha256_hex(&bytes), "verified": true, "channel": "stable",
-            "capabilities": ["host_metrics", "local_preferences"], "pages": ["Overview", "Preferences"],
+            "capabilities": capabilities, "pages": ["Overview", "Preferences"],
             "release_notes": "First local test version. No Windows changes."
         }));
     }

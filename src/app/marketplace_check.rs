@@ -151,7 +151,7 @@ impl eframe::App for Check {
             }
             7 => {
                 self.app.screen = Screen::Browser;
-                self.app.market.focused = Some("example.disk-manager".into());
+                self.app.market.focused = Some("example.event-watch".into());
                 self.capture(ctx, "07-browser");
             }
             8 => {
