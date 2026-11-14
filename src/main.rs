@@ -4,6 +4,10 @@ use eframe::egui;
 // Shared with add-ons through `toolboks-shared`; re-exported so `crate::<module>` paths keep working.
 use toolboks_shared::{format, ui, win};
 
+// Wired to add-on pages by the supervisor (#80); until then only tests and the
+// addon_view_demo example use it.
+#[allow(dead_code)]
+mod addon_view;
 mod addons;
 mod app;
 mod crash;
