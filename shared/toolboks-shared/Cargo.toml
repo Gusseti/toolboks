@@ -6,3 +6,6 @@ license = "MIT"
 description = "Code shared by the Toolboks host and its add-ons"
 
 [dependencies]
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_System_SystemInformation"] }

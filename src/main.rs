@@ -2,7 +2,7 @@
 
 use eframe::egui;
 // Shared with add-ons through `toolboks-shared`; re-exported so `crate::<module>` paths keep working.
-use toolboks_shared::format;
+use toolboks_shared::{format, win};
 
 mod addons;
 mod app;
@@ -14,7 +14,6 @@ mod tools;
 mod tray;
 mod ui;
 mod update;
-mod win;
 mod winhttp;
 
 fn main() -> eframe::Result {

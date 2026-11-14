@@ -3100,6 +3100,9 @@ dependencies = [
 [[package]]
 name = "toolboks-shared"
 version = "0.1.0"
+dependencies = [
+ "windows 0.62.2",
+]
 
 [[package]]
 name = "tracing"
