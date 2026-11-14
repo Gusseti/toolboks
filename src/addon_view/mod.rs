@@ -506,7 +506,8 @@ impl AddonView {
         now: Instant,
     ) -> Result<(), ProtocolError> {
         self.pacer.ack(frame.seq);
-        self.textures.apply(frame.textures_set, frame.textures_free);
+        self.textures
+            .apply(frame.textures_set, frame.textures_free)?;
         let meshes = self.meshes.apply(frame.meshes)?;
         // The new process has painted: the textures of the old one can go.
         self.textures.drop_stale();

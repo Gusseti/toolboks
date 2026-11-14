@@ -494,3 +494,41 @@ fn real_addon_paints_takes_clicks_and_restarts_dimmed() {
     assert_eq!(allocated(&ctx), baseline);
     assert!(addon.join().expect("add-on thread").is_ok());
 }
+
+#[test]
+fn a_bad_texture_stops_the_view_instead_of_panicking() {
+    let ctx = egui::Context::default();
+    pass(&ctx, Vec::new(), |_| {});
+    let baseline = allocated(&ctx);
+    let mut view = AddonView::new("Demo", &ctx);
+    let (link, _recorder, tx) = fake_link();
+    view.attach(link);
+    let image = egui::ColorImage {
+        size: [4, 4],
+        source_size: vec2(4.0, 4.0),
+        pixels: vec![egui::Color32::WHITE; 3],
+    };
+    tx.send(Ok(AddonMessage::Frame(Frame {
+        seq: 1,
+        textures_set: vec![toolboks_addon_proto::TextureUpdate {
+            id: egui::TextureId::Managed(0),
+            delta: egui::epaint::ImageDelta::full(image, egui::TextureOptions::LINEAR),
+        }],
+        ..Default::default()
+    })))
+    .unwrap();
+    pass(&ctx, Vec::new(), |ui| {
+        view.show_at(ui, page(), Instant::now());
+    });
+    assert_eq!(
+        view.state(),
+        &ViewState::Stopped(
+            "Malformed message: texture Managed(0) says 4x4 but carries 3 pixels".into()
+        )
+    );
+    assert_eq!(
+        view.note().as_deref(),
+        Some("Demo stopped. Malformed message: texture Managed(0) says 4x4 but carries 3 pixels")
+    );
+    assert_eq!(allocated(&ctx), baseline, "nothing reached the renderer");
+}
