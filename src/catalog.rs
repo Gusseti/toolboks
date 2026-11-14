@@ -28,6 +28,9 @@ const ROTATION_FLOOR: u64 = 0;
 /// Add-on protocol versions this build can talk to.
 pub const PROTOCOL_VERSIONS: &[u32] = &[toolboks_addon_proto::PROTOCOL_VERSION];
 
+pub const URL: &str =
+    "https://raw.githubusercontent.com/fredhakon/toolboks-addons/main/catalog/index.json";
+
 pub fn trusted_keys() -> TrustedKeys {
     TrustedKeys {
         main: MAIN_KEY,

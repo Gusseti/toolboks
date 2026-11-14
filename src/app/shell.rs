@@ -691,7 +691,9 @@ impl App {
                         if matches!(self.screen, Screen::Browser | Screen::Pick) {
                             if ui.ctx().content_rect().width() < 850.0 {
                                 ui.menu_button("Add-on actions", |ui| self.market_header(ui));
-                            } else { self.market_header(ui); }
+                            } else {
+                                self.market_header(ui);
+                            }
                         }
                         if let Some(id) = &crumb.help {
                             if ui.button("Help").clicked() {
@@ -986,7 +988,8 @@ impl App {
     /// The primary action of an add-on: install it, turn it on, or open it.
     fn run_action(&mut self, e: &Entry) {
         if !e.installed {
-            self.pending_package = addons::official_package(&e.m.id);
+            self.screen = Screen::Browser;
+            self.market.focused = Some(e.m.id.clone());
             return;
         }
         if !e.enabled && !self.set_addon_enabled(&e.m.id, true) {
@@ -1117,13 +1120,7 @@ impl App {
                     }
                 });
                 ui.add_space(look::GAP);
-                if ui.button("Try the example package").clicked() {
-                    match Package::parse(addons::SDK_EXAMPLE.as_bytes(), env!("CARGO_PKG_VERSION"))
-                    {
-                        Ok(p) => self.pending_package = Some(p),
-                        Err(e) => self.message = Some(e),
-                    }
-                }
+                muted(ui, "For developers: choose a local .tbaddon file. No sample tools are bundled.");
             });
             ui.add_space(look::GAP);
         }

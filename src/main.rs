@@ -53,6 +53,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             ui::apply_style(&cc.egui_ctx);
+            app::store::install_fonts(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             #[cfg(feature = "preview")]
             if let Some(index) = args.iter().position(|arg| arg == "--marketplace-check") {

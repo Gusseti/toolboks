@@ -13,6 +13,7 @@ mod marketplace;
 #[cfg(feature = "preview")]
 pub mod marketplace_check;
 mod shell;
+pub(crate) mod store;
 mod tutorial;
 use crate::addons::{self, Registry, SystemAddon};
 use shell::Screen;

@@ -6,7 +6,25 @@ use egui::Vec2;
 use toolboks_addon_sdk::tutorial as anchors;
 
 impl App {
-    fn installed_version(&self, id: &str) -> Option<String> {
+    pub(super) fn market_header(&mut self, ui: &mut egui::Ui) {
+        if ui.button("Show me around").clicked() {
+            self.help = Some("toolboks.addon-browser".into());
+        }
+        if self.screen == Screen::Browser {
+            ui.checkbox(&mut self.market.installed_only, "Installed only");
+            if ui.button("Refresh list").clicked() {
+                self.market.refresh(self.registry.root.clone(), ui.ctx());
+            }
+            if ui.button("Install from file").clicked() {
+                self.show_install = !self.show_install;
+            }
+            if ui.button("Pick your tools").clicked() {
+                self.screen = Screen::Pick;
+            }
+        }
+    }
+
+    pub(super) fn installed_version(&self, id: &str) -> Option<String> {
         crate::installer::installed_version(&self.registry.root, id).or_else(|| {
             self.registry
                 .packages
@@ -127,6 +145,13 @@ impl App {
     }
 
     fn catalog_notice(&mut self, ui: &mut egui::Ui) {
+        #[cfg(feature = "preview")]
+        if std::env::var_os("TOOLBOKS_TEST_CATALOG").is_some() {
+            caption(
+                ui,
+                "Local test catalog. These are SDK samples, not published tools.",
+            );
+        }
         if self.market.loading {
             muted(ui, "Checking for add-ons...");
         }
@@ -172,7 +197,7 @@ impl App {
                 anchors::region(ui, "browser-list", |ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("tool-picker")
-                        .max_height((ui.available_height() - 130.0).max(160.0))
+                        .max_height((ui.available_height() - 130.0).max(60.0))
                         .show(ui, |ui| {
                             for entry in entries {
                                 let installed = self.installed_version(&entry.id).is_some();
@@ -275,40 +300,7 @@ impl App {
             }
             return;
         }
-        Self::title(
-            ui,
-            "Add-on browser",
-            "Find tools that open here in Toolboks.",
-        );
         self.catalog_notice(ui);
-        let search = ui.add(
-            egui::TextEdit::singleline(&mut self.search)
-                .hint_text("Search add-ons")
-                .desired_width((ui.available_width() - 140.0).max(100.0)),
-        );
-        anchors::mark(ui, "browser-search", search.rect);
-        ui.horizontal_wrapped(|ui| {
-            let categories: std::collections::BTreeSet<_> = self
-                .market
-                .entries
-                .iter()
-                .map(|entry| entry.category.clone())
-                .collect();
-            let response = egui::ComboBox::from_id_salt("addon-category")
-                .selected_text(format!("Category: {}", self.market.category))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.market.category, "All".into(), "All");
-                    for category in categories {
-                        ui.selectable_value(&mut self.market.category, category.clone(), category);
-                    }
-                });
-            anchors::mark(ui, "browser-category", response.response.rect);
-            ui.checkbox(&mut self.market.installed_only, "Installed only");
-            if ui.button("Refresh list").clicked() {
-                self.market.refresh(self.registry.root.clone(), ui.ctx());
-            }
-        });
-        ui.add_space(8.0);
         let needle = self.search.to_lowercase();
         let mut entries = self.market.entries.clone();
         for entry in crate::installer::installed(&self.registry.root) {
@@ -335,108 +327,10 @@ impl App {
         {
             self.market.focused = entries.first().map(|entry| entry.id.clone());
         }
-        if entries.is_empty() {
-            muted(
-                ui,
-                "No add-ons match. Clear the search or choose another category.",
-            );
-        }
-        let wide = ui.available_width() >= 600.0;
-        let layout = if wide {
-            egui::Layout::left_to_right(egui::Align::Min)
-        } else {
-            egui::Layout::top_down(egui::Align::Min)
-        };
-        ui.with_layout(layout, |ui| {
-            let height = ui.available_height();
-            ui.allocate_ui_with_layout(
-                Vec2::new(
-                    if wide { 280.0 } else { ui.available_width() },
-                    if wide { height } else { height * 0.45 },
-                ),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_width(if wide { 280.0 } else { ui.available_width() });
-                    egui::ScrollArea::vertical()
-                        .id_salt("market-list")
-                        .show(ui, |ui| {
-                            anchors::region(ui, "browser-list", |ui| {
-                                caption(ui, format!("{} add-ons. Verified first.", entries.len()));
-                                for entry in &entries {
-                                    let selected = self.market.focused.as_ref() == Some(&entry.id);
-                                    panel()
-                                        .fill(if selected {
-                                            look::SELECTED_BG
-                                        } else {
-                                            look::PANEL_BG
-                                        })
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            if ui.selectable_label(selected, &entry.title).clicked()
-                                            {
-                                                self.market.focused = Some(entry.id.clone());
-                                            }
-                                            if entry.verified {
-                                                caption(ui, "Toolboks verified");
-                                            }
-                                            muted(ui, &entry.short_description);
-                                            caption(
-                                                ui,
-                                                format!(
-                                                    "{} - v{} - {}",
-                                                    entry.category,
-                                                    entry.version,
-                                                    market::size(entry.size)
-                                                ),
-                                            );
-                                            caption(
-                                                ui,
-                                                format!(
-                                                    "Access: {}",
-                                                    entry
-                                                        .capabilities
-                                                        .iter()
-                                                        .map(|name| market::access(name))
-                                                        .collect::<Vec<_>>()
-                                                        .join("; ")
-                                                ),
-                                            );
-                                            ui.horizontal(|ui| {
-                                                caption(
-                                                    ui,
-                                                    if self.installed_version(&entry.id).is_some() {
-                                                        "Installed"
-                                                    } else {
-                                                        "Not installed"
-                                                    },
-                                                );
-                                                if ui.button("Details").clicked() {
-                                                    self.market.focused = Some(entry.id.clone());
-                                                    self.market.details = true;
-                                                }
-                                            });
-                                        });
-                                    ui.add_space(8.0);
-                                }
-                            });
-                            self.job_list(ui);
-                        });
-                },
-            );
-            ui.vertical(|ui| {
-                ui.set_width(ui.available_width());
-                egui::ScrollArea::vertical()
-                    .id_salt("market-preview")
-                    .show(ui, |ui| {
-                        if let Some(entry) = self.focused_entry() {
-                            self.catalog_detail(ui, &entry, false);
-                        }
-                    });
-            });
-        });
+        self.store_ui(ui, &entries);
     }
 
-    fn focused_entry(&self) -> Option<Entry> {
+    pub(super) fn focused_entry(&self) -> Option<Entry> {
         let id = self.market.focused.as_ref()?;
         self.market
             .entries
@@ -783,7 +677,7 @@ impl App {
         }
     }
 
-    fn market_status(&self, id: &str) -> Option<String> {
+    pub(super) fn market_status(&self, id: &str) -> Option<String> {
         if let Some(job) = self.market.jobs.get(id) {
             if job.status != InstallStatus::Ready {
                 return Some(job.status.label());

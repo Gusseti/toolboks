@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
-const FEED: &str = "https://github.com/Gusseti/toolboks-addons/releases/latest/download/index.json";
 pub const PICK_ORDER: [&str; 8] = [
     "resource-monitor",
     "memory-cleaner",
@@ -401,9 +400,9 @@ fn load_catalog(root: &Path) -> Result<Index, String> {
     if catalog::trusted_keys().main == [0; 32] {
         return Err("Add-on downloads are not ready in this build. Your installed tools and local packages still work.".into());
     }
-    let bytes = fetched(FEED, toolboks_catalog::MAX_INDEX_BYTES)?;
+    let bytes = fetched(catalog::URL, toolboks_catalog::MAX_INDEX_BYTES)?;
     let signature = fetched(
-        &format!("{FEED}.sig"),
+        &format!("{}.sig", catalog::URL),
         toolboks_catalog::MAX_SIGNATURE_BYTES,
     )?;
     catalog::accept(root, &bytes, Some(&signature))

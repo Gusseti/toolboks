@@ -7,7 +7,7 @@
 
 ## Release prerequisites
 
-- Public downloads still need the owner's real offline catalog public keys and a published signed catalog in `Gusseti/toolboks-addons`. Placeholder keys continue to reject downloads. Moving the remaining bundled tools out of the host is separate work in #88?#94.
+- Public downloads still need the owner's real offline catalog public keys and a published signed catalog in `fredhakon/toolboks-addons`. Placeholder keys continue to reject downloads. The catalog repository is currently private and has no entries. Publish the catalog and release assets before shipping. Legacy provider source extraction remains separate work in #88?#94; no bundled manifests or sample packages are offered or loaded by this build.
 
 ## Existing platform work
 
@@ -33,3 +33,5 @@
 - The elevated start through the UAC prompt has not been tried on a real PC.
 - The "only the current user" rule for the pipes is tested by reading the pipe's access list, not with a second Windows account.
 - The test host window ran with the sample add-on without errors, but its page was not looked at on screen.
+
+- **Catalog-only startup:** a fresh install contains no tools. First-run choices come only from the signed runtime catalog at the single `src/catalog.rs::URL` constant. The marketplace now follows the landing page?s wide rows, 340 px detail pane, icon tiles, verified pills, category buttons and exact color/spacing/type values in `visual-spec.md`.
