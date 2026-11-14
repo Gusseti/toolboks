@@ -50,6 +50,13 @@ impl eframe::App for Check {
             }
             let path = self.output.join(format!("{name}.png"));
             let saved = self.saved.clone();
+            let store = if name == "07-browser" {
+                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new("store-capture-rect")))
+            } else {
+                None
+            };
+            let scale = ctx.pixels_per_point();
+            let crop_path = self.output.join("browser-crop.png");
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
                 egui::ScreenshotCallback::new(move |image| {
                     let pixels: Vec<u8> = image
@@ -65,6 +72,24 @@ impl eframe::App for Check {
                         image::ColorType::Rgba8,
                     )
                     .expect("save native screenshot");
+                    if let Some(rect) = store {
+                        let buffer = image::RgbaImage::from_raw(
+                            image.size[0] as u32,
+                            image.size[1] as u32,
+                            pixels.clone(),
+                        )
+                        .unwrap();
+                        image::imageops::crop_imm(
+                            &buffer,
+                            (rect.left() * scale).round() as u32,
+                            (rect.top() * scale).round() as u32,
+                            (rect.width() * scale).round() as u32,
+                            (rect.height() * scale).round() as u32,
+                        )
+                        .to_image()
+                        .save(&crop_path)
+                        .unwrap();
+                    }
                     saved.store(true, Ordering::Relaxed);
                 }),
             ));

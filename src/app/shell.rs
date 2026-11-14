@@ -1,7 +1,7 @@
 use super::*;
 use crate::ui::{BORDER, HOST_ACCENT as ACCENT, MUTED, PANEL_BG, SIDEBAR_BG, TEXT, WINDOW_BG};
 use egui::{Color32, RichText, Vec2};
-use toolboks_addon_sdk::{Manifest, Metric, Package, Widget};
+use toolboks_addon_sdk::{Manifest, Metric, Widget};
 
 #[derive(Clone, PartialEq)]
 pub(super) enum Screen {

@@ -58,7 +58,10 @@ fn font(size: f32, weight: u16) -> FontId {
 }
 
 fn text(value: impl Into<String>, size: f32, weight: u16, color: Color32) -> RichText {
-    RichText::new(value).font(font(size, weight)).color(color)
+    RichText::new(value)
+        .font(font(size, weight))
+        .line_height(Some(size * 1.6))
+        .color(color)
 }
 
 fn icon(painter: &egui::Painter, rect: Rect, name: &str, color: Color32) {
@@ -358,13 +361,14 @@ impl App {
             ui.style_mut().text_styles.insert(egui::TextStyle::Body,font(14.0,400));
             ui.style_mut().text_styles.insert(egui::TextStyle::Button,font(14.0,400));
             ui.spacing_mut().item_spacing=Vec2::ZERO;
-            egui::Frame::new().fill(WINDOW_BG).stroke(Stroke::new(1.0,BORDER)).corner_radius(12).show(ui,|ui| {
+            let store_frame = egui::Frame::new().fill(WINDOW_BG).stroke(Stroke::new(1.0,BORDER)).corner_radius(12).show(ui,|ui| {
                 ui.set_width(ui.available_width());
                 egui::Frame::new().fill(look::SIDEBAR_BG).inner_margin(Margin::symmetric(16,14)).show(ui,|ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing=Vec2::new(16.0,12.0);
                     ui.horizontal_wrapped(|ui| {
                         egui::Frame::new().fill(PANEL_BG).stroke(Stroke::new(1.0,BORDER)).corner_radius(8).inner_margin(Margin::symmetric(12,0)).show(ui,|ui| {
+                            ui.set_min_size(Vec2::new(294.0,46.0));
                             ui.spacing_mut().item_spacing.x=8.0;
                             ui.horizontal(|ui| {
                                 let (rect,_)=ui.allocate_exact_size(Vec2::splat(17.0),Sense::hover());
@@ -430,6 +434,10 @@ impl App {
                     });
                 });
             });
+            #[cfg(feature = "preview")]
+            ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new("store-capture-rect"), store_frame.response.rect));
+            #[cfg(not(feature = "preview"))]
+            let _ = store_frame;
         });
     }
 
@@ -533,10 +541,12 @@ impl App {
                 if ui
                     .add_enabled(
                         enabled,
-                        egui::Button::new(text(label, 16.0, 600, Color32::WHITE))
-                            .fill(PRIMARY)
-                            .stroke(Stroke::new(1.0, PRIMARY))
-                            .corner_radius(8),
+                        egui::Button::new(
+                            text(label, 16.0, 600, Color32::WHITE).line_height(Some(16.0)),
+                        )
+                        .fill(PRIMARY)
+                        .stroke(Stroke::new(1.0, PRIMARY))
+                        .corner_radius(8),
                     )
                     .clicked()
                 {
@@ -545,18 +555,6 @@ impl App {
                     } else {
                         self.market.review = Some(vec![entry.clone()]);
                     }
-                }
-                ui.spacing_mut().button_padding = Vec2::new(14.0, 9.0);
-                if ui
-                    .add(
-                        egui::Button::new(text("View details", 14.0, 400, TEXT))
-                            .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::new(1.0, BORDER))
-                            .corner_radius(6),
-                    )
-                    .clicked()
-                {
-                    self.market.details = true;
                 }
             });
         });

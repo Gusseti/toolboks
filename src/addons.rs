@@ -486,10 +486,10 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn cannot_impersonate_bundled_addon() {
+    fn cannot_reintroduce_retired_system_essentials() {
         let mut r = Registry::load(std::env::temp_dir());
         let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
-        p.manifest.id = "toolboks.event-watch".into();
+        p.manifest.id = LEGACY_BASE_ID.into();
         assert!(r.install(p).is_err());
     }
     #[test]
@@ -542,6 +542,16 @@ mod tests {
         assert_eq!(reloaded.errors.len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn fresh_install_has_no_bundled_or_preloaded_addons() {
+        let root = std::env::temp_dir().join(format!("toolboks-empty-host-{}", std::process::id()));
+        let registry = Registry::load(root.clone());
+        assert!(registry.builtins.is_empty());
+        assert!(registry.packages.is_empty());
+        assert!(!registry.config.first_run_complete);
+        assert!(!root.join("addons").exists());
+    }
+
     #[test]
     fn every_builtin_manifest_parses_and_validates() {
         let manifests = builtin_manifests();
@@ -604,9 +614,9 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn local_packages_cannot_take_old_or_new_builtin_ids() {
+    fn local_packages_cannot_take_the_retired_combined_id() {
         let mut r = Registry::load(std::env::temp_dir());
-        for id in [LEGACY_BASE_ID, "toolboks.debloater"] {
+        for id in [LEGACY_BASE_ID] {
             let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
             p.manifest.id = id.into();
             assert!(r.install(p).is_err());

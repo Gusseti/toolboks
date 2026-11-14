@@ -647,6 +647,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("toolboks-open-{}", std::process::id()));
         let mut registry = Registry::load(root.clone());
         let (tool, _) = parse_open(&args(&["--open", "Resource Monitor/Details"])).unwrap();
+        assert!(registry.builtins.is_empty());
+        assert!(open_target(&registry, tool).is_err());
+        registry.builtins = addons::builtin_manifests();
         assert!(open_target(&registry, tool).is_ok());
         registry
             .set_enabled("toolboks.resource-monitor", false)
