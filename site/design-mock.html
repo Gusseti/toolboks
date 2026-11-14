@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Toolboks</title>
+<style>
+:root{
+  --win:#0e0f11; --chrome:#0a0b0c; --card:#15161a; --sel:#1b1c21; --line:#24262c; --bar:#1c1e22;
+  --text:#e8e9ec; --muted:#9a9ea8; --accent:#8b5cf6; --accent-text:#b39dfa; --wash:#8b5cf633;
+  --cpu:#8b5cf6; --mem:#b39dfa; --gpu:#3ecf8e; --disk:#f0a83a; --net:#45b8f0; --ok:#3ecf8e; --watch:#f0a83a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--chrome);color:var(--text);font:400 15px/1.5 "Segoe UI Variable Text","Segoe UI Variable","Segoe UI",system-ui,sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+a{color:inherit;text-decoration:none}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:8px;font-weight:600;font-size:14px;border:1px solid var(--line);color:var(--text)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.seal{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--accent-text);font-weight:600}
+.seal i{width:14px;height:14px;border-radius:50%;background:var(--accent);display:grid;place-items:center}
+.seal i svg{width:9px;height:9px;stroke:#fff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------- The window is the page ---------- */
+.window{min-height:900px;display:grid;grid-template-rows:48px 1fr 28px;background:var(--win)}
+.titlebar{display:flex;align-items:center;gap:28px;padding:0 20px;background:var(--chrome);border-bottom:1px solid var(--bar)}
+.mark{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px}
+.mark b{width:16px;height:16px;border-radius:4px;background:var(--accent)}
+.titlebar nav{display:flex;gap:22px;font-size:13px;color:var(--muted)}
+.titlebar .spacer{flex:1}
+.titlebar .btn{height:30px;font-size:13px;padding:0 12px}
+.wc{display:flex;gap:22px;color:var(--muted);margin-left:8px}
+.wc svg{width:12px;height:12px;stroke:currentColor;stroke-width:1.4;fill:none}
+
+.body{display:grid;grid-template-columns:232px 1fr;min-height:0}
+.side{background:var(--chrome);border-right:1px solid var(--bar);padding:14px 10px;display:flex;flex-direction:column;gap:2px}
+.side .row{display:flex;align-items:center;gap:12px;height:38px;padding:0 12px;border-radius:8px;color:var(--muted);font-size:14px}
+.side .row.on{background:var(--wash);color:var(--text)}
+.side .row.new{color:var(--text);background:var(--sel)}
+.side .row .tag{margin-left:auto;font-size:11px;color:var(--accent-text)}
+.side .group{font-size:12px;color:var(--muted);padding:14px 12px 6px}
+.side .bottom{margin-top:auto}
+
+.work{display:flex;flex-direction:column;min-width:0}
+.crumb{height:52px;display:flex;align-items:center;gap:10px;padding:0 28px;border-bottom:1px solid var(--bar);font-size:14px;color:var(--muted)}
+.crumb strong{color:var(--text);font-weight:600}
+.crumb .spacer{flex:1}
+.pills{display:flex;background:var(--chrome);border:1px solid var(--line);border-radius:8px;padding:3px}
+.pills span{font-size:12px;padding:3px 10px;border-radius:6px;color:var(--muted)}
+.pills span.on{background:var(--sel);color:var(--text)}
+
+.home{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:28px;padding:56px 28px 28px 56px}
+h1{font-size:68px;line-height:1.02;letter-spacing:-0.035em;font-weight:600;max-width:11ch;text-wrap:balance}
+h1 span{color:var(--muted)}
+.lede{margin-top:22px;font-size:18px;color:var(--muted);max-width:44ch}
+.lede em{color:var(--text);font-style:normal}
+.cta{margin-top:30px;display:flex;gap:12px;align-items:center}
+.cta small{color:var(--muted);font-size:12px;margin-left:6px}
+
+/* live workspace preview inside home */
+.preview{margin-top:44px;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.preview .head{display:flex;align-items:baseline;gap:12px;padding:14px 16px 0}
+.preview .head b{font-size:14px}
+.preview .head span{font-size:12px;color:var(--muted)}
+.preview .head .r{margin-left:auto}
+.map{display:grid;grid-template-columns:2.2fr 1.3fr 1fr;grid-template-rows:72px 52px 40px;gap:3px;padding:14px 16px}
+.map div{border-radius:4px;padding:8px 9px;font-size:11px;color:#0e0f11;font-weight:600;line-height:1.25}
+.map div small{display:block;font-weight:400;opacity:.8}
+.statbar{display:flex;gap:22px;padding:10px 16px;border-top:1px solid var(--bar);font-size:13px}
+.statbar span{color:var(--muted);font-size:12px}
+
+/* add-on browser */
+.browser{background:var(--card);border:1px solid var(--line);border-radius:10px;align-self:start}
+.browser .top{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px}
+.browser .top b{font-size:14px}
+.browser .top span{font-size:12px;color:var(--muted)}
+.search{margin:0 18px 8px;height:34px;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--muted);font-size:13px}
+.search svg{width:15px;height:15px}
+.addon{display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:center;padding:12px 18px;border-top:1px solid var(--bar)}
+.addon.sel{background:var(--sel)}
+.addon .ic{width:34px;height:34px;border-radius:8px;background:var(--chrome);border:1px solid var(--line);display:grid;place-items:center;color:var(--accent-text)}
+.addon .t{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.addon .d{font-size:12px;color:var(--muted);margin-top:1px}
+.addon .by{color:var(--muted);font-weight:400;font-size:12px}
+.sw{width:36px;height:20px;border-radius:999px;background:#2a2c33;position:relative}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#c9ccd3}
+.sw.on{background:var(--accent)}
+.sw.on::after{left:19px;background:#fff}
+.browser .foot{padding:12px 18px;border-top:1px solid var(--bar);font-size:12px;color:var(--muted)}
+
+.status{display:flex;align-items:center;gap:22px;padding:0 16px;background:var(--chrome);border-top:1px solid var(--bar);font-size:12px;color:var(--muted)}
+.status b{color:var(--text);font-weight:600}
+.status .spacer{flex:1}
+
+/* ---------- Below the window ---------- */
+section{max-width:1200px;margin:0 auto;padding:120px 56px 0}
+h2{font-size:40px;line-height:1.1;letter-spacing:-0.025em;font-weight:600;max-width:24ch;text-wrap:balance}
+.sub{margin-top:14px;color:var(--muted);font-size:17px;max-width:56ch}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:start;margin-top:48px}
+.facts{border-top:1px solid var(--line)}
+.facts div{display:grid;grid-template-columns:150px 1fr;gap:18px;padding:16px 0;border-bottom:1px solid var(--line);font-size:14px}
+.facts dt{font-weight:600}
+.facts dd{color:var(--muted)}
+
+.review{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 40px -12px #000c}
+.review .hd{display:flex;gap:14px;align-items:center;padding:20px}
+.review .hd .ic{width:44px;height:44px;border-radius:10px;background:var(--chrome);border:1px solid var(--line);display:grid;place-items:center;color:var(--disk)}
+.review h3{font-size:16px;font-weight:600}
+.review .meta{font-size:12px;color:var(--muted)}
+.review ul{list-style:none;border-top:1px solid var(--bar)}
+.review li{display:grid;grid-template-columns:20px 1fr auto;gap:12px;padding:12px 20px;border-bottom:1px solid var(--bar);font-size:13px}
+.review li span{color:var(--muted)}
+.review li .new{color:var(--watch);font-size:12px}
+.review .act{display:flex;justify-content:flex-end;gap:10px;padding:16px 20px}
+.review .act .btn{height:34px;font-size:13px}
+
+.code{background:var(--chrome);border:1px solid var(--line);border-radius:10px;padding:18px 20px;font:13px/1.7 "Cascadia Code",Consolas,ui-monospace,monospace;color:var(--muted);white-space:pre;overflow:hidden}
+.code .k{color:var(--text)} .code .s{color:var(--accent-text)}
+.rendered{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px}
+.rendered .bc{font-size:12px;color:var(--muted);margin-bottom:14px}
+.rendered h4{font-size:18px;font-weight:600}
+.rendered p{font-size:13px;color:var(--muted);margin-top:6px}
+.metrics{display:flex;gap:28px;margin-top:18px;padding-top:14px;border-top:1px solid var(--bar);font-size:16px;font-weight:600}
+.metrics span{display:block;font-size:11px;color:var(--muted);font-weight:400}
+
+.close{max-width:1200px;margin:140px auto 0;padding:56px;border-top:1px solid var(--line);display:flex;align-items:end;justify-content:space-between;gap:40px}
+.close h2{font-size:52px;max-width:none}
+.close p{color:var(--muted);margin-top:10px;font-size:14px}
+.site-foot{max-width:1200px;margin:0 auto;padding:24px 56px 40px;display:flex;gap:24px;font-size:12px;color:var(--muted)}
+.site-foot .spacer{flex:1}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="home" viewBox="0 0 24 24"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="chip" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></symbol>
+  <symbol id="pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
+  <symbol id="sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7.5-7 9-4-1.5-7-5-7-9V6z"/><path d="M12 8v5M12 16v.01"/></symbol>
+  <symbol id="drive" viewBox="0 0 24 24"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M5 13l2.5-7h9L19 13M7 16.5h.01"/></symbol>
+  <symbol id="cursor" viewBox="0 0 24 24"><path d="M5 4l6 15 2-6 6-2z"/></symbol>
+  <symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="gauge" viewBox="0 0 24 24"><path d="M4 17a8 8 0 1 1 16 0"/><path d="M12 17l4-5"/></symbol>
+  <symbol id="grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></symbol>
+  <symbol id="menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></symbol>
+  <symbol id="down" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+  <symbol id="key" viewBox="0 0 24 24"><circle cx="8" cy="14" r="4"/><path d="M11 11l8-8M16 6l2 2"/></symbol>
+  <symbol id="save" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></symbol>
+</svg>
+
+<!-- ============ FIRST VIEWPORT: the window ============ -->
+<div class="window">
+  <header class="titlebar">
+    <a class="mark" href="#"><b></b>Toolboks</a>
+    <nav><a href="#">Add-ons</a><a href="#">Verified</a><a href="#">Build an add-on</a><a href="#">GitHub</a></nav>
+    <div class="spacer"></div>
+    <a class="btn primary" href="https://github.com/Gusseti/toolboks/releases/latest/download/toolboks.exe"><svg class="i" style="width:15px;height:15px"><use href="#down"/></svg>Download</a>
+    <div class="wc"><svg viewBox="0 0 12 12"><path d="M1 6h10"/></svg><svg viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9"/></svg><svg viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9"/></svg></div>
+  </header>
+
+  <div class="body">
+    <aside class="side">
+      <div class="row"><svg class="i"><use href="#menu"/></svg>Toolboks</div>
+      <div class="row on"><svg class="i"><use href="#home"/></svg>Home</div>
+      <div class="group">Your add-ons</div>
+      <div class="row"><svg class="i"><use href="#chip"/></svg>Memory Cleaner</div>
+      <div class="row"><svg class="i"><use href="#pulse"/></svg>Resource Monitor</div>
+      <div class="row new"><svg class="i"><use href="#drive"/></svg>Disk Manager<span class="tag">Added</span></div>
+      <div class="row"><svg class="i"><use href="#mic"/></svg>Audio Gainer</div>
+      <div class="bottom row"><svg class="i"><use href="#grid"/></svg>Add-ons</div>
+    </aside>
+
+    <main class="work">
+      <div class="crumb">Toolboks <span>/</span> <strong>Home</strong><div class="spacer"></div>
+        <div class="pills"><span class="on">All</span><span>Installed</span><span>Verified</span></div>
+      </div>
+
+      <div class="home">
+        <div>
+          <h1>One window. <span>The tools you choose.</span></h1>
+          <p class="lede">Toolboks is a home for system tools on Windows. Install the add-ons you want from the browser, turn off the ones you don't, and <em>every one of them looks and works like Toolboks.</em></p>
+          <div class="cta">
+            <a class="btn primary" href="#"><svg class="i" style="width:16px;height:16px"><use href="#down"/></svg>Download for Windows</a>
+            <a class="btn" href="#">Browse add-ons</a>
+            <small>v0.12.5 · one exe · free, MIT</small>
+          </div>
+
+          <div class="preview">
+            <div class="head"><b>Disk Manager</b><span>by stratum</span><span class="r">C: · 476 GB · sample data</span></div>
+            <div class="map">
+              <div style="background:var(--disk);grid-row:span 2">Games<small>182 GB</small></div>
+              <div style="background:var(--net)">Users<small>96 GB</small></div>
+              <div style="background:var(--mem)">Windows<small>41 GB</small></div>
+              <div style="background:var(--gpu)">Program Files<small>58 GB</small></div>
+              <div style="background:#9a9ea8">Other<small>22 GB</small></div>
+              <div style="background:#5a5d66;color:var(--text);grid-column:span 3">Free space<small>77 GB</small></div>
+            </div>
+            <div class="statbar"><div>399 GB <span>used</span></div><div>1.2 % <span>fragmented</span></div><div style="margin-left:auto">SSD <span>TRIM last run 3 days ago</span></div></div>
+          </div>
+        </div>
+
+        <div class="browser">
+          <div class="top"><b>Add-on browser</b><span>8 add-ons</span></div>
+          <div class="search"><svg class="i"><use href="#search"/></svg>Search add-ons</div>
+          <div class="addon"><div class="ic"><svg class="i"><use href="#chip"/></svg></div><div><div class="t">Memory Cleaner <span class="seal"><i><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.2 2.2 4.8-4.8"/></svg></i>Verified</span></div><div class="d">Free up memory and see where it goes.</div></div><div class="sw on"></div></div>
+          <div class="addon"><div class="ic"><svg class="i"><use href="#pulse"/></svg></div><div><div class="t">Resource Monitor <span class="seal"><i><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.2 2.2 4.8-4.8"/></svg></i>Verified</span></div><div class="d">Watch your processor, graphics, memory, disk and network.</div></div><div class="sw on"></div></div>
+          <div class="addon sel"><div class="ic" style="color:var(--disk)"><svg class="i"><use href="#drive"/></svg></div><div><div class="t">Disk Manager <span class="by">by stratum</span> <span class="seal"><i><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.2 2.2 4.8-4.8"/></svg></i>Verified</span></div><div class="d">See what fills your drives and keep them optimized.</div></div><div class="sw on"></div></div>
+          <div class="addon"><div class="ic"><svg class="i"><use href="#mic"/></svg></div><div><div class="t">Audio Gainer <span class="seal"><i><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.2 2.2 4.8-4.8"/></svg></i>Verified</span></div><div class="d">Check your mic level, hear yourself, route your mic.</div></div><div class="sw on"></div></div>
+          <div class="addon"><div class="ic"><svg class="i"><use href="#cursor"/></svg></div><div><div class="t">Macro Manager <span class="seal"><i><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.2 2.2 4.8-4.8"/></svg></i>Verified</span></div><div class="d">Record, edit and repeat keyboard and mouse actions.</div></div><div class="sw"></div></div>
+          <div class="addon"><div class="ic"><svg class="i"><use href="#gauge"/></svg></div><div><div class="t">System Profiles <span class="seal"><i><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.2 2.2 4.8-4.8"/></svg></i>Verified</span></div><div class="d">Apply a gaming profile with a restore point and backup.</div></div><div class="sw"></div></div>
+          <div class="addon"><div class="ic"><svg class="i"><use href="#sliders"/></svg></div><div><div class="t">Debloater <span class="seal"><i><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.2 2.2 4.8-4.8"/></svg></i>Verified</span></div><div class="d">Tune privacy, apps, startup and background tasks.</div></div><div class="sw"></div></div>
+          <div class="foot">Turned off add-ons leave the sidebar and stop running.</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <footer class="status"><span>RAM <b>60%</b></span><span>CPU <b>44%</b></span><span>GPU <b>13%</b></span><span>C: <b>84% full</b></span><div class="spacer"></div><span>Live demo with sample readings</span><span>v0.12.5</span></footer>
+</div>
+
+<!-- ============ VERIFIED ============ -->
+<section>
+  <h2>Verified means Toolboks checked it. Not the add-on.</h2>
+  <p class="sub">First-party add-ons carry the verified seal. The list of approved packages is built into the app, so a package can't give itself the seal, and a changed manifest loses it.</p>
+  <div class="split">
+    <dl class="facts">
+      <div><dt>Built-in allowlist</dt><dd>Toolboks recognizes the exact approved packages. Verification isn't a flag a package can set.</dd></div>
+      <div><dt>Access, up front</dt><dd>Every install and update lists what the add-on can reach, before you say yes.</dd></div>
+      <div><dt>Shown first</dt><dd>Verified add-ons sit at the top of the browser.</dd></div>
+      <div><dt>Yours to undo</dt><dd>Turn any add-on off, or remove it with its saved settings.</dd></div>
+    </dl>
+
+    <div class="review">
+      <div class="hd"><div class="ic"><svg class="i" style="width:22px;height:22px"><use href="#drive"/></svg></div>
+        <div><h3>Update Disk Manager to 0.2?</h3><div class="meta">by stratum · <span class="seal" style="vertical-align:-2px"><i><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.2 2.2 4.8-4.8"/></svg></i>Toolboks verified</span></div></div></div>
+      <ul>
+        <li><svg class="i" style="width:16px;height:16px;color:var(--muted)"><use href="#drive"/></svg><div>Read your drives<br><span>Size, folders, file types, fragmentation</span></div><span>Already allowed</span></li>
+        <li><svg class="i" style="width:16px;height:16px;color:var(--muted)"><use href="#key"/></svg><div>Optimize drives<br><span>Defragment hard drives, TRIM SSDs. Needs administrator and asks each time.</span></div><span class="new">New</span></li>
+        <li><svg class="i" style="width:16px;height:16px;color:var(--muted)"><use href="#save"/></svg><div>Save its preferences<br><span>Kept on this PC</span></div><span>Already allowed</span></li>
+      </ul>
+      <div class="act"><a class="btn" href="#">Not now</a><a class="btn primary" href="#">Allow and update</a></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SDK ============ -->
+<section>
+  <h2>Write a manifest. Get a tool that belongs.</h2>
+  <p class="sub">An add-on describes its pages; Toolboks draws them in its own look. No palette, fonts or icons to bring. Validate and pack with the SDK, then drop the file on the window.</p>
+  <div class="split">
+<div class="code">{
+  <span class="k">"manifest"</span>: {
+    <span class="k">"id"</span>: <span class="s">"com.example.hello-system"</span>,
+    <span class="k">"title"</span>: <span class="s">"Hello System"</span>,
+    <span class="k">"capabilities"</span>: [<span class="s">"host_metrics"</span>, <span class="s">"local_preferences"</span>]
+  },
+  <span class="k">"pages"</span>: [{
+    <span class="k">"title"</span>: <span class="s">"Overview"</span>,
+    <span class="k">"widgets"</span>: [
+      { <span class="k">"kind"</span>: <span class="s">"heading"</span>, <span class="k">"text"</span>: <span class="s">"Your system at a glance"</span> },
+      { <span class="k">"kind"</span>: <span class="s">"metric"</span>, <span class="k">"binding"</span>: <span class="s">"memory_percent"</span> },
+      { <span class="k">"kind"</span>: <span class="s">"metric"</span>, <span class="k">"binding"</span>: <span class="s">"uptime"</span> }
+    ]
+  }]
+}</div>
+    <div class="rendered">
+      <div class="bc">Hello System / <span style="color:var(--text)">Overview</span></div>
+      <h4>Your system at a glance</h4>
+      <p>This add-on runs inside Toolboks and uses its look, so you do not style anything yourself.</p>
+      <div class="metrics"><div>60%<span>Memory in use</span></div><div>12.8 GB<span>Available memory</span></div><div>3d 4h<span>System uptime</span></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="close">
+  <div><h2>Make the window yours.</h2><p>Windows · one self-updating exe, checked against its SHA-256 before it replaces itself.</p></div>
+  <a class="btn primary" style="height:46px;padding:0 22px;font-size:15px" href="#"><svg class="i"><use href="#down"/></svg>Download Toolboks</a>
+</div>
+<footer class="site-foot"><span>Toolboks · MIT</span><div class="spacer"></div><a href="#">GitHub</a><a href="#">Changelog</a><a href="#">SDK</a></footer>
+</body>
+</html>
