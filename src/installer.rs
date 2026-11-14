@@ -3,6 +3,7 @@
 //! Layout under `addons::data_root()`:
 //! - `addons/<id>/<version>/package.tbaddon` (declarative) or `addon.exe` (native): one folder
 //!   per installed version.
+//! - `addons/<id>/<version>/entry.json`: the catalog entry that version was installed from.
 //! - `addons/<id>/active.json`: which version runs, and the previous one kept for rollback.
 //! - `addons/<id>/.download/<version>.part` and `.part.json`: an unfinished download and the
 //!   size and SHA-256 it must match, so it can be resumed, or restarted when the index changed.
@@ -29,6 +30,9 @@ use toolboks_addon_sdk::{version, Package};
 pub const PACKAGE_FILE: &str = "package.tbaddon";
 pub const EXE_FILE: &str = "addon.exe";
 const ACTIVE_FILE: &str = "active.json";
+/// The catalog entry the version was installed from: title, pages, capabilities and the
+/// background mark, so links and start-at-launch work without the catalog.
+const ENTRY_FILE: &str = "entry.json";
 const DOWNLOADS: &str = ".download";
 /// The catalog is asked for updates at launch and then at most once a day.
 pub const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
@@ -143,6 +147,30 @@ pub fn native_exe(root: &Path, id: &str) -> Option<(PathBuf, String)> {
     Some((dir.join(active.version).join(EXE_FILE), sha256))
 }
 
+/// The catalog entry the active version of `id` was installed from. `None` when the add-on is
+/// not installed or the record is missing or does not belong to that version.
+pub fn installed_entry(root: &Path, id: &str) -> Option<Entry> {
+    let dir = addon_dir(root, id);
+    let active = read_active(&dir)?;
+    let bytes = fs::read(dir.join(&active.version).join(ENTRY_FILE)).ok()?;
+    let entry: Entry = serde_json::from_slice(&bytes).ok()?;
+    (entry.id == id && entry.version == active.version && entry.validate().is_ok()).then_some(entry)
+}
+
+/// Every installed add-on that has a readable entry record, in id order.
+pub fn installed(root: &Path) -> Vec<Entry> {
+    let Ok(folders) = fs::read_dir(root.join("addons")) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<Entry> = folders
+        .flatten()
+        .filter(|folder| folder.path().is_dir())
+        .filter_map(|folder| installed_entry(root, &folder.file_name().to_string_lossy()))
+        .collect();
+    entries.sort_by(|a, b| a.id.cmp(&b.id));
+    entries
+}
+
 /// Fetches a URL into a file. The release build uses WinHTTP; tests use a local server.
 pub trait Fetch {
     fn fetch(&self, url: &str, file: &Path, options: Download) -> Result<Saved, HttpError>;
@@ -233,6 +261,11 @@ pub fn install(
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging).map_err(io)?;
     fs::write(staging.join(file), &bytes).map_err(io)?;
+    fs::write(
+        staging.join(ENTRY_FILE),
+        serde_json::to_vec_pretty(entry).map_err(io)?,
+    )
+    .map_err(io)?;
     if target.exists() {
         // A leftover from an earlier attempt; it is neither active nor previous (checked above).
         fs::remove_dir_all(&target).map_err(io)?;
@@ -941,6 +974,8 @@ mod tests {
         let native = |version: &str, bytes: &[u8]| {
             let mut e = entry(id, version, bytes);
             e.kind = Kind::Native;
+            e.pages = vec!["Map".into(), "Largest files".into()];
+            e.background = true;
             e
         };
         let (v1, v2) = (b"first exe".to_vec(), b"second exe".to_vec());
@@ -950,6 +985,14 @@ mod tests {
         assert_eq!(fs::read(&exe).unwrap(), v1);
         assert_eq!(sha256, toolboks_catalog::sha256_hex(&v1));
         assert_eq!(started(&root, id), Ok(()));
+        // The entry is kept beside the version, so pages and the background mark are known
+        // without the catalog.
+        let kept = installed_entry(&root, id).unwrap();
+        assert_eq!(kept, native("1.0.0", &v1));
+        assert_eq!(kept.pages, ["Map", "Largest files"]);
+        assert!(kept.background);
+        assert_eq!(installed(&root), [kept]);
+        assert_eq!(installed_entry(&root, "test.other"), None);
 
         // An update records the new hash and keeps the old one for the rollback.
         let s2 = serve(v2.clone(), Mode::Normal);
@@ -981,6 +1024,13 @@ mod tests {
         let s3 = serve(bytes.clone(), Mode::Normal);
         run(&root, &entry(&package_id, "1.0.0", &bytes), s3.port).unwrap();
         assert_eq!(native_exe(&root, &package_id), None);
+        let ids: Vec<String> = installed(&root).into_iter().map(|e| e.id).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&package_id) && ids.contains(&id.to_string()));
+        // A record that belongs to another version is not trusted.
+        let stale = serde_json::to_vec(&native("9.9.9", &v1)).unwrap();
+        fs::write(dir.join("1.0.0").join(ENTRY_FILE), stale).unwrap();
+        assert_eq!(installed_entry(&root, id), None);
         fs::remove_dir_all(root).unwrap();
     }
 

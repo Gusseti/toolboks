@@ -2,7 +2,7 @@
 //! See docs/RESEARCH-debloat.md section 4 and 9.2.
 #![allow(dead_code)]
 
-use super::model::Risk;
+use crate::model::Risk;
 use windows::core::BSTR;
 use windows::Win32::Foundation::{RPC_E_CHANGED_MODE, VARIANT_BOOL};
 use windows::Win32::System::Com::{
@@ -348,11 +348,11 @@ fn state_for(on: bool) -> TaskState {
 
 /// Switches one catalog task on or off. Refuses tasks not in the catalog or never offered, tasks
 /// that are not present or protected, and re-reads the state to confirm.
-pub(super) fn set_enabled(
+pub fn set_enabled(
     tasks: &mut dyn Tasks,
     def: &TaskDef,
     enable: bool,
-) -> Result<UndoStep, super::ChangeError<UndoStep>> {
+) -> Result<UndoStep, crate::ChangeError<UndoStep>> {
     let known = catalog()
         .iter()
         .find(|d| d.path == def.path)
@@ -386,7 +386,7 @@ pub(super) fn set_enabled(
     });
     match result {
         Ok(()) => Ok(step),
-        Err(error) => Err(super::rollback(error, step, |step| undo(tasks, step))),
+        Err(error) => Err(crate::rollback(error, step, |step| undo(tasks, step))),
     }
 }
 

@@ -2,8 +2,10 @@
 
 An out-of-process add-on is a separate executable that runs its egui page headless and sends
 the host tessellated meshes. The host forwards input and paints those meshes inside the add-on's
-page rectangle. This document describes protocol version **1**.
+page rectangle. This document describes protocol version **2**
+(version 1 plus the tray and tour-anchor messages).
 
+- New to this? Start with the [add-on author guide](ADDON-AUTHOR-GUIDE.md).
 - Messages and framing: crate `sdk/toolboks-addon-proto` (`toolboks-addon-proto`).
 - Add-on side loop: `toolboks_addon_sdk::runtime` (SDK feature `runtime`), entry points
   `run_addon(addon, addon_id)` and `run_addon_on(transport, addon, addon_id)`.
@@ -76,6 +78,8 @@ Host to add-on (`HostMessage`):
 | `TutorialQuery`, `TutorialStart`, `TutorialNavigate { page }`, `TutorialFinish` | Tour hooks; the query is answered by `Tutorial`. |
 | `Ping { nonce }` | Liveness check, answered by `Pong` from the add-on's main loop. |
 | `Quit` | Orderly shutdown: the add-on calls `cancel` and exits. |
+| `TrayAction { id }` | The user chose one of the add-on's tray entries. The runtime passes on only an entry the add-on offers and has enabled. |
+| `TutorialTarget { target, reveal }` | The tour anchor to highlight, or none. `reveal` scrolls it into view once. |
 
 Input events (`InputEvent`): pointer moved, pointer button, pointer left, drag released outside,
 scroll (unit, phase, source), zoom, key (logical and physical key, repeat, modifiers), text,
@@ -99,6 +103,8 @@ Add-on to host (`AddonMessage`):
 | `Log { level, line }` | A log line queued with `runtime::log`. |
 | `Pong { nonce }` | Answer to `Ping`. |
 | `Bye` | The add-on exits on its own. |
+| `TrayItems(items)` | The full set of entries (`id`, `label`, `enabled`) the add-on offers in the host's tray menu; sent when it changes. Optional. |
+| `TutorialAnchor { target, rect }` | The rectangle of the anchor asked for with `TutorialTarget`, in the view's points, or none while it is not visible. Sent before the frame it belongs to, when it changes. |
 
 A `Frame` holds the meshes (see below), texture uploads (`TextureUpdate { id, delta }`) and frees,
 a repaint-after hint, the cursor icon, copied text, URLs to open, the IME output rectangle, whether
@@ -244,3 +250,36 @@ fake add-on exe (`examples/fake_addon.rs`).
 
 The Restart and Report buttons on a stopped page are drawn by the page that hosts the view; they
 come with the first real add-on page (#88).
+
+## Host services
+
+`src/addon_services.rs` is the host's side of what a built-in tool gets by calling the host. It
+takes the supervisor's events (`Services::apply`) and is, like the supervisor, not reachable from
+the app until the add-on pages exist (#86, #88). Everything is optional for an add-on, and what an
+add-on sends is cut to fixed limits before the host keeps or shows it.
+
+- **Status bar items.** `NativeAddon::status_items` → `StatusItems`. Shown while the add-on runs
+  and is turned on; they disappear when it stops, restarts or is turned off. At most 8 items of 48
+  characters.
+- **Links.** `resolve_link("Title/Page", ...)` matches the title and the pages the add-on declares
+  in its catalog entry (`pages`), case-insensitively. The result is: open (on that page, or the
+  first page when the page is unknown), turned off (the overview with a message, as today), not
+  installed but in the catalog (offer to install), or unknown.
+- **Guided tours.** `start_tour` sends `TutorialQuery` and `TutorialStart`; the steps arrive with
+  `Tutorial`. `show_step` sends `TutorialNavigate` (navigation only) and `TutorialTarget`; the
+  add-on marks the anchor with `tutorial::mark` or `tutorial::region` as before and the runtime
+  reports its rectangle with `TutorialAnchor`. The host draws the overlay, Next, Back and Cancel.
+  While a tour runs the page calls `AddonView::set_interactive(false)`: no click, key or text
+  reaches the add-on, so a tour cannot run an action. `finish_tour` ends it, also on Cancel.
+- **Tray.** `NativeAddon::tray_items` → `TrayItems`; the host shows the entries of running,
+  turned-on add-ons and sends `TrayAction` for the one the user chose (`NativeAddon::tray_action`).
+  The tray's memory reading does not depend on any add-on. At most 8 entries per add-on.
+- **Background add-ons.** A catalog entry with `background: true` is started at launch while the
+  add-on is turned on (`background(...)` gives the list for `Supervisor::start_background`). A
+  turned-off add-on is never started.
+- **Preferences.** After `Connected` the host sends `Capabilities` (from the installed entry) and
+  `LoadPreferences` with the add-on's own preferences. `Preferences { changed: true }` is written
+  into `config.json` under the add-on's id only (`Effect::SaveConfig`); the host asks a background
+  add-on with `SavePreferences`. At most 256 KiB.
+- **Installed entries.** The installer keeps the catalog entry beside each installed version
+  (`entry.json`), so the title, pages, capabilities and the background mark are known offline.

@@ -1,0 +1,18 @@
+[package]
+name = "hello-addon"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Sample Toolboks add-on built as its own exe; the starting point in docs/ADDON-AUTHOR-GUIDE.md"
+publish = false
+
+[dependencies]
+# The add-on contract and the runtime that talks to the Toolboks host.
+toolboks-addon-sdk = { path = "../../toolboks-addon-sdk", features = ["runtime"] }
+# The Toolboks look: tokens and shared widgets, so the page matches the host.
+toolboks-shared = { path = "../../../shared/toolboks-shared", features = ["ui"] }
+egui = { version = "0.37", default-features = false }
+serde_json = "1"
+
+[dev-dependencies]
+toolboks-addon-proto = { path = "../../toolboks-addon-proto" }

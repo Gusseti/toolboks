@@ -241,6 +241,13 @@ pub struct Entry {
     /// whole index unreadable. The installer decides what to do with unknown ones.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The add-on's pages by name, in order. Links (`--open "Title/Page"`) resolve against
+    /// them, also while the add-on is not running. Empty for an add-on with one page.
+    #[serde(default)]
+    pub pages: Vec<String>,
+    /// The add-on keeps working while hidden: the host starts it at launch while it is on.
+    #[serde(default)]
+    pub background: bool,
     pub kind: Kind,
     pub version: String,
     pub min_toolboks_version: String,
@@ -349,6 +356,20 @@ impl Entry {
         ok(
             self.capabilities.len() <= 32 && self.capabilities.iter().all(capability),
             "capabilities",
+        )?;
+        let unique_pages = self.pages.iter().enumerate().all(|(i, page)| {
+            !self.pages[..i]
+                .iter()
+                .any(|earlier| earlier.eq_ignore_ascii_case(page))
+        });
+        ok(
+            self.pages.len() <= 16
+                && unique_pages
+                && self
+                    .pages
+                    .iter()
+                    .all(|page| text(page, 1, 40, false) && !page.contains('/')),
+            "pages",
         )?;
         ok(version(&self.version).is_some(), "version")?;
         ok(
@@ -710,6 +731,8 @@ mod tests {
             accent: "#4f8cff".into(),
             screenshots: vec![],
             capabilities: vec!["read_system_info".into()],
+            pages: vec![],
+            background: false,
             kind: Kind::Declarative,
             version: version.into(),
             min_toolboks_version: "0.12.0".into(),
@@ -1033,6 +1056,31 @@ mod tests {
             ..host()
         };
         assert_eq!(entry.check(&odd), Err(Hidden::NeedsNewerHost));
+    }
+
+    #[test]
+    fn pages_are_unique_plain_names() {
+        let mut entry = entry("toolboks.sample", "1.0.0");
+        entry.pages = vec!["Map".into(), "Largest files".into()];
+        entry.background = true;
+        assert_eq!(entry.validate(), Ok(()));
+        // Old indexes have neither field.
+        let mut json = serde_json::to_value(&entry).unwrap();
+        json.as_object_mut().unwrap().remove("pages");
+        json.as_object_mut().unwrap().remove("background");
+        let old: Entry = serde_json::from_value(json).unwrap();
+        assert!(old.pages.is_empty() && !old.background);
+        for bad in [
+            vec!["Map", "map"],
+            vec!["A/B"],
+            vec![""],
+            vec!["line\nbreak"],
+        ] {
+            entry.pages = bad.into_iter().map(String::from).collect();
+            assert_eq!(entry.validate(), Err("pages"));
+        }
+        entry.pages = (0..17).map(|i| format!("Page {i}")).collect();
+        assert_eq!(entry.validate(), Err("pages"));
     }
 
     #[test]

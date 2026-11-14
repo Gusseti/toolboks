@@ -2,6 +2,8 @@
 
 A second tool in toolboks: a Task Manager style overview of CPU, GPU, memory, disk and network with live graphs and numbers. Same design language as Memory Cleaner (bento cards, rounded corners, 12 px gaps). Status: **phases 1-5 built and looked at in the real window (Overview and Details); release pending**.
 
+> **Add-on plan (2026-11-14):** Resource Monitor moves out of the app into its own add-on exe (#89, part of #77). The decisions below stay, but two change with the move: its code will no longer live in `src/tools/resources/`, and the planned history recorder (#64) runs inside the Resource Monitor add-on as a background add-on, so sampling for history can continue while the page is hidden. The status bar items (CPU, GPU) become status items the add-on sends to the host.
+
 ## Decisions
 
 | Topic | Decision |

@@ -27,7 +27,7 @@ pub use egui;
 /// The wire protocol version. Bump it on any change to a message other than [`Hello`] and
 /// the refusal variant, which are frozen so that two versions can always refuse each other
 /// in plain words.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The first message in both directions. Its layout and its variant index 0 never change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +90,17 @@ pub enum HostMessage {
     },
     /// Orderly shutdown. The add-on cancels its work and exits.
     Quit,
+    /// The user chose one of the add-on's tray entries (see [`AddonMessage::TrayItems`]).
+    TrayAction {
+        id: String,
+    },
+    /// The tour step to highlight, or `None` when no step of this add-on is shown. The add-on
+    /// reports the rectangle of that anchor with [`AddonMessage::TutorialAnchor`]. `reveal`
+    /// scrolls the anchor into view once.
+    TutorialTarget {
+        target: Option<String>,
+        reveal: bool,
+    },
 }
 
 /// Messages from the add-on to the host.
@@ -130,6 +141,16 @@ pub enum AddonMessage {
     },
     /// The add-on is exiting on its own.
     Bye,
+    /// The full set of entries the add-on offers in the host's tray menu; replaces the
+    /// previous set. Optional: most add-ons never send it.
+    TrayItems(Vec<TrayItem>),
+    /// Where the anchor asked for with [`HostMessage::TutorialTarget`] is, in the view's
+    /// logical points (origin at the page's top-left corner). `None` while it is not laid
+    /// out or not visible. Sent before the frame it belongs to, and only when it changes.
+    TutorialAnchor {
+        target: String,
+        rect: Option<egui::Rect>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,6 +288,15 @@ pub enum HostRequest {
 pub struct StatusItem {
     pub text: String,
     pub tooltip: Option<String>,
+}
+
+/// One entry an add-on adds to the host's tray menu.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrayItem {
+    /// The add-on's own name for the entry; comes back in [`HostMessage::TrayAction`].
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

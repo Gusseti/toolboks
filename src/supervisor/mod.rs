@@ -29,7 +29,7 @@
 mod pipe;
 mod process;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::addon_view::{AddonLink, SharedSender};
 use crate::installer;

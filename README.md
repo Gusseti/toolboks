@@ -2,6 +2,15 @@
 
 A lightweight workspace for system utilities, written in Rust.
 
+## Where Toolboks is going
+
+Toolboks is becoming an empty shell that downloads every tool as an add-on: you pick the tools
+you want inside the app, and each one can be updated or removed on its own. The engine for that
+is being built (plan: issue #77) and is not switched on yet; the tools below are still part of the
+app. See [the architecture](docs/ADDON-ARCHITECTURE.md), the
+[add-on author guide](docs/ADDON-AUTHOR-GUIDE.md) and the
+[threat model](docs/ADDON-THREAT-MODEL.md).
+
 ## Local add-on preview
 
 The local development branch introduces a Stratum-inspired shell, a persistent sidebar,
