@@ -4,8 +4,8 @@ use eframe::egui;
 // Shared with add-ons through `toolboks-shared`; re-exported so `crate::<module>` paths keep working.
 use toolboks_shared::{format, ui, win};
 
-// Wired to add-on pages by the supervisor (#80); until then only tests and the
-// addon_view_demo example use it.
+// The supervisor hands its links to this view. Add-on pages use both from the pilot (#88) on;
+// until then only tests and the addon_view_demo example do.
 #[allow(dead_code)]
 mod addon_view;
 mod addons;
@@ -16,6 +16,7 @@ mod elevation;
 mod installer;
 mod instance;
 mod native;
+mod supervisor;
 mod tools;
 mod tray;
 mod update;

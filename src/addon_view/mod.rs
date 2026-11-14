@@ -1,7 +1,7 @@
 //! Host view of an out-of-process add-on: paints the frames the add-on sends inside the page
 //! rectangle and forwards input back, relative to that rectangle.
 //!
-//! The view does not start or watch the add-on process; the supervisor (#80) does that and
+//! The view does not start or watch the add-on process; `crate::supervisor` does that and
 //! hands the view an [`AddonLink`] after the handshake. The view only ever sends input, the
 //! page size, the display scale, the theme and focus; the add-on keeps its own clock.
 //!

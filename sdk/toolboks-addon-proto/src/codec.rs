@@ -108,7 +108,7 @@ impl<W: Write> FrameWriter<W> {
 }
 
 /// A connection made of two independent byte streams, one per direction. Nothing here is
-/// tied to stdin and stdout: #80 plugs in a named pipe pair, tests use [`crate::memory`].
+/// tied to stdin and stdout: the host plugs in a named pipe pair, tests use [`crate::memory`].
 pub struct Transport<R, W> {
     pub reader: FrameReader<R>,
     pub writer: FrameWriter<W>,

@@ -7,7 +7,8 @@ page rectangle. This document describes protocol version **1**.
 - Messages and framing: crate `sdk/toolboks-addon-proto` (`toolboks-addon-proto`).
 - Add-on side loop: `toolboks_addon_sdk::runtime` (SDK feature `runtime`), entry points
   `run_addon(addon, addon_id)` and `run_addon_on(transport, addon, addon_id)`.
-- Host side view: #81. Process launch, named pipes and their ACLs: #80.
+- Host side view: `src/addon_view/`. Process launch, named pipes and their access lists:
+  `src/supervisor/` (see "Connection" and "Supervisor" below).
 
 ## Framing
 
@@ -21,10 +22,30 @@ A stream that ends at a message boundary is a clean close (`ProtocolError::Close
 `run_addon_on` turns into `Ok(())`). A stream that ends inside a message is `Truncated`.
 
 The transport is two independent byte streams, one per direction (`Transport<R: Read, W: Write>`).
-Nothing in the protocol depends on stdin and stdout. Until #80 lands, `run_addon` opens
-`--pipe-in <path>` and `--pipe-out <path>` (or `TOOLBOKS_ADDON_PIPE_IN` and
-`TOOLBOKS_ADDON_PIPE_OUT`) and falls back to stdin and stdout when neither is given. In the
-fallback the add-on must never print to stdout.
+Nothing in the protocol depends on stdin and stdout.
+
+## Connection
+
+The host starts an add-on with `--pipe-in <path> --pipe-out <path> --token <text>` (`run_addon`
+also reads `TOOLBOKS_ADDON_PIPE_IN`, `TOOLBOKS_ADDON_PIPE_OUT` and `TOOLBOKS_ADDON_TOKEN`).
+
+- **Two named pipes per launch**, one per direction, with a random name
+  (`\\.\pipe\toolboks-addon-<random>-in` and `-out`). The add-on reads host messages from
+  `pipe-in` and writes its own to `pipe-out`. Two pipes, because a blocked read on a synchronous
+  pipe handle holds up a write on the same handle.
+- **Only the current user can open them.** Each pipe has a protected access list with one entry
+  that allows the user Toolboks runs as; other accounts on the PC and remote clients are refused.
+  There is one instance per pipe and the host creates it first.
+- **The token** is 32 random bytes as 64 hex characters, new for every launch. The add-on writes
+  it to `pipe-out` before anything else; `run_addon` does this. A wrong token ends the add-on.
+  The token is not a protocol message, so it does not change `PROTOCOL_VERSION`.
+- **The process must be the one the host started.** The host compares the process id on each pipe
+  with the process it launched and refuses any other.
+- The add-on has `Timing::connect` (10 seconds) to open both pipes, present the token and answer
+  `Hello`; after that the host ends it.
+
+With no paths, `run_addon` falls back to stdin and stdout (for tools and tests); the add-on must
+then never print to stdout.
 
 ## Handshake and versions
 
@@ -148,7 +169,7 @@ against real input, and high DPI other than 1.0 (`pixels_per_point` is clamped t
 ## Host view
 
 `src/addon_view/` is the host side of a page: `AddonView` paints the add-on's frames inside the page
-rectangle and forwards input back. It does not start or watch processes; the supervisor (#80) does
+rectangle and forwards input back. It does not start or watch processes; the supervisor does
 the handshake, then hands the view an `AddonLink` (a shared sender plus the inbox of a reader
 thread). `AddonLink::spawn` sends frames and repaint requests to the view and every other message
 (pong, log, preferences, host requests, status items, tutorial, bye) to a side channel for the
@@ -183,3 +204,43 @@ supervisor. Pongs and logs never wake the host's UI.
 To try the view in a real window (debug only, not reachable from the sidebar), run
 `cargo run --example addon_view_demo`. It runs a sample add-on on a thread over in-memory pipes and
 has a "Restart add-on" button for the restart state.
+
+## Supervisor
+
+`src/supervisor/` starts, watches and stops add-on processes. It is not reachable from the app yet:
+the add-on browser (#86) and the pilot add-on (#88) call it; until then its tests drive it with a
+fake add-on exe (`examples/fake_addon.rs`).
+
+- **When an add-on runs.** `open` starts it when its page is opened; `start_background` starts a
+  background add-on without showing it. A page that is left gets `Suspend` (`hide`) and keeps its
+  process; `Resume` follows when it is shown again. `stop` sends `Quit` and ends the process if it
+  has not exited after 2 seconds.
+- **The file check.** Before every start the exe is hashed and compared with the SHA-256 the
+  installer recorded from the signed catalog (`active.json`, see `src/installer.rs`). The checked
+  file is held open without write or delete sharing until the process runs, so it cannot be swapped
+  in between. A wrong hash is final: the add-on is not started and is not retried.
+- **The job object.** Every add-on process starts suspended, joins one job object and then runs.
+  The job ends all its processes when its last handle closes, and only the host holds one: closing
+  Toolboks, or a crash of Toolboks, ends every add-on and every child an add-on started.
+- **Crashes.** An add-on that ends without being asked to, never connects, or stops answering for
+  30 seconds after the heartbeat called it stalled, is restarted: at most 3 times per minute. After
+  that it stays stopped with a plain reason until the user restarts it (`restart`, which starts the
+  limit fresh). `report` gives a short plain-text report (state, exit code, the last 50 log lines
+  the add-on sent) and `copy_report` puts it on the clipboard. Nothing is written to disk or sent.
+- **Refusals are final.** A wrong file, a missing file, a protocol mismatch, a wrong token or a
+  declined administrator prompt stop the add-on without a retry.
+- **Administrator rights per add-on.** When an add-on that may elevate (`LaunchSpec::may_elevate`)
+  sends `HostRequest::RestartElevated { page }`, only that add-on is restarted through the UAC
+  prompt and then sent `Navigate { page }`; the host keeps running as it is. A declined prompt
+  leaves it stopped, and the next start is a normal one. An elevated add-on is not in the job (the
+  host may not have the right to put it there or to end it); it exits when the host closes the
+  pipes, which `run_addon` treats as a clean close. This path has not been tried on a real PC yet.
+- **Nothing blocks the UI.** Launches run on their own thread, writes go through a writer thread
+  with a bounded queue, and `tick` only polls. While an add-on is shown, `tick` asks for a repaint
+  once a second for the heartbeat ping; a hidden add-on is not pinged.
+- **Events.** `tick` returns what changed, for the page to apply to its `AddonView`: `Connected`
+  (attach the link from `take_link`), `Restarting`, `Stalled`, `Stopped`, and `Message` for the
+  host services (preferences, status items, tutorial, other host requests).
+
+The Restart and Report buttons on a stopped page are drawn by the page that hosts the view; they
+come with the first real add-on page (#88).

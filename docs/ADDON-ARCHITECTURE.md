@@ -43,6 +43,13 @@ updates require a higher version and preserve preferences. Disable hides the wor
 and releases native providers; uninstall also removes that add-on's preferences.
 Existing Windows drive maintenance can continue independently of the native UI.
 
+## Out-of-process add-ons (in progress)
+
+The plan in #77 moves every tool into its own exe that draws inside the Toolboks window. The
+pieces that exist today are not reachable from the app yet: the wire protocol and SDK runtime,
+the host view, the signed catalog, the installer, and the supervisor that starts, checks, watches
+and stops add-on processes. See [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md).
+
 ## Local state
 
 - Stable: `%LOCALAPPDATA%/Toolboks/`; preview: `%LOCALAPPDATA%/Toolboks Preview/`.

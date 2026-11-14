@@ -19,12 +19,14 @@
 //! - returns `Ok(())` on `Quit` or when the host closes the connection, and an error for
 //!   anything malformed. It never panics on bad input.
 //!
-//! Connection, a placeholder until #80 defines the real pipe setup:
-//! - `--pipe-in <path> --pipe-out <path>` (or the environment variables
-//!   `TOOLBOKS_ADDON_PIPE_IN` and `TOOLBOKS_ADDON_PIPE_OUT`) open two paths, for example
-//!   the two halves of a named pipe pair; the add-on reads host messages from `pipe-in`
-//!   and writes its own messages to `pipe-out`;
-//! - with neither, the add-on reads from stdin and writes to stdout, so it must never
+//! Connection (see "Connection" in `docs/ADDON-PROTOCOL.md`):
+//! - the host starts the add-on with `--pipe-in <path> --pipe-out <path> --token <text>`
+//!   (or the environment variables `TOOLBOKS_ADDON_PIPE_IN`, `TOOLBOKS_ADDON_PIPE_OUT` and
+//!   `TOOLBOKS_ADDON_TOKEN`). The two paths are named pipes that only the current user can
+//!   open; the add-on reads host messages from `pipe-in` and writes its own messages to
+//!   `pipe-out`. It presents the token by writing its bytes to `pipe-out` before anything
+//!   else; the host ends an add-on that presents the wrong one;
+//! - with no paths, the add-on reads from stdin and writes to stdout, so it must never
 //!   print to stdout itself (use [`log`] or stderr).
 //!
 //! [`run_addon_on`] takes any `Read` and `Write` pair and is what tests use.
@@ -64,15 +66,23 @@ pub fn log(level: LogLevel, line: impl Into<String>) {
 /// Connects from the command line or the environment (see the module docs) and runs the
 /// add-on until the host quits or closes the connection.
 pub fn run_addon<A: NativeAddon>(addon: A, addon_id: &str) -> Result<(), ProtocolError> {
-    let paths = pipe_paths(
+    let connection = connection(
         std::env::args().skip(1),
         std::env::var("TOOLBOKS_ADDON_PIPE_IN").ok(),
         std::env::var("TOOLBOKS_ADDON_PIPE_OUT").ok(),
+        std::env::var("TOOLBOKS_ADDON_TOKEN").ok(),
     );
-    match paths {
-        Some((input, output)) => {
-            let reader = std::fs::File::open(input)?;
-            let writer = std::fs::OpenOptions::new().write(true).open(output)?;
+    match connection {
+        Some(connection) => {
+            let reader = std::fs::File::open(&connection.input)?;
+            let mut writer = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&connection.output)?;
+            if let Some(token) = &connection.token {
+                // The launch token goes first, before the protocol's own `Hello`.
+                writer.write_all(token.as_bytes())?;
+                writer.flush()?;
+            }
             run_addon_on(Transport::new(reader, writer), addon, addon_id)
         }
         None => run_addon_on(
@@ -83,21 +93,35 @@ pub fn run_addon<A: NativeAddon>(addon: A, addon_id: &str) -> Result<(), Protoco
     }
 }
 
-fn pipe_paths(
+/// Where the host told the add-on to connect.
+#[derive(Debug, PartialEq, Eq)]
+struct Connection {
+    input: String,
+    output: String,
+    token: Option<String>,
+}
+
+fn connection(
     args: impl IntoIterator<Item = String>,
     env_in: Option<String>,
     env_out: Option<String>,
-) -> Option<(String, String)> {
-    let (mut input, mut output) = (env_in, env_out);
+    env_token: Option<String>,
+) -> Option<Connection> {
+    let (mut input, mut output, mut token) = (env_in, env_out, env_token);
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--pipe-in" => input = args.next(),
             "--pipe-out" => output = args.next(),
+            "--token" => token = args.next(),
             _ => {}
         }
     }
-    input.zip(output)
+    Some(Connection {
+        input: input?,
+        output: output?,
+        token,
+    })
 }
 
 enum Wake {
@@ -661,19 +685,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pipe_paths_from_args_or_env() {
+    fn connection_from_args_or_env() {
         let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(pipe_paths(args(&[]), None, None), None);
+        let found = |input: &str, output: &str, token: Option<&str>| {
+            Some(Connection {
+                input: input.into(),
+                output: output.into(),
+                token: token.map(Into::into),
+            })
+        };
+        assert_eq!(connection(args(&[]), None, None, None), None);
         assert_eq!(
-            pipe_paths(args(&["--pipe-in", "a", "--pipe-out", "b"]), None, None),
-            Some(("a".into(), "b".into()))
+            connection(
+                args(&["--pipe-in", "a", "--pipe-out", "b", "--token", "t"]),
+                None,
+                None,
+                None
+            ),
+            found("a", "b", Some("t"))
         );
         assert_eq!(
-            pipe_paths(args(&["--pipe-out", "b"]), Some("x".into()), None),
-            Some(("x".into(), "b".into()))
+            connection(args(&["--pipe-out", "b"]), Some("x".into()), None, None),
+            found("x", "b", None)
         );
         assert_eq!(
-            pipe_paths(args(&["--pipe-in"]), None, Some("b".into())),
+            connection(
+                args(&[]),
+                Some("a".into()),
+                Some("b".into()),
+                Some("e".into())
+            ),
+            found("a", "b", Some("e"))
+        );
+        assert_eq!(
+            connection(args(&["--pipe-in"]), None, Some("b".into()), None),
             None
         );
     }

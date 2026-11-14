@@ -86,6 +86,14 @@ pub struct Active {
     pub confirmed: bool,
     /// A start of the unconfirmed `version` was attempted.
     pub launched: bool,
+    /// SHA-256 of the native exe of `version`, as the signed index gave it at install time.
+    /// The supervisor checks the exe against it before every start. `None` for declarative
+    /// packages and for installs made before this was recorded (those do not start).
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// The same for `previous`, so a rollback keeps its check.
+    #[serde(default)]
+    pub previous_sha256: Option<String>,
 }
 
 pub fn addon_dir(root: &Path, id: &str) -> PathBuf {
@@ -124,6 +132,15 @@ pub fn installed_version(root: &Path, id: &str) -> Option<String> {
 pub fn active_package(dir: &Path) -> Option<PathBuf> {
     let path = dir.join(read_active(dir)?.version).join(PACKAGE_FILE);
     path.is_file().then_some(path)
+}
+
+/// The active native exe of `id` and the SHA-256 recorded for it at install time, for the
+/// supervisor. `None` when the add-on is not installed, is declarative, or has no recorded hash.
+pub fn native_exe(root: &Path, id: &str) -> Option<(PathBuf, String)> {
+    let dir = addon_dir(root, id);
+    let active = read_active(&dir)?;
+    let sha256 = active.sha256?;
+    Some((dir.join(active.version).join(EXE_FILE), sha256))
 }
 
 /// Fetches a URL into a file. The release build uses WinHTTP; tests use a local server.
@@ -222,6 +239,7 @@ pub fn install(
     }
     fs::rename(&staging, &target).map_err(io)?;
 
+    let previous_sha256 = current.as_ref().and_then(|c| c.sha256.clone());
     let previous = current.map(|c| c.version);
     let active = Active {
         version: new.to_string(),
@@ -229,6 +247,9 @@ pub fn install(
         // A first install has nothing to roll back to.
         confirmed: previous.is_none(),
         launched: false,
+        // `download` has just checked the bytes against this hash.
+        sha256: (entry.kind == Kind::Native).then(|| entry.sha256.clone()),
+        previous_sha256,
     };
     write_active(&dir, &active)?;
     discard();
@@ -366,6 +387,7 @@ pub fn started(root: &Path, id: &str) -> Result<(), InstallError> {
     active.confirmed = true;
     active.launched = false;
     active.previous = None;
+    active.previous_sha256 = None;
     write_active(&dir, &active)?;
     prune(&dir, &active);
     Ok(())
@@ -387,6 +409,8 @@ pub fn rollback(root: &Path, id: &str) -> Result<Option<String>, InstallError> {
         previous: None,
         confirmed: true,
         launched: false,
+        sha256: active.previous_sha256.clone(),
+        previous_sha256: None,
     };
     write_active(&dir, &back)?;
     prune(&dir, &back);
@@ -907,6 +931,56 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].installed, "1.0.0");
         assert_eq!(found[0].entry.version, "1.1.0");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn native_installs_record_the_exe_hash() {
+        let root = root("native-hash");
+        let id = "test.native";
+        let native = |version: &str, bytes: &[u8]| {
+            let mut e = entry(id, version, bytes);
+            e.kind = Kind::Native;
+            e
+        };
+        let (v1, v2) = (b"first exe".to_vec(), b"second exe".to_vec());
+        let s1 = serve(v1.clone(), Mode::Normal);
+        run(&root, &native("1.0.0", &v1), s1.port).unwrap();
+        let (exe, sha256) = native_exe(&root, id).unwrap();
+        assert_eq!(fs::read(&exe).unwrap(), v1);
+        assert_eq!(sha256, toolboks_catalog::sha256_hex(&v1));
+        assert_eq!(started(&root, id), Ok(()));
+
+        // An update records the new hash and keeps the old one for the rollback.
+        let s2 = serve(v2.clone(), Mode::Normal);
+        run(&root, &native("1.1.0", &v2), s2.port).unwrap();
+        let (exe, sha256) = native_exe(&root, id).unwrap();
+        assert_eq!(fs::read(&exe).unwrap(), v2);
+        assert_eq!(sha256, toolboks_catalog::sha256_hex(&v2));
+        assert_eq!(launching(&root, id), Ok(Launch::Start("1.1.0".into())));
+        assert!(matches!(
+            launching(&root, id),
+            Ok(Launch::RolledBack { .. })
+        ));
+        let (exe, sha256) = native_exe(&root, id).unwrap();
+        assert_eq!(fs::read(&exe).unwrap(), v1);
+        assert_eq!(sha256, toolboks_catalog::sha256_hex(&v1));
+
+        // A record without a hash (written before hashes were recorded) gives nothing to start.
+        let dir = addon_dir(&root, id);
+        fs::write(
+            dir.join(ACTIVE_FILE),
+            br#"{"version":"1.0.0","previous":null,"confirmed":true,"launched":false}"#,
+        )
+        .unwrap();
+        assert_eq!(installed_version(&root, id).as_deref(), Some("1.0.0"));
+        assert_eq!(native_exe(&root, id), None);
+
+        // A declarative package has no exe.
+        let (package_id, bytes) = package("1.0.0");
+        let s3 = serve(bytes.clone(), Mode::Normal);
+        run(&root, &entry(&package_id, "1.0.0", &bytes), s3.port).unwrap();
+        assert_eq!(native_exe(&root, &package_id), None);
         fs::remove_dir_all(root).unwrap();
     }
 
