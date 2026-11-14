@@ -1,16 +1,16 @@
 //! A sample add-on built only against the SDK, driven by a test host over in-memory pipes.
 
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use toolboks_addon_sdk::runtime::proto::memory::{duplex, PipeWriter};
+use toolboks_addon_sdk::runtime::proto::memory::{duplex, duplex_with_capacity, PipeWriter};
 use toolboks_addon_sdk::runtime::proto::mesh::{MeshCache, MeshRef};
 use toolboks_addon_sdk::runtime::proto::pacing::{Heartbeat, HeartbeatMonitor};
 use toolboks_addon_sdk::runtime::proto::{
     self, egui as wire_egui, AddonMessage, Frame, FrameWriter, Hello, HostMessage, InputBatch,
-    InputEvent, ProtocolError, Theme, PROTOCOL_VERSION,
+    InputEvent, ProtocolError, TabDirection, Theme, PROTOCOL_VERSION,
 };
-use toolboks_addon_sdk::runtime::run_addon_on;
+use toolboks_addon_sdk::runtime::{run_addon_on, MAX_QUEUED_HOST_MESSAGES};
 use toolboks_addon_sdk::{NativeAddon, StatusItem, TutorialStep};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -63,7 +63,7 @@ struct TestHost {
 }
 
 impl TestHost {
-    fn connect(addon: Counter) -> Self {
+    fn connect(addon: impl NativeAddon + Send + 'static) -> Self {
         let (host, addon_side) = duplex();
         let addon = std::thread::spawn(move || run_addon_on(addon_side, addon, "counter"));
         let (mut reader, mut writer) = host.split();
@@ -314,4 +314,172 @@ fn stalled_addon_is_detected() {
     assert!(stalled >= Duration::from_millis(200));
     drop(unblock);
     host.quit().unwrap();
+}
+
+/// Buttons stacked bottom to top, so traversal order is not visual order.
+#[derive(Default)]
+struct Buttons {
+    count: usize,
+    ctx: Arc<Mutex<Option<egui::Context>>>,
+}
+
+impl NativeAddon for Buttons {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _preferences: &mut std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> bool {
+        *self.ctx.lock().unwrap() = Some(ui.ctx().clone());
+        for index in 0..self.count {
+            let y = 200.0 - 40.0 * index as f32;
+            let rect = egui::Rect::from_min_size(egui::pos2(10.0, y), egui::vec2(80.0, 30.0));
+            ui.put(rect, egui::Button::new(format!("B{index}")));
+        }
+        false
+    }
+}
+
+fn tab(direction: TabDirection) -> InputEvent {
+    InputEvent::Key {
+        key: wire_egui::Key::Tab,
+        physical_key: Some(wire_egui::Key::Tab),
+        pressed: true,
+        repeat: false,
+        modifiers: wire_egui::Modifiers {
+            shift: direction == TabDirection::Backward,
+            ..Default::default()
+        },
+    }
+}
+
+fn walk(count: usize, direction: TabDirection) {
+    let label = format!("{count} widgets, {direction:?}");
+    let mut host = TestHost::connect(Buttons {
+        count,
+        ..Default::default()
+    });
+    host.frame(vec![]);
+    let (frame, _) = host.frame(vec![InputEvent::FocusGained {
+        via_tab: Some(direction),
+    }]);
+    assert!(frame.wants_keyboard, "{label}: focus entered");
+    assert_eq!(frame.focus_escape, None, "{label}");
+    for step in 1..count {
+        let (frame, _) = host.frame(vec![tab(direction)]);
+        assert_eq!(frame.focus_escape, None, "{label}: step {step}");
+        assert!(frame.wants_keyboard, "{label}: step {step}");
+    }
+    let (frame, _) = host.frame(vec![tab(direction)]);
+    assert_eq!(frame.focus_escape, Some(direction), "{label}: escape");
+    assert!(!frame.wants_keyboard, "{label}: escape");
+    // The host owns focus now: later frames must not take it back.
+    for _ in 0..3 {
+        let (frame, _) = host.frame(vec![]);
+        assert!(!frame.wants_keyboard, "{label}: focus came back");
+    }
+    host.quit().unwrap();
+}
+
+#[test]
+fn tab_escapes_at_both_ends() {
+    for count in [1, 3] {
+        walk(count, TabDirection::Forward);
+        walk(count, TabDirection::Backward);
+    }
+}
+
+#[test]
+fn delayed_repaint_between_frames_keeps_its_deadline() {
+    let shared = Arc::new(Mutex::new(None));
+    let mut host = TestHost::connect(Buttons {
+        count: 1,
+        ctx: shared.clone(),
+    });
+    let mut settled = false;
+    for _ in 0..20 {
+        let (frame, _) = host.frame(vec![]);
+        if frame.repaint_after_ms.is_none() {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "the page never went idle");
+    let ctx = shared.lock().unwrap().clone().unwrap();
+    ctx.request_repaint_after(Duration::from_millis(500));
+    match host.recv() {
+        AddonMessage::RequestRepaint { after_ms } => {
+            assert!((300..=500).contains(&after_ms), "after_ms {after_ms}")
+        }
+        other => panic!("expected a repaint request, got {other:?}"),
+    }
+    // An earlier deadline goes out at once.
+    ctx.request_repaint();
+    assert_eq!(host.recv(), AddonMessage::RequestRepaint { after_ms: 0 });
+    host.quit().unwrap();
+}
+
+#[test]
+fn flooding_requests_while_answers_back_up_does_not_deadlock() {
+    // Small pipes, like OS pipes with a finite buffer. The host writes every request before it
+    // reads any answer; a reader that blocked on a bounded queue would deadlock here.
+    let (host, addon_side) = duplex_with_capacity(256);
+    let addon = std::thread::spawn(move || run_addon_on(addon_side, Counter::default(), "counter"));
+    let (mut reader, mut writer) = host.split();
+    proto::host_handshake(&mut reader, &mut writer, &Hello::new("counter", "test")).unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let flood = std::thread::spawn(move || {
+        for _ in 0..500 {
+            writer.write(&HostMessage::TutorialQuery).unwrap();
+        }
+        writer.write(&HostMessage::Quit).unwrap();
+        done_tx.send(()).unwrap();
+        writer
+    });
+    done_rx
+        .recv_timeout(WAIT)
+        .expect("host writes blocked: duplex deadlock");
+    let _writer = flood.join().unwrap();
+    let mut answers = 0;
+    loop {
+        match reader.read::<AddonMessage>() {
+            Ok(AddonMessage::Tutorial { .. }) => answers += 1,
+            Ok(_) => {}
+            Err(error) => {
+                assert!(error.is_closed(), "{error:?}");
+                break;
+            }
+        }
+    }
+    assert_eq!(answers, 500);
+    addon.join().unwrap().unwrap();
+}
+
+#[test]
+fn unhandled_flood_past_the_cap_ends_with_a_clear_error() {
+    let (unblock, block) = mpsc::channel();
+    let mut host = TestHost::connect(Counter {
+        block: Some(block),
+        ..Default::default()
+    });
+    // The add-on is stuck in `ui` while the host keeps sending.
+    host.seq += 1;
+    let seq = host.seq;
+    host.send(HostMessage::Input(InputBatch {
+        seq,
+        size: [400.0, 300.0],
+        pixels_per_point: 1.0,
+        theme: Theme::Dark,
+        window_focused: true,
+        events: vec![],
+    }));
+    for nonce in 0..=MAX_QUEUED_HOST_MESSAGES as u64 + 1 {
+        host.send(HostMessage::Ping { nonce });
+    }
+    drop(unblock);
+    let error = host.addon.join().unwrap().unwrap_err();
+    assert!(
+        matches!(error, ProtocolError::Overloaded { limit } if limit == MAX_QUEUED_HOST_MESSAGES),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("4096 messages"));
 }

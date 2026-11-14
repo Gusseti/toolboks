@@ -9,8 +9,9 @@
 //! - renders exactly one frame per `Input` batch (messages the batch caused, such as
 //!   changed preferences, are sent before the frame that acknowledges it), with the add-on's own clock (the host
 //!   sends no time), tessellates it and sends cached meshes plus texture deltas;
-//! - asks the host for a frame (`RequestRepaint`) when something calls
-//!   `ctx.request_repaint()` between frames, at most once per input batch;
+//! - asks the host for a frame (`RequestRepaint { after_ms }`) when something calls
+//!   `ctx.request_repaint()` or `request_repaint_after` between frames, keeping the
+//!   requested deadline and sending again only for an earlier one;
 //! - forwards navigation, suspend and resume, preferences, capabilities and the tutorial
 //!   calls to the add-on and sends back host requests, status items and log lines;
 //! - answers heartbeat pings from the main loop, so a stuck `ui` call shows as stalled;
@@ -36,7 +37,8 @@ use proto::{
 };
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::sync::{mpsc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub use toolboks_addon_proto as proto;
@@ -44,6 +46,11 @@ pub use toolboks_addon_proto as proto;
 /// The SDK version an add-on reports in its `Hello`.
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 const BACKGROUND_TICK: Duration = Duration::from_millis(200);
+/// The most host messages the add-on holds unhandled. The reader never blocks on its queue:
+/// a blocked reader stops draining the pipe, and the host may be blocked writing to that pipe
+/// while the add-on waits to write its answers (a duplex deadlock). Past this cap the session
+/// ends with [`ProtocolError::Overloaded`] instead.
+pub const MAX_QUEUED_HOST_MESSAGES: usize = 4096;
 
 static LOG: Mutex<Vec<(LogLevel, String)>> = Mutex::new(Vec::new());
 
@@ -95,7 +102,41 @@ fn pipe_paths(
 
 enum Wake {
     Host(Result<HostMessage, ProtocolError>),
-    Repaint { pass: u64 },
+    Repaint,
+}
+
+/// Repaint requests from egui's callback, coalesced to the earliest deadline per pass number.
+/// The pass number tells requests made during a pass (already in that frame's hint) from
+/// requests made between frames.
+#[derive(Default)]
+struct RepaintRequests {
+    pending: Mutex<Vec<(u64, Instant)>>,
+}
+
+impl RepaintRequests {
+    /// Records a request. Returns true when the main loop needs a wake-up.
+    fn add(&self, pass: u64, deadline: Instant) -> bool {
+        let Ok(mut pending) = self.pending.lock() else {
+            return false;
+        };
+        let wake = pending.is_empty();
+        match pending.iter_mut().find(|(seen, _)| *seen == pass) {
+            Some((_, earliest)) => *earliest = (*earliest).min(deadline),
+            None => pending.push((pass, deadline)),
+        }
+        wake
+    }
+
+    /// Drains every request and returns the earliest deadline among those made at or after
+    /// pass `painted` (the first pass not yet rendered).
+    fn take_since(&self, painted: u64) -> Option<Instant> {
+        let pending = std::mem::take(&mut *self.pending.lock().ok()?);
+        pending
+            .into_iter()
+            .filter(|(pass, _)| *pass >= painted)
+            .map(|(_, deadline)| deadline)
+            .min()
+    }
 }
 
 /// Runs the add-on over any transport. The reader moves to its own thread; the add-on and
@@ -114,20 +155,37 @@ where
     proto::addon_handshake(&mut reader, &mut writer, &Hello::new(addon_id, SDK_VERSION))?;
     let (tx, rx) = mpsc::channel();
     let host_tx = tx.clone();
+    let queued = Arc::new(AtomicUsize::new(0));
+    let reader_queued = queued.clone();
     std::thread::Builder::new()
         .name("toolboks-addon-reader".into())
         .spawn(move || loop {
             let message = reader.read::<HostMessage>();
+            let message =
+                if reader_queued.fetch_add(1, Ordering::AcqRel) >= MAX_QUEUED_HOST_MESSAGES {
+                    Err(ProtocolError::Overloaded {
+                        limit: MAX_QUEUED_HOST_MESSAGES,
+                    })
+                } else {
+                    message
+                };
             let end = message.is_err();
             if host_tx.send(Wake::Host(message)).is_err() || end {
                 break;
             }
         })?;
     let ctx = egui::Context::default();
+    let requests = Arc::new(RepaintRequests::default());
+    let signal = requests.clone();
     ctx.set_request_repaint_callback(move |info| {
-        let _ = tx.send(Wake::Repaint {
-            pass: info.current_cumulative_pass_nr,
-        });
+        // `request_repaint_after` carries a delay: keep its deadline. Never block here; the
+        // callback also runs on the main loop's thread, which is the queue's only reader.
+        let Some(deadline) = Instant::now().checked_add(info.delay) else {
+            return;
+        };
+        if signal.add(info.current_cumulative_pass_nr, deadline) {
+            let _ = tx.send(Wake::Repaint);
+        }
     });
     let mut runtime = Runtime {
         ctx,
@@ -136,7 +194,9 @@ where
         encoder: MeshEncoder::default(),
         preferences: BTreeMap::new(),
         suspended: false,
-        repaint_sent: false,
+        requests,
+        repaint_deadline: None,
+        queued,
         theme: None,
         status: Vec::new(),
     };
@@ -155,7 +215,11 @@ struct Runtime<W> {
     encoder: MeshEncoder,
     preferences: BTreeMap<String, serde_json::Value>,
     suspended: bool,
-    repaint_sent: bool,
+    requests: Arc<RepaintRequests>,
+    /// Host messages read but not handled yet; shared with the reader thread.
+    queued: Arc<AtomicUsize>,
+    /// The earliest repaint deadline sent to the host since the last input batch.
+    repaint_deadline: Option<Instant>,
     theme: Option<Theme>,
     status: Vec<StatusItem>,
 }
@@ -170,39 +234,58 @@ impl<W: Write> Runtime<W> {
         addon: &mut A,
         rx: &mpsc::Receiver<Wake>,
     ) -> Result<(), ProtocolError> {
+        // An absolute deadline, so a steady stream of wakes cannot postpone background ticks.
+        let mut next_tick: Option<Instant> = None;
         loop {
             let wake = if self.suspended && addon.has_background_work() {
-                match rx.recv_timeout(BACKGROUND_TICK) {
+                let now = Instant::now();
+                let due = *next_tick.get_or_insert(now + BACKGROUND_TICK);
+                if now >= due {
+                    next_tick = Some(now + BACKGROUND_TICK);
+                    addon.tick_background();
+                    self.flush_side_channels(addon)?;
+                    continue;
+                }
+                match rx.recv_timeout(due - now) {
                     Ok(wake) => wake,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        addon.tick_background();
-                        self.flush_side_channels(addon)?;
-                        continue;
-                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
                     Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
                 }
             } else {
+                next_tick = None;
                 match rx.recv() {
                     Ok(wake) => wake,
                     Err(_) => return Ok(()),
                 }
             };
             match wake {
-                // A request made during a pass is already in that frame's repaint hint.
-                Wake::Repaint { pass } => {
-                    if pass >= self.ctx.cumulative_pass_nr() && !self.repaint_sent {
-                        self.repaint_sent = true;
-                        self.send(&AddonMessage::RequestRepaint { after_ms: 0 })?;
-                    }
-                }
+                // Handled below with every wake, so a wake dropped on a full queue is not lost.
+                Wake::Repaint => {}
                 Wake::Host(message) => {
+                    self.queued.fetch_sub(1, Ordering::AcqRel);
                     if !self.handle(addon, message?)? {
                         return Ok(());
                     }
                 }
             }
             self.flush_side_channels(addon)?;
+            self.forward_repaint()?;
         }
+    }
+
+    /// Sends a repaint request made between frames, with its remaining delay, unless an
+    /// earlier one is already pending at the host.
+    fn forward_repaint(&mut self) -> Result<(), ProtocolError> {
+        let Some(deadline) = self.requests.take_since(self.ctx.cumulative_pass_nr()) else {
+            return Ok(());
+        };
+        if self.repaint_deadline.is_some_and(|sent| sent <= deadline) {
+            return Ok(());
+        }
+        self.repaint_deadline = Some(deadline);
+        let after = deadline.saturating_duration_since(Instant::now());
+        let after_ms = u32::try_from(after.as_millis()).unwrap_or(u32::MAX);
+        self.send(&AddonMessage::RequestRepaint { after_ms })
     }
 
     /// Handles one host message. Returns false when the add-on should exit.
@@ -215,7 +298,7 @@ impl<W: Write> Runtime<W> {
             HostMessage::Hello(_) => return Err(ProtocolError::Unexpected("second Hello")),
             HostMessage::Refuse { reason, .. } => return Err(ProtocolError::Refused(reason)),
             HostMessage::Input(batch) => {
-                self.repaint_sent = false;
+                self.repaint_deadline = None;
                 self.frame(addon, batch)?;
             }
             HostMessage::Navigate { page } => addon.navigate(&page),
@@ -335,7 +418,6 @@ impl<W: Write> Runtime<W> {
                 tab = Some(direction);
             }
         }
-        let focused_before = ctx.memory(|memory| memory.focused());
         let mut raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             time: Some(self.clock.elapsed().as_secs_f64()),
@@ -352,21 +434,33 @@ impl<W: Write> Runtime<W> {
         }
         let mut changed = false;
         let preferences = &mut self.preferences;
+        let mut discard_requested = false;
         let mut output = ctx.run_ui(raw, |ui| {
+            // Invisible focusable sentinels before and after the page mark the two ends of
+            // egui's traversal order. Tab past the last widget lands on the end sentinel in
+            // the same pass; Shift+Tab before the first one is applied by egui one pass later,
+            // so a Tab frame asks for a second pass to settle focus before it is sent.
+            let anchor = egui::Rect::from_min_size(ui.max_rect().min, egui::Vec2::ZERO);
+            let sense = egui::Sense::focusable_noninteractive();
+            ui.interact(anchor, focus_id(FOCUS_START), sense);
             egui::CentralPanel::default().show(ui, |ui| {
                 changed |= addon.ui(ui, preferences);
             });
+            ui.interact(anchor, focus_id(FOCUS_END), sense);
+            if tab.is_some() && !discard_requested {
+                discard_requested = true;
+                ui.ctx().request_discard("focus traversal");
+            }
         });
-        let focus_escape = tab.filter(|direction| {
-            let after = ctx.memory(|memory| memory.focused());
-            focus_escaped(&ctx, *direction, focused_before, after)
-        });
-        if focus_escape.is_some() {
-            ctx.memory_mut(|memory| {
-                if let Some(id) = memory.focused() {
-                    memory.surrender_focus(id);
-                }
-            });
+        let focused = ctx.memory(|memory| memory.focused());
+        let focus_escape = match focused {
+            Some(id) if id == focus_id(FOCUS_END) => Some(TabDirection::Forward),
+            Some(id) if id == focus_id(FOCUS_START) => Some(TabDirection::Backward),
+            _ => None,
+        };
+        if let (Some(id), Some(_)) = (focused, focus_escape) {
+            // The host takes focus; the sentinel never keeps it.
+            ctx.memory_mut(|memory| memory.surrender_focus(id));
         }
         let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
         let repaint_after_ms = output
@@ -533,11 +627,17 @@ fn convert(
             after_chars: after_chars as usize,
         })),
         InputEvent::FocusGained { via_tab } => {
-            // Focus arriving by Tab lands on the first (or last) widget: egui moves focus
-            // from "nothing focused" to the first widget in that direction.
+            // Focus arriving by Tab starts on the sentinel at the other end, so one Tab press
+            // lands on the first (or last) real widget in egui's own traversal order.
             if let Some(direction) = via_tab {
+                let start = match direction {
+                    TabDirection::Forward => FOCUS_START,
+                    TabDirection::Backward => FOCUS_END,
+                };
+                ctx.memory_mut(|memory| memory.request_focus(focus_id(start)));
                 out.push(tab_key(direction, true));
                 out.push(tab_key(direction, false));
+                return Some(direction);
             }
         }
         InputEvent::FocusLost => ctx.memory_mut(|memory| {
@@ -549,33 +649,11 @@ fn convert(
     None
 }
 
-/// Tab left the add-on when focus vanished or wrapped around to the other end. egui wraps
-/// focus, so a wrap is detected from the widget positions: moving forward to a widget that
-/// sits above (or on the same row, left of) the one that had focus is a wrap.
-fn focus_escaped(
-    ctx: &egui::Context,
-    direction: TabDirection,
-    before: Option<egui::Id>,
-    after: Option<egui::Id>,
-) -> bool {
-    let Some(before) = before else {
-        return false;
-    };
-    let Some(after) = after else {
-        return true;
-    };
-    if before == after {
-        return false;
-    }
-    let (Some(from), Some(to)) = (ctx.read_response(before), ctx.read_response(after)) else {
-        return false;
-    };
-    let (from, to) = (from.rect.min, to.rect.min);
-    let earlier = to.y < from.y - 0.5 || ((to.y - from.y).abs() <= 0.5 && to.x < from.x);
-    match direction {
-        TabDirection::Forward => earlier,
-        TabDirection::Backward => !earlier,
-    }
+const FOCUS_START: &str = "toolboks-runtime-focus-start";
+const FOCUS_END: &str = "toolboks-runtime-focus-end";
+
+fn focus_id(name: &str) -> egui::Id {
+    egui::Id::NULL.with(name)
 }
 
 #[cfg(test)]

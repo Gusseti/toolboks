@@ -316,6 +316,10 @@ pub enum ProtocolError {
     UnknownMesh(u64),
     /// The other side closed the stream at a frame boundary (a clean end).
     Closed,
+    /// The host sent more messages than the add-on may hold unhandled.
+    Overloaded {
+        limit: usize,
+    },
     Io(std::io::Error),
 }
 
@@ -338,6 +342,10 @@ impl std::fmt::Display for ProtocolError {
             Self::Unexpected(what) => write!(f, "Unexpected message: {what}"),
             Self::UnknownMesh(id) => write!(f, "Cached mesh {id:#x} is unknown."),
             Self::Closed => write!(f, "The connection was closed."),
+            Self::Overloaded { limit } => write!(
+                f,
+                "The host sent more than {limit} messages the add-on had not handled yet."
+            ),
             Self::Io(error) => write!(f, "Connection error: {error}"),
         }
     }
