@@ -109,7 +109,7 @@ pub fn number_cell(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
 mod tests {
     use super::*;
 
-    const HOST_UI: &str = include_str!("../../../src/ui.rs");
+    const HOST_UI: &str = include_str!("../../../shared/toolboks-shared/src/ui.rs");
     const SDK_THEME: &str = include_str!("../../../sdk/theme.json");
 
     fn parse_num(s: &str) -> u8 {
@@ -125,7 +125,7 @@ mod tests {
         let needle = format!("pub const {name}: Color32 =");
         let start = HOST_UI
             .find(&needle)
-            .unwrap_or_else(|| panic!("{name} not found in src/ui.rs"));
+            .unwrap_or_else(|| panic!("{name} not found in shared/toolboks-shared/src/ui.rs"));
         let rest = &HOST_UI[start + needle.len()..];
         let expr = rest[..rest.find(';').expect("const ends")].trim();
         match expr.strip_prefix("Color32::from_rgb(") {

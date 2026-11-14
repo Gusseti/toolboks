@@ -1,0 +1,13 @@
+[package]
+name = "toolboks-debloat-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Debloater engine: catalog, registry backend and plan, without UI"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toolboks-shared = { path = "../toolboks-shared" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_System_Registry"] }

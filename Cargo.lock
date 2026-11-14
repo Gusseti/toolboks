@@ -3069,7 +3069,9 @@ dependencies = [
  "sha2",
  "sysinfo",
  "toolboks-addon-sdk",
+ "toolboks-debloat-engine",
  "toolboks-disk-manager",
+ "toolboks-shared",
  "tray-icon",
  "windows 0.62.2",
  "winresource",
@@ -3085,6 +3087,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "toolboks-debloat-engine"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toolboks-shared",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "toolboks-disk-manager"
 version = "0.2.0"
 dependencies = [
@@ -3092,6 +3103,15 @@ dependencies = [
  "egui_extras",
  "serde",
  "serde_json",
+ "toolboks-addon-sdk",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "toolboks-shared"
+version = "0.1.0"
+dependencies = [
+ "egui",
  "toolboks-addon-sdk",
  "windows 0.62.2",
 ]

@@ -224,9 +224,9 @@ pub fn undo(steps: &mut Vec<UndoOp>, reg: &mut dyn Registry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::debloat::backend::WinRegistry;
-    use crate::tools::debloat::catalog;
-    use crate::tools::debloat::model::{Group, RegSetting};
+    use crate::backend::WinRegistry;
+    use crate::catalog;
+    use crate::model::{Group, RegSetting};
     use std::collections::HashMap;
 
     const P: &str = r"Software\Test";
@@ -599,11 +599,7 @@ mod tests {
     #[ignore = "reads the real registry"]
     fn smoke_real_registry_read_only() {
         let items = catalog::items();
-        let st = statuses(
-            items,
-            &WinRegistry,
-            crate::tools::debloat::backend::detect_env(),
-        );
+        let st = statuses(items, &WinRegistry, crate::backend::detect_env());
         assert_eq!(st.len(), items.len());
     }
 }
