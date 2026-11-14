@@ -9,8 +9,10 @@
 - **Add-on protocol version 2:** adds the tray and tour-anchor messages. Version 1 add-ons are refused with the plain "update the add-on or Toolboks" message; none have been published.
 - **Catalog entries:** optional `pages` and `background` fields. The installer keeps the catalog entry beside each installed version, so they are known offline.
 - **Add-on threat model (#95):** `docs/ADDON-THREAT-MODEL.md` lists the threats to the add-on platform, what covers each, what is accepted, and seven findings to settle before the first public add-on release.
+- **Add-on author guide and sample (#96):** `docs/ADDON-AUTHOR-GUIDE.md`, a sample add-on exe (`sdk/examples/hello-addon`) and a test host window (`cargo run --example addon_host`) to build and try an add-on. The architecture and vision documents now describe the empty-shell direction and say which pieces are built.
 
 ## Not verified
 
 - The elevated start through the UAC prompt has not been tried on a real PC.
 - The "only the current user" rule for the pipes is tested by reading the pipe's access list, not with a second Windows account.
+- The test host window ran with the sample add-on without errors, but its page was not looked at on screen.

@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/Gusseti/toolboks"
 
 [workspace]
-members = ["sdk/toolboks-addon-sdk", "sdk/toolboks-addon-proto", "addons/disk-manager", "shared/toolboks-shared", "shared/toolboks-debloat-engine", "shared/toolboks-catalog", "tools/catalog-sign"]
+members = ["sdk/toolboks-addon-sdk", "sdk/examples/hello-addon", "sdk/toolboks-addon-proto", "addons/disk-manager", "shared/toolboks-shared", "shared/toolboks-debloat-engine", "shared/toolboks-catalog", "tools/catalog-sign"]
 resolver = "2"
 
 [features]
