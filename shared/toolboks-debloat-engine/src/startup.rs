@@ -339,7 +339,7 @@ impl StartupStore for WinStartup {
     ) -> Result<(), String> {
         let (hive, path) = approval_target(source);
         if hive == HKEY_CURRENT_USER {
-            crate::elevation::require_user_profile()?;
+            toolboks_shared::elevation::require_user_profile()?;
         }
         let path_w = wide(&path);
         let name_w = wide(name);
@@ -707,12 +707,12 @@ pub fn publisher_of_command(command: &str) -> Option<String> {
 
 /// Switches an entry on or off. Refuses `Class::Never`. Reads the approval back and fails if it
 /// does not show the new state (the previous value is then put back). Returns the undo step.
-pub(super) fn set_enabled(
+pub fn set_enabled(
     store: &mut dyn StartupStore,
     entry: &Entry,
     enable: bool,
     now_filetime: u64,
-) -> Result<UndoStep, super::ChangeError<UndoStep>> {
+) -> Result<UndoStep, crate::ChangeError<UndoStep>> {
     if entry.class == Class::Never {
         return Err(format!(
             "{} is a security or system component and cannot be changed here",
@@ -743,7 +743,7 @@ pub(super) fn set_enabled(
         });
     match result {
         Ok(()) => Ok(step),
-        Err(error) => Err(super::rollback(error, step, |step| undo(store, step))),
+        Err(error) => Err(crate::rollback(error, step, |step| undo(store, step))),
     }
 }
 

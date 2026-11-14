@@ -1,6 +1,6 @@
 mod engine;
 
-use crate::ui as look;
+use toolboks_shared::ui as look;
 use eframe::egui::{self, RichText};
 use engine::{
     Action, ControlEvent, Engine, Hotkey, Macro, MouseButton, PathClick, Point, RecordOptions,

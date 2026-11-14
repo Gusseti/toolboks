@@ -14,7 +14,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui::{self, RichText};
 use toolboks_addon_sdk::{tutorial, Capability, NativeAddon, TutorialStep};
 
-use crate::ui as look;
+use toolboks_shared::ui as look;
 
 const HISTORY: usize = 160;
 const INTERVAL: Duration = Duration::from_millis(50);
