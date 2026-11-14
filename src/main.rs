@@ -1,12 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use eframe::egui;
+// Shared with add-ons through `toolboks-shared`; re-exported so `crate::<module>` paths keep working.
+use toolboks_shared::format;
 
 mod addons;
 mod app;
 mod crash;
 mod elevation;
-mod format;
 mod instance;
 mod native;
 mod tools;

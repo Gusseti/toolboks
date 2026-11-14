@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/Gusseti/toolboks"
 
 [workspace]
-members = ["sdk/toolboks-addon-sdk", "addons/disk-manager"]
+members = ["sdk/toolboks-addon-sdk", "addons/disk-manager", "shared/toolboks-shared"]
 resolver = "2"
 
 [features]
@@ -17,6 +17,7 @@ preview = []
 [dependencies]
 toolboks-addon-sdk = { path = "sdk/toolboks-addon-sdk", features = ["native-ui"] }
 toolboks-disk-manager = { path = "addons/disk-manager" }
+toolboks-shared = { path = "shared/toolboks-shared" }
 serde = { version = "1", features = ["derive"] }
 # glow (OpenGL) instead of the default wgpu renderer: far smaller and lighter on RAM.
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "links"] }

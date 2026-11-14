@@ -3070,6 +3070,7 @@ dependencies = [
  "sysinfo",
  "toolboks-addon-sdk",
  "toolboks-disk-manager",
+ "toolboks-shared",
  "tray-icon",
  "windows 0.62.2",
  "winresource",
@@ -3095,6 +3096,10 @@ dependencies = [
  "toolboks-addon-sdk",
  "windows 0.62.2",
 ]
+
+[[package]]
+name = "toolboks-shared"
+version = "0.1.0"
 
 [[package]]
 name = "tracing"
