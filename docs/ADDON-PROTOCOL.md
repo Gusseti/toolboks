@@ -144,3 +144,42 @@ them against real OS input: text editing and selection, IME (preedit, commit, ou
 clipboard round trip (copy out, paste in), drag released outside the view, focus and Tab routing
 against real input, and high DPI other than 1.0 (`pixels_per_point` is clamped to
 0.25 to 8).
+
+## Host view
+
+`src/addon_view/` is the host side of a page: `AddonView` paints the add-on's frames inside the page
+rectangle and forwards input back. It does not start or watch processes; the supervisor (#80) does
+the handshake, then hands the view an `AddonLink` (a shared sender plus the inbox of a reader
+thread). `AddonLink::spawn` sends frames and repaint requests to the view and every other message
+(pong, log, preferences, host requests, status items, tutorial, bye) to a side channel for the
+supervisor. Pongs and logs never wake the host's UI.
+
+- **Painting.** Meshes come out of `mesh::MeshCache`, get host texture ids and are translated to the
+  page origin once per frame. A mesh the add-on sent as cached is not translated again, and an
+  unchanged frame paints the translated meshes as they are. Each mesh is clipped to its own clip
+  rectangle and the page.
+- **Textures.** Each view owns its host textures (add-on texture id to host id) and frees all of
+  them when it is dropped. On a restart the old textures stay until the new process paints its first
+  frame, so the last frame can still be shown.
+- **Input.** Positions are in points relative to the page's top-left corner; the batch carries
+  `pixels_per_point`, the page size, the theme and window focus. Pointer events go while the
+  pointer is over the page, or while a drag that started there is held: moves outside are forwarded
+  and the release outside arrives as `DragReleasedOutside`. Keyboard, text, clipboard and IME events
+  go while the page has the host's keyboard focus (a click inside takes it, a click outside drops
+  it). While the page has focus, Tab and arrows belong to the add-on; when a frame carries
+  `focus_escape`, the host moves focus to its own next (or previous) widget and sends `FocusLost`.
+  Focus that arrives by Tab sends `FocusGained` with the direction.
+- **Pacing.** One batch in flight, at most 60 a second, add-on repaint hints (`repaint_after_ms` and
+  `RequestRepaint`) through `RepaintLimiter`. With no input and no hint the host neither sends nor
+  repaints, so an idle add-on costs nothing.
+- **Applied back.** The cursor icon while the pointer is over the page, copied text to the
+  clipboard, links through the host's link handling (only `http`, `https` and `mailto`), and the IME
+  rectangle moved to the page.
+- **States.** `Connecting` until the first frame ("Starting <Name>…"), `Running`, `Stalled`
+  (heartbeat from the supervisor, or a batch without a frame for `STALL_TIMEOUT`), `Restarting` and
+  `Stopped`. Stalled, restarting and stopped show the last frame dimmed under a plain note, for
+  example "<Name> is restarting…", never a blank page.
+
+To try the view in a real window (debug only, not reachable from the sidebar), run
+`cargo run --example addon_view_demo`. It runs a sample add-on on a thread over in-memory pipes and
+has a "Restart add-on" button for the restart state.
