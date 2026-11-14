@@ -13,6 +13,7 @@ mod app;
 mod catalog;
 mod crash;
 mod elevation;
+mod installer;
 mod instance;
 mod native;
 mod tools;

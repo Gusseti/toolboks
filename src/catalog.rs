@@ -49,8 +49,7 @@ pub fn host() -> Host<'static> {
 static STATE: Mutex<()> = Mutex::new(());
 
 /// The last accepted sequence and key rotation, in one file so both change together.
-/// `write_atomic` stages the write in a sibling with the extension `pending` (`trust.pending`);
-/// the file has the `catalog` folder to itself, so nothing else can share that name.
+/// `write_atomic` stages the write in the sibling `trust.json.pending`.
 fn state_path(root: &Path) -> PathBuf {
     root.join("catalog").join("trust.json")
 }
@@ -205,7 +204,7 @@ mod tests {
         let root = root("sequence");
         assert!(accept_test(&root, MAIN, &index(5), vec![]).is_ok());
         assert_eq!(load_state(&root).last_sequence, 5);
-        assert!(!state_path(&root).with_extension("pending").exists());
+        assert!(!root.join("catalog").join("trust.json.pending").exists());
         // Read back from disk on the next call, as after a restart.
         assert_eq!(
             accept_test(&root, MAIN, &index(4), vec![]),
