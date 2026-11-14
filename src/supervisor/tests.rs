@@ -32,10 +32,8 @@ fn fake(test: &str, mode: &str) -> (PathBuf, LaunchSpec) {
         "{} is missing; run the tests through cargo so the example is built",
         built.display()
     );
-    let dir = std::env::temp_dir().join(format!(
-        "toolboks-supervisor-{test}-{}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("toolboks-supervisor-{test}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let exe = dir.join("addon.exe");
@@ -175,7 +173,10 @@ fn starts_connects_and_stops_on_request() {
     );
     assert!(supervisor.is_running(ID));
     assert!(supervisor.take_link(ID).is_some());
-    assert!(supervisor.take_link(ID).is_none(), "the link is handed out once");
+    assert!(
+        supervisor.take_link(ID).is_none(),
+        "the link is handed out once"
+    );
     // While it runs, the checked file cannot be replaced.
     assert!(fs::write(&spec.exe, b"swapped").is_err());
 
@@ -193,7 +194,10 @@ fn starts_connects_and_stops_on_request() {
     assert!(!supervisor.is_running(ID));
     assert_eq!(starts(&dir), 1);
     let report = supervisor.report(ID).unwrap();
-    assert!(report.contains("Add-on: Fake add-on (test.fake-addon)"), "{report}");
+    assert!(
+        report.contains("Add-on: Fake add-on (test.fake-addon)"),
+        "{report}"
+    );
     assert!(report.contains("Starts this session: 1"), "{report}");
 }
 
@@ -257,7 +261,11 @@ fn a_wrong_token_is_refused() {
     supervisor.open(spec, Instant::now());
     let events = run_until(&mut supervisor, stopped);
     assert!(matches!(stop_reason(&events), StopReason::Refused(_)));
-    assert_eq!(starts(&dir), 1, "a refusal is final, not a crash to restart");
+    assert_eq!(
+        starts(&dir),
+        1,
+        "a refusal is final, not a crash to restart"
+    );
 }
 
 #[test]

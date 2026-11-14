@@ -247,8 +247,15 @@ impl PipePair {
         let mut presented = [0u8; TOKEN_CHARS];
         let mut read = 0;
         // SAFETY: the buffer is a live slice and at least that many bytes are waiting.
-        unsafe { ReadFile(self.from_addon.0, Some(&mut presented), Some(&mut read), None) }
-            .map_err(io_error)?;
+        unsafe {
+            ReadFile(
+                self.from_addon.0,
+                Some(&mut presented),
+                Some(&mut read),
+                None,
+            )
+        }
+        .map_err(io_error)?;
         if read as usize != TOKEN_CHARS || !same(&presented, self.token.as_bytes()) {
             return Err(ConnectError::WrongToken);
         }

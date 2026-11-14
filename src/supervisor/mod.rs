@@ -177,7 +177,9 @@ impl StopReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     Starting,
-    Running { elevated: bool },
+    Running {
+        elevated: bool,
+    },
     /// Running, but it has not answered for a while.
     Stalled,
     Stopping,
@@ -188,13 +190,26 @@ pub enum Status {
 #[derive(Debug)]
 pub enum Event {
     /// The add-on is connected; take its link with [`Supervisor::take_link`].
-    Connected { id: String },
+    Connected {
+        id: String,
+    },
     /// The add-on ended unexpectedly and is being started again.
-    Restarting { id: String },
-    Stalled { id: String, stalled: bool },
-    Stopped { id: String, reason: StopReason },
+    Restarting {
+        id: String,
+    },
+    Stalled {
+        id: String,
+        stalled: bool,
+    },
+    Stopped {
+        id: String,
+        reason: StopReason,
+    },
     /// A message for the host's services (preferences, status items, tutorial, host requests).
-    Message { id: String, message: AddonMessage },
+    Message {
+        id: String,
+        message: AddonMessage,
+    },
 }
 
 /// A successful launch, handed from the launch thread to `tick`.
@@ -312,18 +327,21 @@ impl Supervisor {
 
     fn ensure(&mut self, spec: LaunchSpec, visible: bool, now: Instant) {
         let timing = self.shared.timing;
-        let managed = self.addons.entry(spec.id.clone()).or_insert_with(|| Managed {
-            spec: spec.clone(),
-            phase: Phase::Stopped(StopReason::ByHost),
-            policy: RestartPolicy::new(timing.restart_max, timing.restart_window),
-            visible,
-            elevate: false,
-            navigate: None,
-            log: VecDeque::new(),
-            starts: 0,
-            last_exit: None,
-            addon_version: None,
-        });
+        let managed = self
+            .addons
+            .entry(spec.id.clone())
+            .or_insert_with(|| Managed {
+                spec: spec.clone(),
+                phase: Phase::Stopped(StopReason::ByHost),
+                policy: RestartPolicy::new(timing.restart_max, timing.restart_window),
+                visible,
+                elevate: false,
+                navigate: None,
+                log: VecDeque::new(),
+                starts: 0,
+                last_exit: None,
+                addon_version: None,
+            });
         managed.spec = spec;
         let was_visible = managed.visible;
         managed.visible |= visible;

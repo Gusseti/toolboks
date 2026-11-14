@@ -84,6 +84,8 @@ fn main() {
                 });
             }
             if mode == "child" {
+                // Never waited for on purpose: the test checks that the host's job ends it.
+                #[allow(clippy::zombie_processes)]
                 let child = std::process::Command::new(std::env::current_exe().expect("own path"))
                     .arg("--sleep")
                     .spawn()
