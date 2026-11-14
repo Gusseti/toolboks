@@ -1,0 +1,11 @@
+[package]
+name = "toolboks-addon-proto"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Toolboks add-on wire protocol: messages, framing, mesh cache and pacing helpers"
+
+[dependencies]
+egui = { version = "0.37", default-features = false, features = ["serde"] }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+serde = { version = "1", features = ["derive"] }

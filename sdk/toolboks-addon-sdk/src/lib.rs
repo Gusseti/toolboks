@@ -9,6 +9,9 @@ pub const API_VERSION: u32 = 2;
 #[cfg(feature = "native-ui")]
 pub mod tutorial;
 
+#[cfg(feature = "runtime")]
+pub mod runtime;
+
 /// Declarative tours only describe and navigate UI; they never execute actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +74,14 @@ pub enum Capability {
     LiveAudio,
     SystemTuning,
     InputAutomation,
+}
+
+#[cfg(feature = "native-ui")]
+/// One item an add-on shows in the host's status bar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusItem {
+    pub text: String,
+    pub tooltip: Option<String>,
 }
 
 #[cfg(feature = "native-ui")]
@@ -389,6 +400,10 @@ pub trait NativeAddon {
     fn tutorial_start(&mut self) {}
     fn tutorial_navigate(&mut self, _page: &str) {}
     fn tutorial_finish(&mut self) {}
+    /// Status bar items. Only the out-of-process runtime forwards them today.
+    fn status_items(&self) -> Vec<StatusItem> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
