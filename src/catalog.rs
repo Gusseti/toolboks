@@ -71,6 +71,27 @@ pub fn accept(root: &Path, index: &[u8], signature: Option<&[u8]>) -> Result<Ind
     accept_with(&trusted_keys(), &SystemClock, root, index, signature)
 }
 
+#[cfg(feature = "preview")]
+pub fn accept_preview(
+    root: &Path,
+    index: &[u8],
+    signature: &[u8],
+    main: [u8; 32],
+    recovery: [u8; 32],
+) -> Result<Index, Refused> {
+    accept_with(
+        &TrustedKeys {
+            main,
+            recovery,
+            rotation_floor: 0,
+        },
+        &SystemClock,
+        root,
+        index,
+        Some(signature),
+    )
+}
+
 fn accept_with(
     keys: &TrustedKeys,
     clock: &dyn Clock,

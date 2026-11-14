@@ -238,7 +238,27 @@ pub fn install(
         Kind::Declarative => {
             let package = Package::parse(&bytes, host.version);
             match package {
-                Ok(p) if p.manifest.id == entry.id && p.manifest.version == entry.version => {}
+                Ok(p) if p.manifest.id == entry.id && p.manifest.version == entry.version => {
+                    let actual: std::collections::BTreeSet<String> = p
+                        .manifest
+                        .capabilities
+                        .iter()
+                        .filter_map(|capability| {
+                            serde_json::to_value(capability)
+                                .ok()?
+                                .as_str()
+                                .map(str::to_string)
+                        })
+                        .collect();
+                    let reviewed: std::collections::BTreeSet<String> =
+                        entry.capabilities.iter().cloned().collect();
+                    if actual != reviewed || p.manifest.native_provider.is_some() {
+                        discard();
+                        return Err(InstallError::BadPackage(
+                            "its access does not match the installation review".into(),
+                        ));
+                    }
+                }
                 Ok(_) => {
                     discard();
                     return Err(InstallError::BadPackage(
@@ -644,6 +664,9 @@ mod tests {
     }
 
     fn entry(id: &str, version: &str, bytes: &[u8]) -> Entry {
+        let capabilities = Package::parse(bytes, HOST.version)
+            .map(|package| package.manifest.capabilities)
+            .unwrap_or_default();
         serde_json::from_value(serde_json::json!({
             "id": id,
             "title": "Hello",
@@ -654,6 +677,7 @@ mod tests {
             "accent": "#8B5CF6",
             "kind": "declarative",
             "version": version,
+            "capabilities": capabilities,
             "min_toolboks_version": HOST.version,
             "protocol_version": 1,
             "download_url": format!("https://github.com/test/{version}.tbaddon"),
@@ -720,6 +744,21 @@ mod tests {
             run(&root, &entry(&id, "1.0.0", &bytes), 1),
             Err(InstallError::NotNewer)
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn catalog_package_cannot_ask_for_access_missing_from_the_review() {
+        let root = root("review-access");
+        let (id, bytes) = package("1.0.0");
+        let server = serve(bytes.clone(), Mode::Normal);
+        let mut reviewed = entry(&id, "1.0.0", &bytes);
+        reviewed.capabilities.clear();
+        assert!(matches!(
+            run(&root, &reviewed, server.port),
+            Err(InstallError::BadPackage(_))
+        ));
+        assert!(installed_version(&root, &id).is_none());
         fs::remove_dir_all(root).unwrap();
     }
 

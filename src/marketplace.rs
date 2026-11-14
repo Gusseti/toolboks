@@ -1,0 +1,714 @@
+use crate::{catalog, installer, winhttp};
+use catalog::{Entry, Index};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
+
+const FEED: &str = "https://github.com/Gusseti/toolboks-addons/releases/latest/download/index.json";
+pub const PICK_ORDER: [&str; 8] = [
+    "resource-monitor",
+    "memory-cleaner",
+    "disk-manager",
+    "event-watch",
+    "debloater",
+    "system-profiles",
+    "aural",
+    "macro-manager",
+];
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum InstallStatus {
+    Waiting,
+    Downloading { done: u64, total: u64 },
+    Checking,
+    Ready,
+    Cancelled,
+    Failed(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str) -> Entry {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "title": id, "short_description": "Test tool", "publisher": "Toolboks",
+            "category": "system", "icon": "box", "accent": "#8b5cf6", "kind": "declarative",
+            "version": "1.0.0", "min_toolboks_version": "0.1.0", "protocol_version": toolboks_addon_proto::PROTOCOL_VERSION,
+            "download_url": "https://github.com/Gusseti/test/releases/download/test/sample.tbaddon",
+            "size": 123, "sha256": "00".repeat(32), "verified": true, "channel": "stable"
+        })).unwrap()
+    }
+
+    fn root(name: &str) -> PathBuf {
+        let folder =
+            std::env::temp_dir().join(format!("toolboks-browser-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    #[test]
+    fn selection_starts_empty_and_keeps_the_approved_order() {
+        let mut browser = Marketplace::default();
+        browser
+            .entries
+            .extend([entry("test.memory-cleaner"), entry("test.resource-monitor")]);
+        assert!(browser.selected_entries().is_empty());
+        browser.select("test.memory-cleaner", true);
+        browser.select("test.resource-monitor", true);
+        assert_eq!(
+            browser
+                .selected_entries()
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            ["test.resource-monitor", "test.memory-cleaner"]
+        );
+        browser.select("test.resource-monitor", false);
+        assert_eq!(browser.selected_entries().len(), 1);
+    }
+
+    #[test]
+    fn queue_status_and_failure_stay_until_explicitly_dismissed() {
+        let mut browser = Marketplace::default();
+        browser.queue(vec![entry("test.one"), entry("test.two")]);
+        browser.queue(vec![entry("test.one")]);
+        assert_eq!(browser.queue.len(), 2);
+        assert!(browser.busy());
+        browser.dismiss("test.one");
+        assert_eq!(browser.jobs.len(), 2);
+        browser.jobs.get_mut("test.one").unwrap().status =
+            InstallStatus::Failed("Interrupted".into());
+        browser.cancel("test.two");
+        assert!(!browser.busy());
+        assert!(matches!(
+            browser.jobs["test.one"].status,
+            InstallStatus::Failed(_)
+        ));
+        browser.dismiss("test.two");
+        assert!(browser.jobs.contains_key("test.one"));
+        browser.dismiss("test.one");
+        assert!(browser.jobs.is_empty());
+    }
+
+    #[test]
+    fn failed_and_interrupted_installs_survive_restart_until_dismissed() {
+        let root = root("remember");
+        let mut browser = Marketplace::default();
+        browser.queue(vec![entry("test.one"), entry("test.two")]);
+        browser.jobs.get_mut("test.one").unwrap().status =
+            InstallStatus::Failed("Interrupted".into());
+        browser.save_status(&root);
+        let mut restored = Marketplace::restore(&root);
+        assert!(restored
+            .jobs
+            .values()
+            .all(|job| matches!(job.status, InstallStatus::Failed(_))));
+        restored.dismiss("test.one");
+        restored.save_status(&root);
+        assert!(!Marketplace::restore(&root).jobs.contains_key("test.one"));
+        assert!(Marketplace::restore(&root).jobs.contains_key("test.two"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn progress_checking_ready_and_cancelled_are_distinct() {
+        let root = root("progress");
+        let ctx = eframe::egui::Context::default();
+        let mut browser = Marketplace::default();
+        browser.jobs.insert(
+            "test.one".into(),
+            Job {
+                entry: entry("test.one"),
+                status: InstallStatus::Waiting,
+            },
+        );
+        browser
+            .sender
+            .send(Message::Progress("test.one".into(), 30, 100))
+            .unwrap();
+        browser.poll(&root, &ctx, &BTreeSet::new());
+        assert_eq!(
+            browser.jobs["test.one"].status,
+            InstallStatus::Downloading {
+                done: 30,
+                total: 100
+            }
+        );
+        browser
+            .sender
+            .send(Message::Progress("test.one".into(), 100, 100))
+            .unwrap();
+        browser.poll(&root, &ctx, &BTreeSet::new());
+        assert_eq!(browser.jobs["test.one"].status, InstallStatus::Checking);
+        browser
+            .sender
+            .send(Message::Installed(
+                "test.one".into(),
+                Ok(installer::Installed {
+                    version: "1.0.0".into(),
+                    previous: None,
+                }),
+            ))
+            .unwrap();
+        assert!(browser.poll(&root, &ctx, &BTreeSet::new()));
+        assert_eq!(browser.jobs["test.one"].status, InstallStatus::Ready);
+        browser
+            .sender
+            .send(Message::Installed(
+                "test.one".into(),
+                Err(installer::InstallError::Cancelled),
+            ))
+            .unwrap();
+        browser.poll(&root, &ctx, &BTreeSet::new());
+        assert_eq!(browser.jobs["test.one"].status, InstallStatus::Cancelled);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installed_process_must_stop_before_an_update_starts() {
+        let root = root("running");
+        let mut browser = Marketplace::default();
+        browser.queue(vec![entry("test.one")]);
+        browser.poll(
+            &root,
+            &eframe::egui::Context::default(),
+            &BTreeSet::from(["test.one".into()]),
+        );
+        assert!(browser.active.is_none());
+        assert_eq!(browser.queue.len(), 1);
+        assert_eq!(browser.jobs["test.one"].status, InstallStatus::Waiting);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn update_is_primary_only_for_a_newer_version_and_unknown_access_blocks_install() {
+        let mut sample = entry("test.one");
+        assert!(update_available(Some("0.9.0"), &sample));
+        assert!(!update_available(Some("1.0.0"), &sample));
+        assert!(!update_available(None, &sample));
+        sample.capabilities.push("unknown".into());
+        assert!(!can_install(&sample));
+    }
+
+    #[test]
+    fn removing_a_local_package_keeps_data_unless_explicitly_requested() {
+        for delete_data in [false, true] {
+            let root = root(if delete_data {
+                "delete-data"
+            } else {
+                "keep-data"
+            });
+            let mut registry = crate::addons::Registry::load(root.clone());
+            let package = toolboks_addon_sdk::Package::parse(
+                crate::addons::SDK_EXAMPLE.as_bytes(),
+                env!("CARGO_PKG_VERSION"),
+            )
+            .unwrap();
+            let id = package.manifest.id.clone();
+            registry.install(package).unwrap();
+            registry
+                .config
+                .preferences
+                .entry(id.clone())
+                .or_default()
+                .insert("example".into(), serde_json::json!(true));
+            let data = installer::data_dir(&root, &id);
+            std::fs::create_dir_all(&data).unwrap();
+            std::fs::write(data.join("sample"), b"saved data").unwrap();
+            registry.remove(&id, !delete_data).unwrap();
+            assert_eq!(data.exists(), !delete_data);
+            assert_eq!(
+                crate::addons::Registry::load(root.clone())
+                    .config
+                    .preferences
+                    .contains_key(&id),
+                !delete_data
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+}
+impl InstallStatus {
+    pub fn busy(&self) -> bool {
+        matches!(
+            self,
+            Self::Waiting | Self::Downloading { .. } | Self::Checking
+        )
+    }
+    pub fn label(&self) -> String {
+        match self {
+            Self::Waiting => "Waiting to install".into(),
+            Self::Downloading { done, total } => {
+                format!("Downloading {} of {}", size(*done), size(*total))
+            }
+            Self::Checking => "Checking and installing".into(),
+            Self::Ready => "Ready to open".into(),
+            Self::Cancelled => "Download cancelled".into(),
+            Self::Failed(_) => "Could not install".into(),
+        }
+    }
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Job {
+    pub entry: Entry,
+    pub status: InstallStatus,
+}
+enum Message {
+    Catalog(Result<Index, String>),
+    Progress(String, u64, u64),
+    Installed(
+        String,
+        Result<installer::Installed, installer::InstallError>,
+    ),
+    Image(String, Result<Vec<u8>, String>),
+}
+pub struct Marketplace {
+    pub entries: Vec<Entry>,
+    pub error: Option<String>,
+    pub loading: bool,
+    pub checked: bool,
+    pub selected: BTreeSet<String>,
+    pub category: String,
+    pub installed_only: bool,
+    pub focused: Option<String>,
+    pub details: bool,
+    pub review: Option<Vec<Entry>>,
+    pub remove: Option<(String, bool)>,
+    pub jobs: BTreeMap<String, Job>,
+    pub images: BTreeMap<String, Result<Vec<u8>, String>>,
+    image_pending: BTreeSet<String>,
+    queue: VecDeque<Entry>,
+    active: Option<(String, Arc<AtomicBool>)>,
+    sender: mpsc::Sender<Message>,
+    receiver: mpsc::Receiver<Message>,
+    persisted: Vec<u8>,
+}
+impl Default for Marketplace {
+    fn default() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            entries: vec![],
+            error: None,
+            loading: false,
+            checked: false,
+            selected: BTreeSet::new(),
+            category: "All".into(),
+            installed_only: false,
+            focused: None,
+            details: false,
+            review: None,
+            remove: None,
+            jobs: BTreeMap::new(),
+            images: BTreeMap::new(),
+            image_pending: BTreeSet::new(),
+            queue: VecDeque::new(),
+            active: None,
+            sender,
+            receiver,
+            persisted: vec![],
+        }
+    }
+}
+impl Drop for Marketplace {
+    fn drop(&mut self) {
+        if let Some((_, cancel)) = &self.active {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+pub fn size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+pub fn access(name: &str) -> String {
+    match name {
+        "host_metrics" => "Read basic system readings",
+        "local_preferences" => "Save its own settings on this PC",
+        "filesystem_read" => "Read file and folder details in locations you select",
+        "user_exports" => "Save reports where you choose",
+        "drive_optimize" => {
+            "Analyze and optimize drives when you ask (administrator permission required)"
+        }
+        "live_audio" => "Use your selected microphone and audio outputs",
+        "system_tuning" => "Back up and change the Windows settings and power plan you select",
+        "input_automation" => "Record and replay keyboard and mouse actions when you start a macro",
+        "administrator" => "Ask Windows for administrator permission for this add-on",
+        _ => return format!("Unrecognized access: {name}. Update Toolboks before installing."),
+    }
+    .into()
+}
+pub fn can_install(entry: &Entry) -> bool {
+    entry.check(&catalog::host()).is_ok()
+        && entry
+            .capabilities
+            .iter()
+            .all(|name| !access(name).starts_with("Unrecognized"))
+}
+pub fn update_available(installed: Option<&str>, entry: &Entry) -> bool {
+    installed.is_some_and(|old| {
+        toolboks_addon_sdk::version(old) < toolboks_addon_sdk::version(&entry.version)
+    })
+}
+pub fn pick_rank(entry: &Entry) -> usize {
+    let suffix = entry.id.rsplit('.').next().unwrap_or(&entry.id);
+    PICK_ORDER
+        .iter()
+        .position(|id| *id == suffix)
+        .unwrap_or(PICK_ORDER.len())
+}
+
+fn fetched(url: &str, limit: usize) -> Result<Vec<u8>, String> {
+    if !crate::update::is_trusted_url(url) {
+        return Err("The download address is not trusted.".into());
+    }
+    let response = winhttp::get(
+        url,
+        "application/octet-stream",
+        limit,
+        Duration::from_secs(30),
+    )
+    .map_err(|_| "Could not reach the add-on list. Your installed tools still work.".to_string())?;
+    if !crate::update::is_trusted_url(&response.final_url) {
+        return Err("The download moved to an untrusted address.".into());
+    }
+    Ok(response.body)
+}
+fn load_catalog(root: &Path) -> Result<Index, String> {
+    #[cfg(feature = "preview")]
+    if let Some(folder) = fixture() {
+        let bytes = std::fs::read(folder.join("index.json")).map_err(|error| error.to_string())?;
+        let signature =
+            std::fs::read(folder.join("index.json.sig")).map_err(|error| error.to_string())?;
+        let public = std::fs::read_to_string(folder.join("catalog-public.txt"))
+            .map_err(|error| error.to_string())?;
+        let main =
+            toolboks_catalog::hex_decode(public.trim()).ok_or("Invalid preview public key")?;
+        let public = std::fs::read_to_string(folder.join("recovery-public.txt"))
+            .map_err(|error| error.to_string())?;
+        let recovery =
+            toolboks_catalog::hex_decode(public.trim()).ok_or("Invalid preview recovery key")?;
+        return catalog::accept_preview(root, &bytes, &signature, main, recovery)
+            .map_err(|error| format!("Could not check the test add-on list: {error:?}"));
+    }
+    if catalog::trusted_keys().main == [0; 32] {
+        return Err("Add-on downloads are not ready in this build. Your installed tools and local packages still work.".into());
+    }
+    let bytes = fetched(FEED, toolboks_catalog::MAX_INDEX_BYTES)?;
+    let signature = fetched(
+        &format!("{FEED}.sig"),
+        toolboks_catalog::MAX_SIGNATURE_BYTES,
+    )?;
+    catalog::accept(root, &bytes, Some(&signature))
+        .map_err(|_| "Could not check the add-on list. Try again later. No downloads are allowed until the list can be checked.".into())
+}
+#[cfg(feature = "preview")]
+fn fixture() -> Option<PathBuf> {
+    std::env::var_os("TOOLBOKS_TEST_CATALOG").map(PathBuf::from)
+}
+#[cfg(feature = "preview")]
+struct FixtureFetch(PathBuf);
+#[cfg(feature = "preview")]
+impl installer::Fetch for FixtureFetch {
+    fn fetch(
+        &self,
+        url: &str,
+        file: &Path,
+        options: winhttp::Download,
+    ) -> Result<winhttp::Saved, winhttp::HttpError> {
+        use std::io::{Read, Write};
+        let name = url
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty() && !name.contains(['\\', ':', '%']) && *name != "..")
+            .ok_or_else(|| winhttp::HttpError::Other("Invalid fixture file".into()))?;
+        let mut source = std::fs::File::open(self.0.join(name))
+            .map_err(|error| winhttp::HttpError::Other(error.to_string()))?;
+        let mut destination = std::fs::File::create(file)
+            .map_err(|error| winhttp::HttpError::Other(error.to_string()))?;
+        let mut done = 0;
+        let mut chunk = [0; 16384];
+        loop {
+            if options.cancel.load(Ordering::Relaxed) {
+                return Err(winhttp::HttpError::Cancelled);
+            }
+            let read = source
+                .read(&mut chunk)
+                .map_err(|error| winhttp::HttpError::Other(error.to_string()))?;
+            if read == 0 {
+                break;
+            }
+            done += read as u64;
+            if done > options.max_bytes {
+                return Err(winhttp::HttpError::Other("Fixture too large".into()));
+            }
+            destination
+                .write_all(&chunk[..read])
+                .map_err(|error| winhttp::HttpError::Other(error.to_string()))?;
+            (options.progress)(done);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        Ok(winhttp::Saved {
+            final_url: url.into(),
+            resumed: false,
+            len: done,
+        })
+    }
+}
+impl Marketplace {
+    pub fn restore(root: &Path) -> Self {
+        let mut browser = Self::default();
+        if let Ok(bytes) = std::fs::read(root.join("addon-install-status.json")) {
+            if let Ok(jobs) = serde_json::from_slice::<BTreeMap<String, Job>>(&bytes) {
+                browser.jobs = jobs;
+                for job in browser.jobs.values_mut() {
+                    if job.status.busy() {
+                        job.status = InstallStatus::Failed(
+                            "The last install was interrupted. Try again or dismiss it.".into(),
+                        );
+                    }
+                }
+            }
+        }
+        browser
+    }
+
+    fn save_status(&mut self, root: &Path) {
+        let mut jobs = self.jobs.clone();
+        for job in jobs.values_mut() {
+            if job.status.busy() {
+                job.status = InstallStatus::Waiting;
+            }
+        }
+        if let Ok(bytes) = serde_json::to_vec(&jobs) {
+            if self.persisted != bytes {
+                match crate::addons::write_atomic(&root.join("addon-install-status.json"), &bytes) {
+                    Ok(()) => self.persisted = bytes,
+                    Err(error) => {
+                        self.error = Some(format!("Could not remember install status: {error}"))
+                    }
+                }
+            }
+        }
+    }
+    pub fn refresh(&mut self, root: PathBuf, ctx: &eframe::egui::Context) {
+        if self.loading || self.busy() || self.review.is_some() {
+            return;
+        }
+        self.loading = true;
+        self.checked = true;
+        self.error = None;
+        let sender = self.sender.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(Message::Catalog(load_catalog(&root)));
+            ctx.request_repaint();
+        });
+    }
+    pub fn select(&mut self, id: &str, selected: bool) {
+        if selected {
+            self.selected.insert(id.into());
+        } else {
+            self.selected.remove(id);
+        }
+    }
+    pub fn selected_entries(&self) -> Vec<Entry> {
+        let mut entries: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| self.selected.contains(&entry.id) && can_install(entry))
+            .cloned()
+            .collect();
+        entries.sort_by_key(pick_rank);
+        entries
+    }
+    pub fn busy(&self) -> bool {
+        self.jobs.values().any(|job| job.status.busy())
+    }
+    pub fn queue(&mut self, entries: Vec<Entry>) {
+        for entry in entries {
+            if self
+                .jobs
+                .get(&entry.id)
+                .is_some_and(|job| job.status.busy())
+            {
+                continue;
+            }
+            self.jobs.insert(
+                entry.id.clone(),
+                Job {
+                    entry: entry.clone(),
+                    status: InstallStatus::Waiting,
+                },
+            );
+            self.selected.remove(&entry.id);
+            self.queue.push_back(entry);
+        }
+    }
+    pub fn dismiss(&mut self, id: &str) {
+        if self.jobs.get(id).is_some_and(|job| !job.status.busy()) {
+            self.jobs.remove(id);
+        }
+    }
+    pub fn cancel(&mut self, id: &str) {
+        if let Some((active, cancel)) = &self.active {
+            if active == id {
+                cancel.store(true, Ordering::Relaxed);
+                return;
+            }
+        }
+        self.queue.retain(|entry| entry.id != id);
+        if let Some(job) = self.jobs.get_mut(id) {
+            job.status = InstallStatus::Cancelled;
+        }
+    }
+    pub fn image(&mut self, url: &str, ctx: &eframe::egui::Context) {
+        if self.images.contains_key(url) || !self.image_pending.insert(url.into()) {
+            return;
+        }
+        let url = url.to_string();
+        let sender = self.sender.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = fetched(&url, 8 * 1024 * 1024);
+            let _ = sender.send(Message::Image(url, result));
+            ctx.request_repaint();
+        });
+    }
+    pub fn poll(
+        &mut self,
+        root: &Path,
+        ctx: &eframe::egui::Context,
+        running: &BTreeSet<String>,
+    ) -> bool {
+        let mut changed = false;
+        while let Ok(message) = self.receiver.try_recv() {
+            match message {
+                Message::Catalog(result) => {
+                    self.loading = false;
+                    match result {
+                        Ok(index) => {
+                            self.entries = index
+                                .listing(&catalog::host())
+                                .into_iter()
+                                .cloned()
+                                .collect();
+                            self.selected
+                                .retain(|id| self.entries.iter().any(|entry| &entry.id == id));
+                            let _ = installer::record_update_check(
+                                root,
+                                toolboks_catalog::Clock::now(&catalog::SystemClock),
+                            );
+                        }
+                        Err(error) => {
+                            self.entries.clear();
+                            self.selected.clear();
+                            self.review = None;
+                            self.error = Some(error);
+                        }
+                    }
+                }
+                Message::Progress(id, done, total) => {
+                    if let Some(job) = self.jobs.get_mut(&id) {
+                        job.status = if done == total {
+                            InstallStatus::Checking
+                        } else {
+                            InstallStatus::Downloading { done, total }
+                        };
+                    }
+                }
+                Message::Installed(id, result) => {
+                    self.active = None;
+                    if let Some(job) = self.jobs.get_mut(&id) {
+                        job.status = match result {
+                            Ok(_) => {
+                                changed = true;
+                                InstallStatus::Ready
+                            }
+                            Err(installer::InstallError::Cancelled) => InstallStatus::Cancelled,
+                            Err(error) => InstallStatus::Failed(install_failure(&error)),
+                        };
+                    }
+                }
+                Message::Image(url, bytes) => {
+                    self.image_pending.remove(&url);
+                    self.images.insert(url, bytes);
+                }
+            }
+        }
+        if self.active.is_none() {
+            if let Some(entry) = self.queue.pop_front() {
+                if running.contains(&entry.id) {
+                    self.queue.push_front(entry);
+                    self.save_status(root);
+                    ctx.request_repaint_after(Duration::from_millis(100));
+                    return changed;
+                }
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.active = Some((entry.id.clone(), cancel.clone()));
+                self.jobs.get_mut(&entry.id).unwrap().status = InstallStatus::Downloading {
+                    done: 0,
+                    total: entry.size,
+                };
+                let sender = self.sender.clone();
+                let root = root.to_path_buf();
+                let ctx = ctx.clone();
+                std::thread::spawn(move || {
+                    let mut progress = |done, total| {
+                        let _ = sender.send(Message::Progress(entry.id.clone(), done, total));
+                        ctx.request_repaint();
+                    };
+                    let fetch: Box<dyn installer::Fetch> = {
+                        #[cfg(feature = "preview")]
+                        if let Some(folder) = fixture() {
+                            Box::new(FixtureFetch(folder))
+                        } else {
+                            Box::new(installer::WinHttp)
+                        }
+                        #[cfg(not(feature = "preview"))]
+                        {
+                            Box::new(installer::WinHttp)
+                        }
+                    };
+                    let result = installer::install(
+                        &root,
+                        &entry,
+                        &catalog::host(),
+                        fetch.as_ref(),
+                        false,
+                        &cancel,
+                        &mut progress,
+                    );
+                    let _ = sender.send(Message::Installed(entry.id, result));
+                    ctx.request_repaint();
+                });
+            }
+        }
+        if self.busy() || self.loading {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+        self.save_status(root);
+        changed
+    }
+}
+
+fn install_failure(error: &installer::InstallError) -> String {
+    let message = match error {
+        installer::InstallError::Mismatch(_) => "The download could not be checked. Download it again.",
+        installer::InstallError::Interrupted(_) => "The download was interrupted. Check your connection and try again.",
+        installer::InstallError::Untrusted => "The download address is not trusted. Refresh the add-on list and try again.",
+        installer::InstallError::BadPackage(_) => "The package does not match the reviewed add-on. Refresh the list and download it again.",
+        installer::InstallError::Hidden(_) => "Update Toolboks before installing this add-on.",
+        _ => return format!("{error} Your previous version, if installed, is unchanged."),
+    };
+    format!(
+        "{message} Nothing new was installed. Your previous version, if installed, is unchanged."
+    )
+}

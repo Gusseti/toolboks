@@ -9,6 +9,9 @@ use crate::tools;
 use crate::tray::{self, Tray};
 use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
+mod marketplace;
+#[cfg(feature = "preview")]
+pub mod marketplace_check;
 mod shell;
 mod tutorial;
 use crate::addons::{self, Registry, SystemAddon};
@@ -30,6 +33,10 @@ enum UpdateState {
 }
 
 pub struct App {
+    market: crate::marketplace::Marketplace,
+    supervisor: Option<crate::supervisor::Supervisor>,
+    views: std::collections::BTreeMap<String, crate::addon_view::AddonView>,
+    services: crate::addon_services::Services,
     base: SystemAddon,
     native: crate::native::NativeHost,
     registry: Registry,
@@ -125,6 +132,9 @@ impl App {
         let keep_in_tray = registry.config.keep_in_tray;
         let mut selected = (0, 0);
         let mut screen = Screen::Home;
+        if !registry.config.first_run_complete && registry.packages.is_empty() {
+            screen = Screen::Pick;
+        }
         if let Some((tool, page)) = parse_open(&args) {
             match open_target(&registry, tool) {
                 Ok(()) => {
@@ -155,7 +165,12 @@ impl App {
                 }
             }
         }
+        let market = crate::marketplace::Marketplace::restore(&registry.root);
         Self {
+            market,
+            supervisor: None,
+            views: Default::default(),
+            services: Default::default(),
             native,
             base: SystemAddon {
                 selected,

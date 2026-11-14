@@ -125,6 +125,7 @@ impl SystemAddon {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub first_run_complete: bool,
     pub keep_in_tray: bool,
     pub sidebar_collapsed: bool,
     pub disabled: Vec<String>,
@@ -241,7 +242,9 @@ impl Registry {
         self.builtins.iter().position(|m| m.id == id)
     }
     pub fn verified(&self, id: &str) -> bool {
-        self.builtin_index(id).is_some() || OFFICIAL_ADDONS.contains(&id)
+        self.builtin_index(id).is_some()
+            || OFFICIAL_ADDONS.contains(&id)
+            || crate::installer::installed_entry(&self.root, id).is_some_and(|entry| entry.verified)
     }
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> Result<(), String> {
         let before = self.config.clone();
@@ -290,9 +293,6 @@ impl Registry {
         self.packages
             .sort_by_key(|a| (!trusted_native(a), a.manifest.title.to_lowercase()));
         Ok(())
-    }
-    pub fn uninstall(&mut self, id: &str) -> Result<(), String> {
-        self.remove(id, false)
     }
     /// Removes an add-on. With `keep_data` its preferences and data folder stay, so a later
     /// install picks them up again.
@@ -462,8 +462,8 @@ mod tests {
         let mut reloaded = Registry::load(root.clone());
         assert_eq!(reloaded.packages.len(), 1);
         assert!(!reloaded.enabled("com.example.hello-system"));
-        assert!(reloaded.uninstall("toolboks.memory-cleaner").is_err());
-        reloaded.uninstall("com.example.hello-system").unwrap();
+        assert!(reloaded.remove("toolboks.memory-cleaner", false).is_err());
+        reloaded.remove("com.example.hello-system", false).unwrap();
         assert!(Registry::load(root.clone()).packages.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
@@ -498,7 +498,7 @@ mod tests {
             loaded.packages[0].manifest.native_provider.as_deref(),
             Some(toolboks_disk_manager::PROVIDER)
         );
-        loaded.uninstall(toolboks_disk_manager::ID).unwrap();
+        loaded.remove(toolboks_disk_manager::ID, false).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
