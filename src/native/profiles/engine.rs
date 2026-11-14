@@ -9,15 +9,12 @@ use std::{
 use serde::{Deserialize, Serialize};
 use windows::Win32::System::Com::CoCreateGuid;
 
-use crate::{
-    addons,
-    tools::debloat::{
-        backend::{self, Registry, WinRegistry},
-        catalog,
-        model::{Edition, Hive, RegValue},
-    },
-    win::windows_dir,
+use toolboks_debloat_engine::{
+    backend::{self, Registry, WinRegistry},
+    catalog,
+    model::{Edition, Hive, RegValue},
 };
+use toolboks_shared::{elevation, storage, win, win::windows_dir};
 
 #[derive(Clone, Copy)]
 pub(super) struct Choice {
@@ -203,7 +200,7 @@ pub(super) enum Action {
 }
 
 pub(super) fn root() -> PathBuf {
-    addons::data_root().join("Gaming profile")
+    storage::data_root().join("Gaming profile")
 }
 
 pub(super) fn has_backup() -> bool {
@@ -252,7 +249,7 @@ pub(super) fn preview(selected: &[&str]) -> Vec<String> {
 }
 
 pub(super) fn review_backup() -> Result<Vec<String>, String> {
-    crate::elevation::require_user_profile()?;
+    elevation::require_user_profile()?;
     let journal = load_journal(&root().join(JOURNAL))?;
     review_registry(&journal, &WinRegistry)
 }
@@ -284,7 +281,7 @@ fn load_journal(path: &Path) -> Result<Journal, String> {
 
 fn save(root: &Path, journal: &Journal) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(journal).map_err(|e| e.to_string())?;
-    addons::write_atomic(&root.join(JOURNAL), &bytes)
+    storage::write_atomic(&root.join(JOURNAL), &bytes)
 }
 
 fn export(journal: &Journal) -> Result<Vec<u8>, String> {
@@ -501,7 +498,7 @@ fn apply(
     }
     if !journal.changes.is_empty() {
         let backup = root.join(&id).join("registry-before.reg");
-        addons::write_atomic(&backup, &export(&journal)?)?;
+        storage::write_atomic(&backup, &export(&journal)?)?;
         log(&format!("Registry export saved to {}.", backup.display()));
     }
     restore_point(&id, enable_protection, log)?;
@@ -595,10 +592,10 @@ fn restore(root: &Path, log: &mut impl FnMut(&str)) -> Result<(), String> {
 }
 
 pub(super) fn run(action: Action, mut emit: impl FnMut(String)) -> Result<(), String> {
-    if !crate::elevation::is_elevated() {
+    if !elevation::is_elevated() {
         return Err("Administrator rights are required.".into());
     }
-    crate::elevation::require_user_profile()?;
+    elevation::require_user_profile()?;
     let root = root();
     fs::create_dir_all(&root).map_err(|e| format!("Create backup folder: {e}"))?;
     let lock =
@@ -612,7 +609,7 @@ pub(super) fn run(action: Action, mut emit: impl FnMut(String)) -> Result<(), St
         .map_err(|e| format!("Open activity log: {e}"))?;
     let mut log_error = None;
     let mut log = |message: &str| {
-        let line = format!("[{}] {}", crate::win::local_time_hms(), message);
+        let line = format!("[{}] {}", win::local_time_hms(), message);
         if let Err(error) = writeln!(file, "{line}") {
             log_error = Some(error);
         }

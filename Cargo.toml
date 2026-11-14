@@ -12,7 +12,7 @@ resolver = "2"
 
 [features]
 # Isolated local builds: separate window/instance and no self-update traffic or swaps.
-preview = []
+preview = ["toolboks-shared/preview"]
 
 [dependencies]
 toolboks-addon-sdk = { path = "sdk/toolboks-addon-sdk", features = ["native-ui"] }
