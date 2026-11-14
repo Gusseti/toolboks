@@ -3,14 +3,14 @@
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use toolboks_addon_sdk::runtime::proto::memory::{duplex, PipeWriter};
+use toolboks_addon_sdk::runtime::proto::memory::{duplex, duplex_with_capacity, PipeWriter};
 use toolboks_addon_sdk::runtime::proto::mesh::{MeshCache, MeshRef};
 use toolboks_addon_sdk::runtime::proto::pacing::{Heartbeat, HeartbeatMonitor};
 use toolboks_addon_sdk::runtime::proto::{
     self, egui as wire_egui, AddonMessage, Frame, FrameWriter, Hello, HostMessage, InputBatch,
     InputEvent, ProtocolError, TabDirection, Theme, PROTOCOL_VERSION,
 };
-use toolboks_addon_sdk::runtime::run_addon_on;
+use toolboks_addon_sdk::runtime::{run_addon_on, MAX_QUEUED_HOST_MESSAGES};
 use toolboks_addon_sdk::{NativeAddon, StatusItem, TutorialStep};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -416,4 +416,70 @@ fn delayed_repaint_between_frames_keeps_its_deadline() {
     ctx.request_repaint();
     assert_eq!(host.recv(), AddonMessage::RequestRepaint { after_ms: 0 });
     host.quit().unwrap();
+}
+
+#[test]
+fn flooding_requests_while_answers_back_up_does_not_deadlock() {
+    // Small pipes, like OS pipes with a finite buffer. The host writes every request before it
+    // reads any answer; a reader that blocked on a bounded queue would deadlock here.
+    let (host, addon_side) = duplex_with_capacity(256);
+    let addon = std::thread::spawn(move || run_addon_on(addon_side, Counter::default(), "counter"));
+    let (mut reader, mut writer) = host.split();
+    proto::host_handshake(&mut reader, &mut writer, &Hello::new("counter", "test")).unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let flood = std::thread::spawn(move || {
+        for _ in 0..500 {
+            writer.write(&HostMessage::TutorialQuery).unwrap();
+        }
+        writer.write(&HostMessage::Quit).unwrap();
+        done_tx.send(()).unwrap();
+        writer
+    });
+    done_rx
+        .recv_timeout(WAIT)
+        .expect("host writes blocked: duplex deadlock");
+    let _writer = flood.join().unwrap();
+    let mut answers = 0;
+    loop {
+        match reader.read::<AddonMessage>() {
+            Ok(AddonMessage::Tutorial { .. }) => answers += 1,
+            Ok(_) => {}
+            Err(error) => {
+                assert!(error.is_closed(), "{error:?}");
+                break;
+            }
+        }
+    }
+    assert_eq!(answers, 500);
+    addon.join().unwrap().unwrap();
+}
+
+#[test]
+fn unhandled_flood_past_the_cap_ends_with_a_clear_error() {
+    let (unblock, block) = mpsc::channel();
+    let mut host = TestHost::connect(Counter {
+        block: Some(block),
+        ..Default::default()
+    });
+    // The add-on is stuck in `ui` while the host keeps sending.
+    host.seq += 1;
+    let seq = host.seq;
+    host.send(HostMessage::Input(InputBatch {
+        seq,
+        size: [400.0, 300.0],
+        pixels_per_point: 1.0,
+        theme: Theme::Dark,
+        window_focused: true,
+        events: vec![],
+    }));
+    for nonce in 0..=MAX_QUEUED_HOST_MESSAGES as u64 + 1 {
+        host.send(HostMessage::Ping { nonce });
+    }
+    drop(unblock);
+    let error = host.addon.join().unwrap().unwrap_err();
+    assert!(
+        matches!(error, ProtocolError::Overloaded { limit } if limit == MAX_QUEUED_HOST_MESSAGES),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("4096 messages"));
 }

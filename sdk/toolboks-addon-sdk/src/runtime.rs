@@ -37,6 +37,7 @@ use proto::{
 };
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -45,9 +46,11 @@ pub use toolboks_addon_proto as proto;
 /// The SDK version an add-on reports in its `Hello`.
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 const BACKGROUND_TICK: Duration = Duration::from_millis(200);
-/// Host messages waiting for the main loop. When it is full the reader stops reading, so a
-/// fast host is held back by the pipe instead of growing memory.
-const WAKE_QUEUE: usize = 64;
+/// The most host messages the add-on holds unhandled. The reader never blocks on its queue:
+/// a blocked reader stops draining the pipe, and the host may be blocked writing to that pipe
+/// while the add-on waits to write its answers (a duplex deadlock). Past this cap the session
+/// ends with [`ProtocolError::Overloaded`] instead.
+pub const MAX_QUEUED_HOST_MESSAGES: usize = 4096;
 
 static LOG: Mutex<Vec<(LogLevel, String)>> = Mutex::new(Vec::new());
 
@@ -150,12 +153,22 @@ where
 {
     let (mut reader, mut writer) = transport.split();
     proto::addon_handshake(&mut reader, &mut writer, &Hello::new(addon_id, SDK_VERSION))?;
-    let (tx, rx) = mpsc::sync_channel(WAKE_QUEUE);
+    let (tx, rx) = mpsc::channel();
     let host_tx = tx.clone();
+    let queued = Arc::new(AtomicUsize::new(0));
+    let reader_queued = queued.clone();
     std::thread::Builder::new()
         .name("toolboks-addon-reader".into())
         .spawn(move || loop {
             let message = reader.read::<HostMessage>();
+            let message =
+                if reader_queued.fetch_add(1, Ordering::AcqRel) >= MAX_QUEUED_HOST_MESSAGES {
+                    Err(ProtocolError::Overloaded {
+                        limit: MAX_QUEUED_HOST_MESSAGES,
+                    })
+                } else {
+                    message
+                };
             let end = message.is_err();
             if host_tx.send(Wake::Host(message)).is_err() || end {
                 break;
@@ -171,7 +184,7 @@ where
             return;
         };
         if signal.add(info.current_cumulative_pass_nr, deadline) {
-            let _ = tx.try_send(Wake::Repaint);
+            let _ = tx.send(Wake::Repaint);
         }
     });
     let mut runtime = Runtime {
@@ -183,6 +196,7 @@ where
         suspended: false,
         requests,
         repaint_deadline: None,
+        queued,
         theme: None,
         status: Vec::new(),
     };
@@ -202,6 +216,8 @@ struct Runtime<W> {
     preferences: BTreeMap<String, serde_json::Value>,
     suspended: bool,
     requests: Arc<RepaintRequests>,
+    /// Host messages read but not handled yet; shared with the reader thread.
+    queued: Arc<AtomicUsize>,
     /// The earliest repaint deadline sent to the host since the last input batch.
     repaint_deadline: Option<Instant>,
     theme: Option<Theme>,
@@ -246,6 +262,7 @@ impl<W: Write> Runtime<W> {
                 // Handled below with every wake, so a wake dropped on a full queue is not lost.
                 Wake::Repaint => {}
                 Wake::Host(message) => {
+                    self.queued.fetch_sub(1, Ordering::AcqRel);
                     if !self.handle(addon, message?)? {
                         return Ok(());
                     }

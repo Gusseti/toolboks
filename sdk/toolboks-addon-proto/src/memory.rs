@@ -7,14 +7,13 @@ use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
-#[derive(Default)]
 struct State {
     buffer: VecDeque<u8>,
+    capacity: usize,
     writer_closed: bool,
     reader_closed: bool,
 }
 
-#[derive(Default)]
 struct Shared {
     state: Mutex<State>,
     ready: Condvar,
@@ -24,7 +23,21 @@ pub struct PipeReader(Arc<Shared>);
 pub struct PipeWriter(Arc<Shared>);
 
 pub fn pipe() -> (PipeReader, PipeWriter) {
-    let shared = Arc::new(Shared::default());
+    pipe_with_capacity(usize::MAX)
+}
+
+/// A pipe that holds at most `capacity` bytes; writes block while it is full, like an OS
+/// pipe with a finite buffer.
+pub fn pipe_with_capacity(capacity: usize) -> (PipeReader, PipeWriter) {
+    let shared = Arc::new(Shared {
+        state: Mutex::new(State {
+            buffer: VecDeque::new(),
+            capacity: capacity.max(1),
+            writer_closed: false,
+            reader_closed: false,
+        }),
+        ready: Condvar::new(),
+    });
     (PipeReader(shared.clone()), PipeWriter(shared))
 }
 
@@ -33,8 +46,13 @@ pub type MemoryTransport = Transport<PipeReader, PipeWriter>;
 
 /// Two pipes wired as a connection: `(host side, add-on side)`.
 pub fn duplex() -> (MemoryTransport, MemoryTransport) {
-    let (to_addon_r, to_addon_w) = pipe();
-    let (to_host_r, to_host_w) = pipe();
+    duplex_with_capacity(usize::MAX)
+}
+
+/// [`duplex`] with each direction limited to `capacity` bytes.
+pub fn duplex_with_capacity(capacity: usize) -> (MemoryTransport, MemoryTransport) {
+    let (to_addon_r, to_addon_w) = pipe_with_capacity(capacity);
+    let (to_host_r, to_host_w) = pipe_with_capacity(capacity);
     (
         Transport::new(to_host_r, to_addon_w),
         Transport::new(to_addon_r, to_host_w),
@@ -72,6 +90,7 @@ impl Read for PipeReader {
         for (slot, byte) in out.iter_mut().zip(state.buffer.drain(..n)) {
             *slot = byte;
         }
+        self.0.ready.notify_all();
         Ok(n)
     }
 }
@@ -85,13 +104,24 @@ impl Drop for PipeReader {
 
 impl Write for PipeWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
         let mut state = lock(&self.0);
+        while state.buffer.len() >= state.capacity && !state.reader_closed {
+            state = self
+                .0
+                .ready
+                .wait(state)
+                .unwrap_or_else(|poison| poison.into_inner());
+        }
         if state.reader_closed {
             return Err(io::Error::new(io::ErrorKind::BrokenPipe, "reader dropped"));
         }
-        state.buffer.extend(bytes);
+        let n = bytes.len().min(state.capacity - state.buffer.len());
+        state.buffer.extend(&bytes[..n]);
         self.0.ready.notify_all();
-        Ok(bytes.len())
+        Ok(n)
     }
 
     fn flush(&mut self) -> io::Result<()> {

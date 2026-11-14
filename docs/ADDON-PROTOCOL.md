@@ -107,8 +107,10 @@ and `mesh::MeshCache` (host side).
   `pacing::RepaintLimiter`, so two of them are at least one frame interval apart. `after_ms` is the
   time left until the deadline the add-on asked for. Between two input batches the add-on sends
   another `RequestRepaint` only for an earlier deadline, and it ignores repaint requests made
-  during a pass, because those are already in that frame's hint. The add-on's message queue is
-  bounded: when it is full, the add-on stops reading the pipe.
+  during a pass, because those are already in that frame's hint. The add-on's reader never
+  blocks on its queue (a blocked reader would stop draining the pipe while the host may be
+  blocked writing to it: a duplex deadlock). Past `MAX_QUEUED_HOST_MESSAGES` (4096) unhandled
+  host messages the add-on ends the session with `ProtocolError::Overloaded`.
 - The host drives every frame. The add-on renders only when an `Input` arrives.
 
 ## What may block
