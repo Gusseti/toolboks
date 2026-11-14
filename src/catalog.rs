@@ -26,7 +26,7 @@ const RECOVERY_KEY: [u8; 32] = [0; 32];
 const ROTATION_FLOOR: u64 = 0;
 
 /// Add-on protocol versions this build can talk to.
-pub const PROTOCOL_VERSIONS: &[u32] = &[1];
+pub const PROTOCOL_VERSIONS: &[u32] = &[toolboks_addon_proto::PROTOCOL_VERSION];
 
 pub fn trusted_keys() -> TrustedKeys {
     TrustedKeys {
@@ -138,7 +138,7 @@ mod tests {
                 "kind": "declarative",
                 "version": "1.0.0",
                 "min_toolboks_version": env!("CARGO_PKG_VERSION"),
-                "protocol_version": 1,
+                "protocol_version": toolboks_addon_proto::PROTOCOL_VERSION,
                 "download_url": "https://example.com/sample.tbaddon",
                 "size": 5,
                 "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",

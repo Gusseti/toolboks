@@ -6,6 +6,8 @@
 //! - `crash`: the same, but the process ends with exit code 3 shortly after it started;
 //! - `child`: the same, and it starts a child process that sleeps, to show that the host's job
 //!   ends children too (the child's process id goes to `child.pid`);
+//! - `services`: a real add-on that uses every host service (status bar items, tray entries,
+//!   a tour with an anchor, preferences), for the host services tests;
 //! - `wrong-token`: opens the pipes and presents a token that is not the one it was given;
 //! - `silent`: opens nothing and waits.
 //!
@@ -17,7 +19,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use toolboks_addon_sdk::runtime::run_addon;
-use toolboks_addon_sdk::NativeAddon;
+use toolboks_addon_sdk::{tutorial, NativeAddon, StatusItem, TrayItem, TutorialStep};
 
 pub const ID: &str = "test.fake-addon";
 
@@ -31,6 +33,80 @@ impl NativeAddon for Fake {
     ) -> bool {
         ui.label("Fake add-on");
         false
+    }
+}
+
+/// Uses every host service. `count` is the one preference; the tray entry "bump" raises it,
+/// and so does the button, which a tour must never reach.
+#[derive(Default)]
+struct Services {
+    count: i64,
+}
+
+impl NativeAddon for Services {
+    fn load_preferences(&mut self, preferences: &BTreeMap<String, serde_json::Value>) {
+        self.count = preferences
+            .get("count")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+    }
+
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _preferences: &mut BTreeMap<String, serde_json::Value>,
+    ) -> bool {
+        ui.label("Services add-on");
+        tutorial::region(ui, "fake-anchor", |ui| {
+            if ui.button("Add a hundred").clicked() {
+                self.count += 100;
+            }
+        });
+        false
+    }
+
+    fn save_preferences(&mut self, preferences: &mut BTreeMap<String, serde_json::Value>) -> bool {
+        let count = serde_json::Value::from(self.count);
+        if preferences.get("count") == Some(&count) {
+            return false;
+        }
+        preferences.insert("count".into(), count);
+        true
+    }
+
+    fn status_items(&self) -> Vec<StatusItem> {
+        vec![StatusItem {
+            text: format!("Fake {}", self.count),
+            tooltip: None,
+        }]
+    }
+
+    fn tray_items(&self) -> Vec<TrayItem> {
+        let item = |id: &str, label: &str, enabled| TrayItem {
+            id: id.into(),
+            label: label.into(),
+            enabled,
+        };
+        vec![item("bump", "Add one", true), item("off", "Not now", false)]
+    }
+
+    fn tray_action(&mut self, id: &str) {
+        if id == "bump" {
+            self.count += 1;
+        }
+    }
+
+    fn tutorial_steps(&self) -> Vec<TutorialStep> {
+        vec![TutorialStep::new(
+            "main",
+            "fake-anchor",
+            "The button",
+            "This button adds a hundred.",
+        )]
+    }
+
+    fn tutorial_location(&self) -> String {
+        "main".into()
     }
 }
 
@@ -93,7 +169,11 @@ fn main() {
                 std::fs::write(folder.join("child.pid"), child.id().to_string())
                     .expect("child.pid");
             }
-            let _ = run_addon(Fake, ID);
+            if mode == "services" {
+                let _ = run_addon(Services::default(), ID);
+            } else {
+                let _ = run_addon(Fake, ID);
+            }
         }
     }
 }

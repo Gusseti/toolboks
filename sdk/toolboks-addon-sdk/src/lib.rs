@@ -85,6 +85,16 @@ pub struct StatusItem {
 }
 
 #[cfg(feature = "native-ui")]
+/// One entry an add-on adds to the host's tray menu. `id` comes back in
+/// [`NativeAddon::tray_action`] when the user chooses it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayItem {
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
+}
+
+#[cfg(feature = "native-ui")]
 pub enum HostRequest {
     RestartElevated { page: String },
     ReviewUpdate,
@@ -404,6 +414,12 @@ pub trait NativeAddon {
     fn status_items(&self) -> Vec<StatusItem> {
         Vec::new()
     }
+    /// Entries for the host's tray menu. Only the out-of-process runtime forwards them.
+    fn tray_items(&self) -> Vec<TrayItem> {
+        Vec::new()
+    }
+    /// The user chose the tray entry `id`. Only entries from [`Self::tray_items`] arrive.
+    fn tray_action(&mut self, _id: &str) {}
 }
 
 #[cfg(test)]
