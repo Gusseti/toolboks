@@ -4,5 +4,7 @@
 #[cfg(windows)]
 pub mod elevation;
 pub mod format;
+#[cfg(feature = "ui")]
+pub mod ui;
 #[cfg(windows)]
 pub mod win;

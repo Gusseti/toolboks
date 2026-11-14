@@ -1,7 +1,7 @@
 //! The look shared by every tool: the dark graphite tokens of DESIGN.md, cards on an 8 px grid,
 //! a segmented switch, a toggle, stat bars and line graphs.
 
-use eframe::egui::{self, Color32, Mesh, Pos2, RichText, Sense, Shape, Stroke, Vec2};
+use egui::{self, Color32, Mesh, Pos2, RichText, Sense, Shape, Stroke, Vec2};
 
 /// Spacing scale (DESIGN.md: 4, 8, 12, 16). `GAP` is the space between cards.
 pub const SPACE_XS: f32 = 4.0;
