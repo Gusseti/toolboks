@@ -45,7 +45,7 @@ Someone changes `index.json`, an add-on file on GitHub, or the traffic in betwee
 - An add-on is placed only after its bytes match the size and SHA-256 in the signed index. A
   mismatch deletes the download. **Covered** (`installer` tests).
 - Downloads go over HTTPS and only from GitHub's hosts, also after redirects. **Covered**, with
-  one defect in the host check: see finding F1.
+  one defect in the host check that has since been fixed: see finding F1.
 - The recovery key cannot sign an index, and a rotation statement cannot double as an index
   signature. **Covered**.
 
@@ -147,7 +147,7 @@ publisher" in the UAC prompt, which is also what a swapped exe would show.
 
 ## Findings
 
-Ordered by how much they matter. None is fixed in the change that adds this document.
+Ordered by how much they matter. F1 is fixed; the others are open.
 
 | # | Finding | Where | Proposed fix |
 |---|---|---|---|
@@ -155,7 +155,7 @@ Ordered by how much they matter. None is fixed in the change that adds this docu
 | F2 | For an add-on that may elevate, the exe's hash is checked against a record in the same user-writable folder. A swapped exe plus a swapped record leads to a UAC prompt for the attacker's file under the add-on's name. | `src/installer.rs` (`active.json`), `src/supervisor/mod.rs` | Before an elevated start, check the exe against a signed index that is still valid (keep the last accepted `index.json` and its signature and verify them again), not against `active.json`. Refuse to elevate when no valid index is at hand. |
 | F3 | The hash covers `addon.exe` only. Windows loads DLLs from the exe's own folder before the system folder, so a planted DLL beside the exe runs inside the add-on, also an elevated one. | version folder under `addons/<id>/` | Build add-on exes to load DLLs from System32 only (linker `/DEPENDENTLOADFLAG:0x800`), and have the supervisor refuse to start when the version folder holds anything but the expected files. |
 | F5 | The host's self-update trusts a checksum from the same release as the exe. Whoever can edit a release can replace the host, and with it every check in this document. | `src/update.rs`, #13, #14 | Sign host releases with a key kept outside GitHub (the catalog signing tool's key handling can be reused) and refuse an update that does not verify. Finish #14. Do this before the first add-on release. |
-| F1 | `is_trusted_url` takes everything up to the first `/` as the host. `https://evil.example?x=.github.com` passes, because the text ends in `.github.com`. The catalog's own URL check does not have this flaw, and a URL reaches this function only from a signed index or from GitHub's answers, so it is hard to reach today. | `src/update.rs` `is_trusted_url` | Cut the host at `/`, `?` and `#`, and refuse `@` and `:` in it. Add the cases to its tests. Small, and it also hardens the self-update. |
+| F1 | `is_trusted_url` takes everything up to the first `/` as the host. `https://evil.example?x=.github.com` passes, because the text ends in `.github.com`. The catalog's own URL check does not have this flaw, and a URL reaches this function only from a signed index or from GitHub's answers, so it is hard to reach today. | `src/update.rs` `is_trusted_url` | **Fixed** (PR #112): the host ends at `/`, `?` or `#`, and `@` and `:` in it are refused. |
 | F6 | Add-on exes and the host are unsigned. | release process, #50 | Owner decision 2. At the least, sign before an add-on that asks for administrator rights is published, so its UAC prompt names the publisher. Signing options and their limits are compared in `docs/RESEARCH-debloat.md` section 10.3. |
 | F7 | A hidden add-on that is not a background add-on keeps its (suspended) process. #97 proposes that it holds none. Not a security flaw, but fewer idle processes is also less to attack. | `src/supervisor/mod.rs` `hide` | Decide in #97; ending the process on `hide` is a small change. |
 
@@ -172,7 +172,7 @@ Ordered by how much they matter. None is fixed in the change that adds this docu
 
 - [ ] Real catalog public keys are built in (owner).
 - [ ] F5: the host's own update verifies a signature.
-- [ ] F1 is fixed.
+- [x] F1 is fixed (PR #112).
 - [ ] F2, F3 and F4 are fixed or accepted in writing before any add-on that asks for
       administrator rights is published.
 - [ ] Owner decision 2 is recorded.
