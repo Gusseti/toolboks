@@ -49,6 +49,7 @@ pub struct App {
     install_path: String,
     show_install: bool,
     pending_package: Option<toolboks_addon_sdk::Package>,
+    pending_declarative: Option<String>,
     detail: Option<String>,
     /// The add-on selected in the Home list (by id). Memory only.
     home_selected: Option<String>,
@@ -185,6 +186,7 @@ impl App {
             install_path: String::new(),
             show_install: false,
             pending_package: None,
+            pending_declarative: None,
             detail: None,
             home_selected: None,
             remove_pending: None,
@@ -649,7 +651,7 @@ mod tests {
         let (tool, _) = parse_open(&args(&["--open", "Resource Monitor/Details"])).unwrap();
         assert!(registry.builtins.is_empty());
         assert!(open_target(&registry, tool).is_err());
-        registry.builtins = addons::builtin_manifests();
+        registry.builtins = crate::addons::builtin_manifests();
         assert!(open_target(&registry, tool).is_ok());
         registry
             .set_enabled("toolboks.resource-monitor", false)

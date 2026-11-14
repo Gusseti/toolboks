@@ -1359,6 +1359,14 @@ impl App {
                     }
                 });
         });
+        if self.pending_declarative.as_deref() == Some(id) {
+            self.pending_declarative = None;
+            if let Err(error) = crate::installer::started(&self.registry.root, id) {
+                self.message = Some(format!(
+                    "The add-on opened, but its version could not be confirmed: {error}"
+                ));
+            }
+        }
     }
     fn settings(&mut self, ui: &mut egui::Ui) {
         Self::title(

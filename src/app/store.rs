@@ -373,7 +373,7 @@ impl App {
                             ui.horizontal(|ui| {
                                 let (rect,_)=ui.allocate_exact_size(Vec2::splat(17.0),Sense::hover());
                                 icon(ui.painter(),rect,"search",MUTED);
-                                let response=ui.add_sized(Vec2::new((ui.available_width()-18.0).clamp(100.0,267.0),44.0),egui::TextEdit::singleline(&mut self.search).hint_text("Search add-ons").font(font(15.0,400)).frame(egui::Frame::NONE).margin(Vec2::new(0.0,10.0)));
+                                let response=ui.add(egui::TextEdit::singleline(&mut self.search).desired_width(269.0).hint_text("Search add-ons").font(font(15.0,400)).frame(egui::Frame::NONE).margin(Vec2::new(0.0,10.0)));
                                 anchors::mark(ui,"browser-search",response.rect);
                             });
                         });
@@ -444,10 +444,13 @@ impl App {
     fn store_detail(&mut self, ui: &mut egui::Ui, entry: &Entry, height: f32) {
         let top = ui.cursor().top();
         ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
-        ui.add(egui::Label::new(text(&entry.title, 22.0, 700, TEXT)).wrap());
+        ui.add(
+            egui::Label::new(text(&entry.title, 22.0, 700, TEXT).extra_letter_spacing(-0.44))
+                .wrap(),
+        );
         ui.add_space(4.0);
         ui.label(text(
-            format!("{} ? {}", entry.publisher, entry.category),
+            format!("{} \u{b7} {}", entry.publisher, entry.category),
             13.0,
             400,
             MUTED,

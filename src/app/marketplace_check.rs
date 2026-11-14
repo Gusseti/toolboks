@@ -142,11 +142,11 @@ impl eframe::App for Check {
                 self.capture(ctx, "04-installed");
             }
             5 => {
-                self.app.screen = Screen::External("example.resource-monitor".into());
+                self.app.open_market_addon("example.resource-monitor");
                 self.capture(ctx, "05-open-resource-monitor");
             }
             6 => {
-                self.app.screen = Screen::External("example.memory-cleaner".into());
+                self.app.open_market_addon("example.memory-cleaner");
                 self.capture(ctx, "06-open-memory-cleaner");
             }
             7 => {
@@ -278,7 +278,7 @@ impl eframe::App for Check {
                     .as_deref(),
                     Some("1.1.0")
                 );
-                self.app.screen = Screen::External("example.memory-cleaner".into());
+                self.app.open_market_addon("example.memory-cleaner");
                 self.capture(ctx, "16-updated-open");
             }
             22 => {

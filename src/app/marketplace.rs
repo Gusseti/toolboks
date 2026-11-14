@@ -589,6 +589,22 @@ impl App {
                 return;
             }
         }
+        if crate::installer::installed_entry(&self.registry.root, id)
+            .is_some_and(|entry| entry.kind == crate::catalog::Kind::Declarative)
+        {
+            match crate::installer::launching(&self.registry.root, id) {
+                Ok(crate::installer::Launch::RolledBack { .. }) => {
+                    self.registry = Registry::load(self.registry.root.clone());
+                    self.message = Some("The previous version is back because the update did not open successfully.".into());
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.message = Some(error.to_string());
+                    return;
+                }
+            }
+            self.pending_declarative = Some(id.into());
+        }
         self.screen = Screen::External(id.into());
         self.addon_page = 0;
     }
