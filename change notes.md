@@ -10,6 +10,14 @@
 - **Catalog entries:** optional `pages` and `background` fields. The installer keeps the catalog entry beside each installed version, so they are known offline.
 - **Add-on threat model (#95):** `docs/ADDON-THREAT-MODEL.md` lists the threats to the add-on platform, what covers each, what is accepted, and seven findings to settle before the first public add-on release.
 
+## Changed
+
+- **Shared code for add-ons (#99, no change in behaviour):** Audio Gainer, Macro Manager and System Profiles now import the shared crates directly and no host code. `data_root` and `write_atomic` moved to `toolboks-shared` (`storage`); the host re-exports them. The rest of the Debloater engine (apps, restore points, services, startup, scheduled tasks, and the change error with its rollback) moved to `toolboks-debloat-engine`; the Debloater page uses it from there.
+
+## Fixed
+
+- **Download address check:** the check that only GitHub may serve an update or an add-on now reads the host correctly. An address such as `https://evil.example?x=.github.com` was accepted before; addresses with user info or a port are refused too. No known way to reach the flaw existed, since addresses come from a signed catalog or from GitHub's own answers.
+
 ## Not verified
 
 - The elevated start through the UAC prompt has not been tried on a real PC.

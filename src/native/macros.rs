@@ -1,6 +1,5 @@
 mod engine;
 
-use crate::ui as look;
 use eframe::egui::{self, RichText};
 use engine::{
     Action, ControlEvent, Engine, Hotkey, Macro, MouseButton, PathClick, Point, RecordOptions,
@@ -9,6 +8,7 @@ use engine::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use toolboks_addon_sdk::{tutorial, Capability, NativeAddon, TutorialStep};
+use toolboks_shared::ui as look;
 
 pub(super) const PAGES: [&str; 2] = ["Editor", "Mouse editor"];
 const KEY: &str = "macro_manager_v1";

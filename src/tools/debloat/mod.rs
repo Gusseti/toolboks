@@ -11,15 +11,12 @@ use eframe::egui;
 use super::Tool;
 
 // The UI-free engine lives in its own crate; re-exported so `debloat::<module>` paths keep working.
-pub use toolboks_debloat_engine::{backend, catalog, model, plan};
+pub use toolboks_debloat_engine::{
+    apps, backend, catalog, model, plan, restore, services, startup, tasks, ChangeError,
+};
 
-pub mod apps;
 mod page;
-pub mod restore;
-pub mod services;
-pub mod startup;
 mod style;
-pub mod tasks;
 
 /// State of the Apps page. Package calls are slow, so they run on worker threads and report
 /// back over these channels.
@@ -120,43 +117,6 @@ enum ServiceJob {
         done: usize,
         failed: usize,
     },
-}
-
-#[derive(Debug)]
-pub(super) struct ChangeError<T> {
-    message: String,
-    recovery: Option<T>,
-}
-
-impl<T> From<String> for ChangeError<T> {
-    fn from(message: String) -> Self {
-        Self {
-            message,
-            recovery: None,
-        }
-    }
-}
-
-impl<T> std::fmt::Display for ChangeError<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.message.fmt(f)
-    }
-}
-
-fn rollback<T>(
-    message: String,
-    step: T,
-    undo: impl FnOnce(&T) -> Result<(), String>,
-) -> ChangeError<T> {
-    match undo(&step) {
-        Ok(()) => format!("{message}. The previous setting was restored.").into(),
-        Err(error) => ChangeError {
-            message: format!(
-                "{message}. Could not restore the previous setting ({error}). Use Undo to retry."
-            ),
-            recovery: Some(step),
-        },
-    }
 }
 
 /// State of the Services page. Service Control Manager calls run on worker threads only.

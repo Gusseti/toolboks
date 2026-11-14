@@ -422,6 +422,12 @@ mod tests {
             response.final_url.contains("/releases/tag/"),
             "{}",
             response.final_url
+        ); // The address WinHTTP reports after a redirect must pass the host check as it is
+           // (no port, no user info), or every real download would be refused.
+        assert!(
+            crate::update::is_trusted_url(&response.final_url),
+            "{}",
+            response.final_url
         );
     }
 
