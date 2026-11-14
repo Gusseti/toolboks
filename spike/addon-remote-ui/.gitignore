@@ -1,0 +1,6 @@
+target/
+scripts/out-*.log
+scripts/res-*.txt
+scripts/shot-empty.png
+scripts/shot-animate.png
+scripts/shot-idle.png

@@ -1,0 +1,13 @@
+[package]
+name = "spike-addon"
+version = "0.0.0"
+edition = "2021"
+[dependencies]
+spike-proto = { path = "../proto" }
+postcard = { version = "1", features = ["use-std"] }
+eframe = { path = "../eframe-shim" }
+egui = { version = "0.37", default-features = false, features = ["default_fonts"] }
+egui_extras = { version = "0.37", default-features = false }
+toolboks-addon-sdk = { path = "../../../sdk/toolboks-addon-sdk", features = ["native-ui"] }
+sysinfo = { version = "0.40.0", features = ["gpu"] }
+windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_Networking_WinHttp", "Win32_Networking_WinSock", "Win32_NetworkManagement_IpHelper", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_System_Performance", "Win32_System_Registry", "Win32_System_EventLog", "Win32_System_Services", "Win32_System_TaskScheduler", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Variant", "Win32_System_Ole", "Management_Deployment", "ApplicationModel", "Foundation", "Foundation_Collections", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Gdi"] }

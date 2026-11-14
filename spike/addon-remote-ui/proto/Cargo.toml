@@ -1,0 +1,8 @@
+[package]
+name = "spike-proto"
+version = "0.0.0"
+edition = "2021"
+[dependencies]
+egui = { version = "0.37", default-features = false, features = ["serde", "default_fonts"] }
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }

@@ -1,0 +1,7 @@
+[package]
+name = "spike-host"
+version = "0.0.0"
+edition = "2021"
+[dependencies]
+spike-proto = { path = "../proto" }
+eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "links"] }
