@@ -1,0 +1,12 @@
+[package]
+name = "catalog-sign"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Offline tool that creates catalog keys and signs the Toolboks add-on index"
+publish = false
+
+[dependencies]
+ed25519-compact = { version = "2", default-features = false, features = ["random"] }
+serde_json = "1"
+toolboks-catalog = { path = "../../shared/toolboks-catalog" }
