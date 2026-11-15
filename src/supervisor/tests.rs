@@ -602,3 +602,30 @@ fn an_installed_addon_with_a_planted_dll_is_never_started() {
     assert_eq!(starts(&root), 0);
     assert!(!version.join("starts.txt").exists());
 }
+
+#[test]
+fn refusing_a_helper_without_a_catalog_keeps_the_same_unelevated_drawing_process_alive() {
+    let (root, mut spec) = fake("admin-request", "admin-request");
+    spec.may_elevate = true;
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec, Instant::now());
+    run_until(&mut supervisor, connected);
+    let pid = supervisor.pid(ID).unwrap();
+    supervisor.send(ID, &HostMessage::Ping { nonce: 5 });
+    run_until(&mut supervisor, |_, _| {
+        root.join("admin-result.json").is_file()
+    });
+    let (id, outcome): (u64, toolboks_addon_proto::AdminOutcome) =
+        serde_json::from_slice(&fs::read(root.join("admin-result.json")).unwrap()).unwrap();
+    assert_eq!(id, 42);
+    assert!(matches!(
+        outcome,
+        toolboks_addon_proto::AdminOutcome::Failed { .. }
+    ));
+    assert_eq!(supervisor.pid(ID), Some(pid));
+    assert_eq!(starts(&root), 1);
+    assert_eq!(
+        supervisor.status(ID),
+        Some(Status::Running { elevated: false })
+    );
+}

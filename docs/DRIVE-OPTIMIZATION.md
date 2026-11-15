@@ -27,17 +27,18 @@ establish the media type, the action is Optimize with Windows (`defrag /O`).
 Storage controller/virtualization support can affect media detection. The Windows
 engine chooses behavior for the fallback; Toolboks never guesses HDD from a name.
 
-Administrator access is required for analysis and optimization. Restart with
-administrator access returns to the Optimization tab and performs no disk action.
-Optimization starts only after selecting a drive, choosing its action and reviewing
-the confirmation. The worker rechecks volume identity, permissions, media type,
-filesystem support and the dirty bit immediately before starting. Only validated
+Administrator access is required for analysis and optimization. Selecting an action starts
+only a small helper through UAC; the app and Disk Manager page stay unelevated. The helper
+checks the selected volume and shows its own native window explaining the exact action,
+with Confirm and Cancel. Host clicks or keys cannot approve it. Cancel performs no drive work.
+The helper rechecks volume identity, permissions, media type, filesystem support and the dirty
+bit after confirmation, immediately before starting. Only validated
 uppercase drive letters become arguments to the system executable; user paths
 and command fragments are never accepted as optimization targets.
 
-Windows performs operations in a hidden background process. The tab shows elapsed
-time, available phase percentages and the Windows report. A phase percentage is
-not an overall completion estimate. Operations can continue if Toolboks is closed;
+Windows performs operations in a hidden background process. The tab remains responsive and
+disables duplicate actions while waiting for the helper. The final Windows report returns with
+the operation result; live phase percentages are not streamed over the helper connection. Operations can continue if Toolboks is closed;
 this version does not expose an in-app stop control. After success, history is
 refreshed and a fresh analysis attempted. A failed post-analysis does not turn an
 otherwise successful optimization into a false failure or show an old report as new.

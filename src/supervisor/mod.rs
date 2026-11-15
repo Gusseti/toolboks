@@ -13,8 +13,8 @@
 //!   [`Timing::restart_max`] times per [`Timing::restart_window`], then stays stopped with a
 //!   plain reason until the user restarts it ([`Supervisor::restart`]); [`Supervisor::report`]
 //!   is the text for a bug report.
-//! - Administrator rights are per add-on: an add-on that may elevate and asks for it is
-//!   restarted through the UAC prompt; the host itself stays as it is.
+//! - Administrator rights are per operation: a separate helper owns the native confirmation
+//!   and runs one action. The add-on drawing process stays unelevated and keeps its connection.
 //!
 //! Nothing here blocks the UI thread: launches run on their own thread, writes go through a
 //! writer thread, and [`Supervisor::tick`] only polls.
@@ -27,6 +27,7 @@
 // tests drive it today with a fake add-on exe.
 #![allow(dead_code)]
 
+pub(crate) mod admin;
 mod pipe;
 mod process;
 #[cfg(test)]
@@ -59,7 +60,7 @@ pub struct LaunchSpec {
     /// `installed_root` is set: the installer's record is then read before every start.
     pub exe: PathBuf,
     pub sha256: String,
-    /// The add-on may be restarted with administrator rights when it asks.
+    /// The add-on may request a separate administrator helper for an action.
     pub may_elevate: bool,
     /// Background add-ons keep their process while their page is hidden.
     pub background: bool,
@@ -221,6 +222,7 @@ struct Started {
     reader: FrameReader<File>,
     writer: File,
     hello: Hello,
+    admin_capabilities: Vec<String>,
 }
 
 enum LaunchError {
@@ -265,10 +267,8 @@ struct Managed {
     policy: RestartPolicy,
     /// The page is shown. A hidden add-on is suspended and not pinged.
     visible: bool,
-    /// Start with administrator rights (the add-on asked and may).
-    elevate: bool,
-    /// The page to open after the next connect (an elevated restart keeps the user's place).
-    navigate: Option<String>,
+    /// One separate administrator operation, coupled to this drawing session.
+    admin: Option<admin::AdminJob>,
     log: VecDeque<String>,
     starts: u32,
     last_exit: Option<u32>,
@@ -338,8 +338,7 @@ impl Supervisor {
                 phase: Phase::Stopped(StopReason::ByHost),
                 policy: RestartPolicy::new(timing.restart_max, timing.restart_window),
                 visible,
-                elevate: false,
-                navigate: None,
+                admin: None,
                 log: VecDeque::new(),
                 starts: 0,
                 last_exit: None,
@@ -496,7 +495,8 @@ impl Drop for Supervisor {
             return;
         }
         // Ask every add-on to finish, give them a moment, then the job closes and ends the rest.
-        for managed in self.addons.values() {
+        for managed in self.addons.values_mut() {
+            managed.admin = None;
             match &managed.phase {
                 Phase::Starting { cancel, .. } => cancel.store(true, Ordering::SeqCst),
                 Phase::Running { sender, .. } => {
@@ -528,12 +528,12 @@ fn send(sender: &SharedSender, message: &HostMessage) -> bool {
 fn start(shared: &Shared, managed: &mut Managed) {
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, result) = mpsc::channel();
-    let (spec, elevated) = (managed.spec.clone(), managed.elevate);
+    let spec = managed.spec.clone();
     let (thread_shared, thread_cancel) = (shared.clone(), cancel.clone());
     let spawned = std::thread::Builder::new()
         .name("toolboks-addon-launch".into())
         .spawn(move || {
-            let outcome = launch(&thread_shared, &spec, elevated, &thread_cancel);
+            let outcome = launch(&thread_shared, &spec, false, &thread_cancel);
             // If the supervisor is gone, the process handle drops here and the job ends it.
             let _ = tx.send(outcome);
             thread_shared.ctx.request_repaint();
@@ -567,8 +567,14 @@ fn launch(
         None => (spec.exe.clone(), spec.sha256.clone()),
     };
     let refused = |why| LaunchError::Stop(StopReason::Refused(why));
-    // Also covers ordinary children of an already elevated host, not just UAC restarts.
-    if elevated || crate::elevation::is_elevated() {
+    // A drawing process must never inherit administrator rights from an elevated host.
+    if !elevated && crate::elevation::is_elevated() {
+        return Err(refused(
+            "Reopen Toolboks without administrator rights to open add-ons.".into(),
+        ));
+    }
+    let mut admin_capabilities = Vec::new();
+    if elevated {
         let root = spec.installed_root.as_ref().ok_or_else(|| refused(
             "Only installed add-ons that the current catalog lists can start with administrator rights.".into()))?;
         let version = exe
@@ -578,9 +584,9 @@ fn launch(
             .ok_or_else(|| {
                 refused("The installed version is invalid. Reinstall the add-on.".into())
             })?;
-        sha256 = crate::catalog::elevated_entry(root, &spec.id, version)
-            .map_err(refused)?
-            .sha256;
+        let entry = crate::catalog::elevated_entry(root, &spec.id, version).map_err(refused)?;
+        sha256 = entry.sha256;
+        admin_capabilities = entry.capabilities;
     }
     if spec.installed_root.is_some() {
         process::verify_folder(&exe).map_err(|e| {
@@ -599,7 +605,7 @@ fn launch(
     })?;
 
     let pipes = pipe::PipePair::create().map_err(|e| failed(&e))?;
-    let args = [
+    let mut args = vec![
         "--pipe-in",
         pipes.to_addon_path.as_str(),
         "--pipe-out",
@@ -607,7 +613,9 @@ fn launch(
         "--token",
         pipes.token.as_str(),
     ];
-    // An elevated host starts elevated children anyway; those stay in the job.
+    if elevated {
+        args.push(toolboks_addon_sdk::admin::HELPER_ARG);
+    }
     let process = if elevated && !crate::elevation::is_elevated() {
         process::spawn_elevated(&exe, &args).map_err(|e| match e {
             ElevateError::Declined => LaunchError::Stop(StopReason::Declined),
@@ -617,7 +625,26 @@ fn launch(
         process::spawn(&shared.job, &exe, &args).map_err(|e| failed(&e))?
     };
 
-    let deadline = Instant::now() + shared.timing.connect;
+    finish_launch(
+        pipes,
+        process,
+        &spec.id,
+        shared.timing.connect,
+        cancel,
+        admin_capabilities,
+    )
+}
+
+fn finish_launch(
+    pipes: pipe::PipePair,
+    process: Process,
+    id: &str,
+    timeout: Duration,
+    cancel: &AtomicBool,
+    admin_capabilities: Vec<String>,
+) -> Result<Started, LaunchError> {
+    let failed = |e: &dyn std::fmt::Display| LaunchError::Failed(e.to_string());
+    let deadline = Instant::now() + timeout;
     let connected = pipes.connect(process.pid(), deadline, &mut || {
         if cancel.load(Ordering::SeqCst) {
             Err(pipe::ConnectError::Cancelled)
@@ -644,7 +671,7 @@ fn launch(
 
     let mut reader = FrameReader::new(from_addon);
     let mut writer = FrameWriter::new(to_addon);
-    let ours = Hello::new(spec.id.clone(), env!("CARGO_PKG_VERSION"));
+    let ours = Hello::new(id, env!("CARGO_PKG_VERSION"));
     // The handshake read blocks. A watchdog ends the process at the deadline, which breaks
     // the pipe and so ends the read.
     let done = AtomicBool::new(false);
@@ -668,6 +695,7 @@ fn launch(
             reader,
             writer: writer.into_inner(),
             hello,
+            admin_capabilities,
         }),
         Err(e) => {
             process.kill();
@@ -715,6 +743,7 @@ fn connect(shared: &Shared, managed: &mut Managed, started: Started, now: Instan
         reader,
         mut writer,
         hello,
+        ..
     } = started;
     let (chunks, queue) = mpsc::sync_channel::<Vec<u8>>(WRITE_QUEUE);
     let writer_thread = std::thread::Builder::new()
@@ -751,9 +780,6 @@ fn connect(shared: &Shared, managed: &mut Managed, started: Started, now: Instan
         }
     }
     let sender = link.sender();
-    if let Some(page) = managed.navigate.take() {
-        send(&sender, &HostMessage::Navigate { page });
-    }
     if !managed.visible {
         send(&sender, &HostMessage::Suspend);
     }
@@ -773,6 +799,7 @@ fn connect(shared: &Shared, managed: &mut Managed, started: Started, now: Instan
 /// Sends `Quit` and waits for the exit in `tick`. With `Then::Restart` the add-on starts
 /// again afterwards; one that is not running starts right away.
 fn begin_stop(shared: &Shared, managed: &mut Managed, then: Then, now: Instant) {
+    managed.admin = None;
     let phase = std::mem::replace(&mut managed.phase, Phase::Stopped(StopReason::ByHost));
     let restart = matches!(then, Then::Restart);
     match phase {
@@ -815,6 +842,7 @@ fn begin_stop(shared: &Shared, managed: &mut Managed, then: Then, now: Instant) 
 
 /// The add-on ended without being asked to: restart it within the limit, or give up.
 fn crashed(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut Vec<Event>) {
+    managed.admin = None;
     let id = managed.spec.id.clone();
     if managed.policy.allow(now) {
         events.push(Event::Restarting { id });
@@ -829,6 +857,7 @@ fn crashed(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut Ve
 }
 
 fn stopped(managed: &mut Managed, reason: StopReason, events: &mut Vec<Event>) {
+    managed.admin = None;
     managed.phase = Phase::Stopped(reason.clone());
     events.push(Event::Stopped {
         id: managed.spec.id.clone(),
@@ -838,13 +867,23 @@ fn stopped(managed: &mut Managed, reason: StopReason, events: &mut Vec<Event>) {
 
 fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut Vec<Event>) {
     let id = managed.spec.id.clone();
+    if let Some(job) = &managed.admin {
+        if let Some((id, outcome)) = job.poll() {
+            if let Phase::Running { sender, .. } = &managed.phase {
+                send(sender, &HostMessage::AdminResult { id, outcome });
+            }
+            managed.admin = None;
+        } else {
+            shared.ctx.request_repaint_after(Duration::from_millis(100));
+        }
+    }
     // What to do once the borrow of the phase has ended.
     enum Next {
         Nothing,
         Connect(Started),
         Stop(StopReason),
         Crash(Option<u32>, String),
-        Elevate(String),
+        Admin(toolboks_addon_proto::AdminRequest),
         Finished,
     }
     let mut next = Next::Nothing;
@@ -875,11 +914,27 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
                     AddonMessage::Pong { nonce } => heartbeat.on_pong(nonce, now),
                     AddonMessage::Log { level, line } => notes.push(format!("{level:?}: {line}")),
                     AddonMessage::Bye => *said_bye = true,
-                    AddonMessage::HostRequest(HostRequest::RestartElevated { page })
-                        if managed.spec.may_elevate && !process.elevated =>
-                    {
-                        next = Next::Elevate(page);
+                    AddonMessage::HostRequest(HostRequest::AdminOperation(request)) => {
+                        if managed.admin.is_some() || matches!(next, Next::Admin(_)) {
+                            send(
+                                sender,
+                                &HostMessage::AdminResult {
+                                    id: request.id,
+                                    outcome: toolboks_addon_proto::AdminOutcome::Failed {
+                                        reason: "Another administrator action is still open."
+                                            .into(),
+                                    },
+                                },
+                            );
+                        } else {
+                            next = Next::Admin(request);
+                        }
                     }
+                    AddonMessage::HostRequest(HostRequest::RestartElevated { .. }) => {
+                        notes.push("Whole-interface elevation is no longer supported. Update the add-on to use an administrator helper.".into());
+                    }
+                    // A drawing connection can never stand in for the helper's result.
+                    AddonMessage::AdminResult { .. } => {}
                     message => events.push(Event::Message {
                         id: id.clone(),
                         message,
@@ -952,10 +1007,6 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
             }
         }
         Next::Stop(reason) => {
-            if reason == StopReason::Declined {
-                // The next start is a normal one again, without the prompt.
-                managed.elevate = false;
-            }
             stopped(managed, reason, events);
         }
         Next::Crash(code, why) => {
@@ -963,10 +1014,26 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
             managed.note(why);
             crashed(shared, managed, now, events);
         }
-        Next::Elevate(page) => {
-            managed.elevate = true;
-            managed.navigate = Some(page);
-            begin_stop(shared, managed, Then::Restart, now);
+        Next::Admin(request) => {
+            if let Phase::Running { sender, .. } = &managed.phase {
+                if !managed.spec.may_elevate || request.validate().is_err() {
+                    send(
+                        sender,
+                        &HostMessage::AdminResult {
+                            id: request.id,
+                            outcome: toolboks_addon_proto::AdminOutcome::Failed {
+                                reason: "This administrator action is not allowed.".into(),
+                            },
+                        },
+                    );
+                } else {
+                    managed.admin = Some(admin::AdminJob::installed(
+                        shared.clone(),
+                        managed.spec.clone(),
+                        request,
+                    ));
+                }
+            }
         }
         Next::Finished => {
             let phase = std::mem::replace(&mut managed.phase, Phase::Stopped(StopReason::ByHost));

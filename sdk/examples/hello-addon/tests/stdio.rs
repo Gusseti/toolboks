@@ -22,6 +22,7 @@ fn the_sample_add_on_draws_and_quits() {
     )
     .expect("handshake");
     assert_eq!(theirs.addon_id, "example.hello");
+    assert_eq!(theirs.protocol_version, 3);
 
     writer
         .write(&HostMessage::LoadPreferences {
@@ -52,4 +53,29 @@ fn the_sample_add_on_draws_and_quits() {
 
     writer.write(&HostMessage::Quit).unwrap();
     assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn the_sample_refuses_protocol_two_with_a_plain_update_message() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_hello-addon"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut reader = FrameReader::new(child.stdout.take().unwrap());
+    let mut writer = FrameWriter::new(child.stdin.take().unwrap());
+    let mut hello = Hello::new("example.hello", "old-host");
+    hello.protocol_version = 2;
+    writer.write(&HostMessage::Hello(hello)).unwrap();
+    match reader.read::<AddonMessage>().unwrap() {
+        AddonMessage::Refuse {
+            protocol_version,
+            reason,
+        } => {
+            assert_eq!(protocol_version, 3);
+            assert!(reason.contains("Update the add-on or Toolboks."));
+        }
+        other => panic!("expected refusal, got {other:?}"),
+    }
+    assert!(!child.wait().unwrap().success());
 }

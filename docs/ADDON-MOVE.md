@@ -112,7 +112,7 @@ learns before the others start.
    saved settings keep working.
 4. **Use the host services** for anything outside the page: status bar items, tray entries, the
    guided tour and background running.
-5. **Ask for administrator rights per add-on**, and only for the actions that need them.
+5. **Use protocol 3 administrator helpers** for each action that needs administrator rights. Keep the drawing process unelevated; the helper owns its Confirm/Cancel dialog. See #132 and the author guide.
 6. **Release it** with the steps above and install it from the catalog in a preview build.
 7. **Compare with the built-in tool**: same pages, same numbers, same behaviour. Measure exe
    size, start time and memory against the budgets in
@@ -129,7 +129,7 @@ What each tool needs beyond the common steps:
 | Resource Monitor | Runs in the background so the history recorder (#64) keeps recording with the window hidden. The history files live in its data folder. |
 | Memory Cleaner | Runs in the background for automatic cleaning. Some actions need administrator rights. |
 | Event Watch | Check which pages need administrator rights to read event logs and crash dumps. |
-| Debloater, System Profiles | They change Windows. Undo information must survive an update or removal of the add-on. Blocked by the decision in [#118](https://github.com/Gusseti/toolboks/issues/118). |
+| Debloater, System Profiles | They change Windows. Undo information must survive an update or removal of the add-on. Use the per-change helper boundary decided in [#118](https://github.com/Gusseti/toolboks/issues/118) and implemented in #132; real UAC validation is still required. |
 | Audio Gainer, Macro Manager | Global input recording and live audio must work from a background process. The install review must name these rights plainly. |
 
 ## Order
@@ -137,7 +137,7 @@ What each tool needs beyond the common steps:
 1. **Before any tool moves:** the add-on browser ([#86](https://github.com/Gusseti/toolboks/issues/86)),
    the security findings ([#95](https://github.com/Gusseti/toolboks/issues/95)), a public
    catalog ([#116](https://github.com/Gusseti/toolboks/issues/116)) and the
-   administrator-rights decision ([#118](https://github.com/Gusseti/toolboks/issues/118)).
+   administrator-helper implementation and validation ([#132](https://github.com/Gusseti/toolboks/issues/132); owner decision #118).
 2. **Pilot:** Disk Manager (#88).
 3. **The rest:** #89 to #93, in any order, after the pilot.
 4. **Last:** remove everything built in and migrate existing users
@@ -155,3 +155,19 @@ Until step 4, the tools that have not moved stay built into the app and keep wor
   should point at a released host version ([#117](https://github.com/Gusseti/toolboks/issues/117)).
 - Nothing is signed: not the catalog and not the exes (owner decision, 2026-11-15). Windows
   SmartScreen and antivirus programs are likely to warn about each download.
+
+## Protocol 3 migration (#132)
+
+Nothing is published and the catalog is empty. Rebuild `addons/hello` in
+`fredhakon/toolboks-addons` against the host commit containing #132. Its root `Cargo.toml`
+currently pins `5f7c39b04dc367379be0eb9396cfb7362af2ffa3`: update all four dependencies
+(SDK, protocol, shared UI and catalog) together and regenerate `Cargo.lock`. Rebuild/test
+`addons/hello` and `tools/repo` (`addon-repo`, which generates catalog entries using the
+protocol constant). Update the repo's README pin/protocol note and use `protocol_version: 3`
+in generated entries. The pin update also needs the current catalog `Entry::byline` field
+in `tools/repo/src/main.rs` (for example `byline: m.byline`), added upstream since that pin.
+The unsigned catalog types from #134 also remove signing/sequence/date fields from new
+`Entry`/`Index` initializers in that tool; migrate its tests alongside it. Rebuild the host repository's
+hello example, test hosts and fixtures too (their `Hello::new` uses the current version).
+Version 2 entries are hidden and v2 handshakes receive a plain update message. No catalog
+is published, release created, or tool moved by this change.

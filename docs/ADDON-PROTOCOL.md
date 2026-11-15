@@ -2,8 +2,9 @@
 
 An out-of-process add-on is a separate executable that runs its egui page headless and sends
 the host tessellated meshes. The host forwards input and paints those meshes inside the add-on's
-page rectangle. This document describes protocol version **2**
-(version 1 plus the tray and tour-anchor messages).
+page rectangle. This document describes protocol version **3**
+(version 2 plus per-operation administrator helpers). Version 2 binaries must be rebuilt;
+`Hello` and `Refuse` remain frozen so old peers receive a plain update message.
 
 - New to this? Start with the [add-on author guide](ADDON-AUTHOR-GUIDE.md).
 - Messages and framing: crate `sdk/toolboks-addon-proto` (`toolboks-addon-proto`).
@@ -79,6 +80,8 @@ Host to add-on (`HostMessage`):
 | `Ping { nonce }` | Liveness check, answered by `Pong` from the add-on's main loop. |
 | `Quit` | Orderly shutdown: the add-on calls `cancel` and exits. |
 | `TrayAction { id }` | The user chose one of the add-on's tray entries. The runtime passes on only an entry the add-on offers and has enabled. |
+| `AdminResult { id, outcome }` | Informational helper result for `NativeAddon::admin_result`; never authorizes a write. |
+| `AdminOperation { request, capabilities }` | Dedicated helper connection only (see below); rejected by the drawing runtime. |
 | `TutorialTarget { target, reveal }` | The tour anchor to highlight, or none. `reveal` scrolls it into view once. |
 
 Input events (`InputEvent`): pointer moved, pointer button, pointer left, drag released outside,
@@ -97,13 +100,14 @@ Add-on to host (`AddonMessage`):
 | `Frame(Frame)` | The answer to one `Input`, and its acknowledgement (`seq` echoes the batch). |
 | `RequestRepaint { after_ms }` | Something asked for a repaint between frames (background data, animation). |
 | `Preferences { json, changed }` | Preferences as a JSON object. Sent on `SavePreferences` and when `ui` reports a change. |
-| `HostRequest` | `RestartElevated { page }` or `ReviewUpdate`. |
+| `HostRequest` | `AdminOperation(AdminRequest)` or `ReviewUpdate`. Legacy `RestartElevated` is refused; it never elevates a drawing process. |
 | `StatusItems(items)` | The full set of status bar items; sent when it changes. |
 | `Tutorial { steps, location }` | Answer to `TutorialQuery`. |
 | `Log { level, line }` | A log line queued with `runtime::log`. |
 | `Pong { nonce }` | Answer to `Ping`. |
 | `Bye` | The add-on exits on its own. |
 | `TrayItems(items)` | The full set of entries (`id`, `label`, `enabled`) the add-on offers in the host's tray menu; sent when it changes. Optional. |
+| `AdminResult { id, outcome }` | Dedicated helper result only; the host ignores this on a drawing connection. |
 | `TutorialAnchor { target, rect }` | The rectangle of the anchor asked for with `TutorialTarget`, in the view's points, or none while it is not visible. Sent before the frame it belongs to, when it changes. |
 
 A `Frame` holds the meshes (see below), texture uploads (`TextureUpdate { id, delta }`) and frees,
@@ -222,7 +226,7 @@ fake add-on exe (`examples/fake_addon.rs`).
   process; `Resume` follows when it is shown again. `stop` sends `Quit` and ends the process if it
   has not exited after 2 seconds.
 - **The file check.** Before every start the exe is hashed and compared with the SHA-256 the
-  installer recorded from the signed catalog (`active.json`, see `src/installer.rs`). The checked
+  installer recorded from the saved catalog (`active.json`, see `src/installer.rs`). The checked
   file is held open without write or delete sharing until the process runs, so it cannot be swapped
   in between. A wrong hash is final: the add-on is not started and is not retried.
 - **The job object.** Every add-on process starts suspended, joins one job object and then runs.
@@ -233,14 +237,18 @@ fake add-on exe (`examples/fake_addon.rs`).
   that it stays stopped with a plain reason until the user restarts it (`restart`, which starts the
   limit fresh). `report` gives a short plain-text report (state, exit code, the last 50 log lines
   the add-on sent) and `copy_report` puts it on the clipboard. Nothing is written to disk or sent.
-- **Refusals are final.** A wrong file, a missing file, a protocol mismatch, a wrong token or a
-  declined administrator prompt stop the add-on without a retry.
-- **Administrator rights per add-on.** When an add-on that may elevate (`LaunchSpec::may_elevate`)
-  sends `HostRequest::RestartElevated { page }`, only that add-on is restarted through the UAC
-  prompt and then sent `Navigate { page }`; the host keeps running as it is. A declined prompt
-  leaves it stopped, and the next start is a normal one. An elevated add-on is not in the job (the
-  host may not have the right to put it there or to end it); it exits when the host closes the
-  pipes, which `run_addon` treats as a clean close. This path has not been tried on a real PC yet.
+- **Refusals are final.** A wrong file, a missing file, a protocol mismatch or a wrong token
+  stops the add-on without a retry. A declined administrator prompt cancels only the helper;
+  its original drawing process keeps running.
+- **Administrator actions.** The drawing process stays unelevated. An add-on with an elevation
+  capability sends `HostRequest::AdminOperation`; the supervisor starts a separate instance of
+  its checked executable with `--toolboks-admin-helper` through UAC. A saved catalog
+  authorizes the helper's hash and capabilities before launch. It has separate pipes, token and
+  handshake; the drawing link never attaches to it. The original UI keeps its process, view,
+  preferences and heartbeat. Only one helper may be open per add-on. There is no automatic
+  retry of a helper or operation. Declining UAC returns `Cancelled` to the original UI.
+  Native drawing processes, bundled add-on UI initialization and the SDK drawing runtime
+  refuse administrator rights: reopen Toolboks normally. Helper mode alone may elevate.
 - **Nothing blocks the UI.** Launches run on their own thread, writes go through a writer thread
   with a bounded queue, and `tick` only polls. While an add-on is shown, `tick` asks for a repaint
   once a second for the heartbeat ping; a hidden add-on is not pinged.
@@ -250,6 +258,48 @@ fake add-on exe (`examples/fake_addon.rs`).
 
 The Restart and Report buttons on a stopped page are drawn by the page that hosts the view; they
 come with the first real add-on page (#88).
+
+## Administrator helper boundary (version 3)
+
+`AdminRequest { id: u64, operation: String, json: String }` carries an add-on-defined action
+selector (1 to 80 ASCII letters, digits, `_` or `-`) and at most 32 KiB of untrusted parameters.
+The host treats them as opaque data. No request field carries approval or preview text.
+The add-on must choose an allowed operation, parse a strict parameter type and construct the
+plain-language preview from independently checked state inside the helper.
+
+1. UI sends `HostRequest::AdminOperation(request)`.
+2. Supervisor verifies the installed executable against the saved catalog and starts
+   only its helper mode. The helper presents a new token and completes the usual v3 handshake.
+3. Host sends exactly one `HostMessage::AdminOperation { request, capabilities }`, using the
+   saved entry's capabilities (`administrator`, `drive_optimize` or `system_tuning`).
+4. SDK checks that this process is elevated, validates bounds and calls read-only preparation.
+   `AdminChange::capability` must match a granted capability. The prepared value owns the exact
+   validated action and preview. No new host data is passed to `apply`.
+5. SDK creates a native Windows dialog on the helper's thread, with no host HWND as parent.
+   Windows reports the window's process id and the SDK requires its own process id. The dialog
+   explains the change with **Confirm** and **Cancel**; Cancel has initial/default focus.
+   Only that native dialog can authorize `AdminChange::apply`, once. No egui input is used.
+6. Helper sends `AddonMessage::AdminResult { id, outcome }` and exits. Outcomes are
+   `Completed { json }`, `Cancelled` or `Failed { reason }`. Host matches the request id and
+   forwards an informational `HostMessage::AdminResult` to the unelevated UI.
+
+The helper accepts no second operation, navigation, preferences, frames or approval messages.
+Any additional message (including forwarded click/key input or a forged result) cancels its
+pending dialog; disconnection does the same. Closing/restarting the UI drops its helper job
+and connection. Cancellation before approval makes no system change. Once approved, an action
+may need to finish safely; Windows drive maintenance may outlive the helper or Toolboks.
+
+For still-bundled source providers, the same SDK loop runs through an early helper-only entry
+in the host executable and the existing native-provider registry. It bypasses the host window,
+single-instance guard and normal app initialization. No tool is moved out of the app here.
+The host launcher and message handling contain no add-on operation names or execution logic.
+
+Regression tests cover forwarded clicks/keys and forged results, Cancel, missing rights or
+capabilities, host disconnect, wrong connection roles and v2 refusal. The native-window PID
+ownership test is ignored by default because it opens a real window; run it only in an
+owner-approved GUI session. The preview `admin_dialog` example can exercise the exact native
+dialog without UAC or writes. GUI verification and the screenshot are pending, not run. A real UAC consent/decline and privileged drive operation still need a manual
+Windows check; the automated tests do not prove that integration.
 
 ## Host services
 

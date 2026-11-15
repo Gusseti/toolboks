@@ -14,14 +14,14 @@ Every add-on follows the design system in [DESIGN.md](../DESIGN.md) and passes t
   preference controls. The host draws it. No process, no code.
 - **Native**: a separate exe. It runs its egui page without a window and sends the drawing to
   the host, which paints it inside the add-on's page and sends input back. One add-on that
-  crashes or hangs does not take the app with it, and only the add-on that needs administrator
-  rights gets them.
+  crashes or hangs does not take the app with it. Administrator actions use a separate helper;
+  the drawing process stays unelevated.
 
 ## The pieces
 
 | Piece | Where | State |
 |---|---|---|
-| Wire protocol (version 2) and SDK runtime `run_addon` | `sdk/toolboks-addon-proto`, `sdk/toolboks-addon-sdk` | Built and tested |
+| Wire protocol (version 3) and SDK runtime `run_addon` | `sdk/toolboks-addon-proto`, `sdk/toolboks-addon-sdk` | Built and tested |
 | Host view: paints an add-on's frames, forwards input | `src/addon_view/` | Used by catalog-installed native add-ons and the test host |
 | Supervisor: starts, checks, watches and stops add-on processes | `src/supervisor/` | Built and used by the app |
 | Host services: status bar items, links, tours, tray, background add-ons, preferences | `src/addon_services.rs` | Built and used by the app |
@@ -58,8 +58,9 @@ services), [catalog.md](catalog.md) (the catalog format),
 5. **Fail.** A crash, a failed start or a long stall restarts the add-on at most 3 times per
    minute. Then it stays stopped with a plain message, a Restart action and a report the user can
    copy.
-6. **Administrator rights.** An add-on that may ask and does ask is restarted alone through the
-   UAC prompt.
+6. **Administrator rights.** A permitted action starts a separate checked helper through UAC.
+   It owns the native Confirm/Cancel dialog and runs one reviewed action. The drawing process
+   keeps running unelevated; forwarded input cannot approve the helper's action (#132).
 
 Local data: `addons/<id>/<version>/` holds the exe or package and the catalog entry it was
 installed from; `addons/<id>/active.json` says which version runs; `addon-data/<id>/` is the

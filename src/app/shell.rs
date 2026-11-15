@@ -1246,26 +1246,16 @@ impl App {
                     toolboks_addon_sdk::HostRequest::ReviewUpdate => {
                         self.pending_package = addons::official_package(id)
                     }
-                    toolboks_addon_sdk::HostRequest::RestartElevated { page } => {
-                        if self.install_in_progress() {
-                            self.message = Some(
-                                "Wait for the update to finish before restarting Toolboks.".into(),
-                            );
-                            return;
-                        }
-                        if crate::elevation::relaunch_elevated_with_args(&[
-                            "--open-addon",
-                            id,
-                            "--addon-page",
-                            &page,
-                        ]) {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                        } else {
-                            self.message = Some(
-                                "The administrator restart was cancelled or could not be started."
-                                    .into(),
-                            );
-                        }
+                    toolboks_addon_sdk::HostRequest::AdminOperation(request) => {
+                        self.native.request_admin(
+                            provider,
+                            request,
+                            &package.manifest.capabilities,
+                            ui.ctx(),
+                        );
+                    }
+                    toolboks_addon_sdk::HostRequest::RestartElevated { .. } => {
+                        self.message = Some("This add-on needs an update to use an administrator helper. Its interface cannot restart as administrator.".into());
                     }
                 }
             }
@@ -1520,6 +1510,7 @@ impl App {
                     section(ui, "It asks to");
                     for c in &p.manifest.capabilities {
                         muted(ui, match c {
+                            toolboks_addon_sdk::Capability::Administrator => "Make administrator changes only after you confirm in a separate window",
                             toolboks_addon_sdk::Capability::HostMetrics => "Read basic memory and uptime readings",
                             toolboks_addon_sdk::Capability::LocalPreferences => "Save its own preferences locally",
                             toolboks_addon_sdk::Capability::FilesystemRead => "Read file and folder metadata for locations you select",

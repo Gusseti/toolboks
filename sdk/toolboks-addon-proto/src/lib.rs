@@ -27,7 +27,7 @@ pub use egui;
 /// The wire protocol version. Bump it on any change to a message other than [`Hello`] and
 /// the refusal variant, which are frozen so that two versions can always refuse each other
 /// in plain words.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The first message in both directions. Its layout and its variant index 0 never change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +101,16 @@ pub enum HostMessage {
         target: Option<String>,
         reveal: bool,
     },
+    /// Dedicated helper connection only. Never rendered or forwarded as input.
+    AdminOperation {
+        request: AdminRequest,
+        capabilities: Vec<String>,
+    },
+    /// Informational result delivered to the unelevated UI.
+    AdminResult {
+        id: u64,
+        outcome: AdminOutcome,
+    },
 }
 
 /// Messages from the add-on to the host.
@@ -150,6 +160,11 @@ pub enum AddonMessage {
     TutorialAnchor {
         target: String,
         rect: Option<egui::Rect>,
+    },
+    /// Returned only by a dedicated helper.
+    AdminResult {
+        id: u64,
+        outcome: AdminOutcome,
     },
 }
 
@@ -280,8 +295,43 @@ pub struct ImeOutput {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HostRequest {
-    RestartElevated { page: String },
+    /// Legacy source API. The v3 host refuses whole-interface elevation.
+    RestartElevated {
+        page: String,
+    },
     ReviewUpdate,
+    AdminOperation(AdminRequest),
+}
+
+/// Untrusted action selector and parameters. This is never evidence of consent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminRequest {
+    pub id: u64,
+    pub operation: String,
+    pub json: String,
+}
+
+impl AdminRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.operation.is_empty()
+            || self.operation.len() > 80
+            || !self
+                .operation
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            || self.json.len() > 32 * 1024
+        {
+            return Err("The administrator action is invalid or too large.".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AdminOutcome {
+    Completed { json: String },
+    Cancelled,
+    Failed { reason: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

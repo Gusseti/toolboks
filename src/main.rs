@@ -25,6 +25,24 @@ mod update;
 mod winhttp;
 
 fn main() -> eframe::Result {
+    // Helpers never acquire the app instance, construct its window, or start its tools.
+    if toolboks_addon_sdk::admin::is_helper() {
+        let args: Vec<_> = std::env::args().collect();
+        let Some(provider) = args
+            .iter()
+            .position(|arg| arg == "--builtin-provider")
+            .and_then(|i| args.get(i + 1))
+        else {
+            return Ok(());
+        };
+        let mut native = native::NativeHost::default();
+        if let Err(error) = toolboks_addon_sdk::admin::run_helper(provider, |request| {
+            native.prepare_admin(provider, request)
+        }) {
+            eprintln!("{error}");
+        }
+        return Ok(());
+    }
     crash::install();
     // One window per user: a plain second launch shows the first one and exits. Held until exit.
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -138,12 +138,14 @@ user-selected outputs. Audio Gainer opens audio streams only after an explicit a
 `system_tuning` is a native-only capability for the System Profiles add-on. Applying
 or restoring a profile requires an explicit action and administrator rights.
 
-`take_host_request` can return `ReviewUpdate` or `RestartElevated { page }`. The host
-handles the package review or user-requested administrator restart. `navigate(page)`
-restores the requested native page after restart without automatically doing work.
+`take_host_request` can return `ReviewUpdate` or `AdminOperation(AdminRequest)`. The
+host starts a separate administrator helper, keeping the interface unelevated. Only a native
+Confirm/Cancel dialog owned by the helper can approve its exact change. `RestartElevated` is
+legacy and refused. Use `run_addon_with_admin` and `admin::AdminChange`; see the author guide.
+`administrator`, `drive_optimize` and `system_tuning` require this boundary for every action.
 A tutorial route remains navigation only. Disk Manager source and Windows backend now live
 in `toolboks-addons/addons/disk-manager`; the host contains no Disk Manager provider.
-See DRIVE-OPTIMIZATION.md for the execution boundaries and intentional test limits.
+See [DRIVE-OPTIMIZATION.md](../docs/DRIVE-OPTIMIZATION.md) for the execution boundaries and intentional test limits.
 
 ## Add-ons as their own exe
 
@@ -154,6 +156,6 @@ window. Besides the hooks above, the trait has `status_items` (status bar), `tra
 `tutorial::mark` or `tutorial::region`; the host draws the overlay.
 
 Start with the [add-on author guide](../docs/ADDON-AUTHOR-GUIDE.md): it builds and runs the sample
-in `examples/hello-addon` with the test host. The wire protocol (version 2) and the host services
+in `examples/hello-addon` with the test host. The wire protocol (version 3) and the host services
 are described in [ADDON-PROTOCOL.md](../docs/ADDON-PROTOCOL.md). Toolboks itself does not start
 add-on exes yet; that arrives with the add-on browser.

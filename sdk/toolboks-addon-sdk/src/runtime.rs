@@ -85,6 +85,16 @@ pub fn run_addon<A: NativeAddon>(addon: A, addon_id: &str) -> Result<(), Protoco
                 writer.write_all(token.as_bytes())?;
                 writer.flush()?;
             }
+            if std::env::args().any(|arg| arg == crate::admin::HELPER_ARG) {
+                return crate::admin::run_helper_on(
+                    Transport::new(reader, writer),
+                    addon_id,
+                    move |request| {
+                        let mut addon = addon;
+                        addon.prepare_admin(request)
+                    },
+                );
+            }
             run_addon_on(Transport::new(reader, writer), addon, addon_id)
         }
         None => run_addon_on(
@@ -92,6 +102,25 @@ pub fn run_addon<A: NativeAddon>(addon: A, addon_id: &str) -> Result<(), Protoco
             addon,
             addon_id,
         ),
+    }
+}
+
+/// Entry point for privileged add-ons. Branches to the small helper before constructing
+/// any UI state. `prepare` must only validate and preview; the SDK alone opens the dialog.
+pub fn run_addon_with_admin<A: NativeAddon>(
+    create: impl FnOnce() -> A,
+    addon_id: &str,
+    prepare: impl FnOnce(&crate::AdminRequest) -> Result<Box<dyn crate::admin::AdminChange>, String>,
+) -> Result<(), ProtocolError> {
+    if crate::admin::is_helper() {
+        crate::admin::run_helper(addon_id, prepare)
+    } else {
+        if crate::admin::elevated() {
+            return Err(ProtocolError::Unexpected(
+                "drawing runtime cannot run with administrator rights",
+            ));
+        }
+        run_addon(create(), addon_id)
     }
 }
 
@@ -177,6 +206,11 @@ where
     W: Write,
     A: NativeAddon,
 {
+    if crate::admin::elevated() {
+        return Err(ProtocolError::Unexpected(
+            "drawing runtime cannot run with administrator rights",
+        ));
+    }
     let (mut reader, mut writer) = transport.split();
     proto::addon_handshake(&mut reader, &mut writer, &Hello::new(addon_id, SDK_VERSION))?;
     let (tx, rx) = mpsc::channel();
@@ -386,6 +420,15 @@ impl<W: Write> Runtime<W> {
                     addon.tray_action(&id);
                 }
             }
+            HostMessage::AdminResult { id, outcome } => {
+                addon.admin_result(id, outcome);
+                self.ctx.request_repaint();
+            }
+            HostMessage::AdminOperation { .. } => {
+                return Err(ProtocolError::Unexpected(
+                    "administrator operation on drawing connection",
+                ))
+            }
             HostMessage::TutorialTarget { target, reveal } => {
                 self.tour = target.map(|target| (target, reveal));
                 self.anchor_sent = None;
@@ -408,6 +451,7 @@ impl<W: Write> Runtime<W> {
                     proto::HostRequest::RestartElevated { page }
                 }
                 HostRequest::ReviewUpdate => proto::HostRequest::ReviewUpdate,
+                HostRequest::AdminOperation(request) => proto::HostRequest::AdminOperation(request),
             };
             self.send(&AddonMessage::HostRequest(request))?;
         }
