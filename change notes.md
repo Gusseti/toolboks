@@ -18,7 +18,7 @@
 
 ## Release prerequisites
 
-- **Disk Manager:** first owner/orchestrator release and the unsigned catalog install check are pending. Defrag, TRIM and Windows-selected optimization are gated on #132. After its protocol 3 helper merges to staging, repin host dependencies and rebuild/retest the add-on before publication.
+- **Disk Manager:** first owner/orchestrator release and the scheduled GUI catalog install check/screenshots (pending, not run) remain. Defrag, TRIM and Windows-selected optimization are gated on #132. After its protocol 3 helper merges to staging, repin host dependencies and rebuild/retest the add-on before publication.
 
 - The public `toolboks-addons` repo and its catalog exist. Public downloads need the first add-on released into the catalog. The catalog address is `src/catalog.rs::URL`.
 

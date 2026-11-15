@@ -34,23 +34,32 @@ before publication, including the protocol integration tests and Windows helper 
 
 ## Checks
 
-Both repositories pass formatting and workspace/all-target clippy with warnings denied.
-The add-ons workspace tests pass, including 26 Disk Manager unit tests (two existing ignored
-machine/benchmark checks) and a two-test protocol suite. The suite checks all five frames,
-loaded/saved preference keys, suspension/resumption, heartbeat and clean exit, including the
-actual release executable through `ADDON_TEST_EXE`.
+Formatting and workspace/all-target clippy with warnings denied pass in both repositories.
+The add-ons workspace tests pass: 26 Disk Manager unit tests (two existing ignored checks),
+two Disk Manager protocol tests and the remaining workspace tests. The protocol suite covers
+all five page frames, loaded/saved preference keys, suspend/resume, heartbeat and clean exit.
+It also passes against the repinned release executable through `ADDON_TEST_EXE`.
 
-Before the unsigned-catalog staging rebase, the host workspace tests pass in standard and
-preview mode with `--test-threads=1` (491 and 492 app tests respectively, 12 ignored, plus
-the other workspace crates). Debug symbols were disabled locally to fit the build volume.
-An earlier run hit `AccessDenied` in an unchanged process-priority test and another ran out
-of disk space. Clean reruns passed; these failures were not hidden or fixed as part of #88.
+Host standard workspace tests pass after rebasing onto #134 (488 app tests, 12 ignored,
+plus the other workspace crates). Final headless preview workspace tests also pass (489 app tests, 12 ignored, plus
+the other workspace crates). An earlier preview run hit `AccessDenied` in the unchanged
+Resource Monitor process-priority test; the final serial rerun passed. Earlier runs also exhausted disk space; the task's Cargo build artifacts were cleaned
+and debug symbols disabled locally. No unrelated process/tool behavior was changed.
 
-## Native catalog check — pending
+## Scheduled GUI acceptance and PR screenshots — pending, not run
 
-The owner changed the catalog to an unsigned plain list on 2026-11-15. Waiting for that
-host change to merge to staging, then rebase this branch and rerun the isolated check below.
-No catalog is signed and no key is generated or committed by the pilot tooling.
+The owner stopped all GUI launches while gaming. The final acceptance run, direct comparison
+with the old linked provider, post-move host GUI startup/RAM measurement and PR screenshots
+are **pending, not run**. Earlier local investigation is not presented as final acceptance
+evidence. No screenshots are included in this PR. The orchestrator will schedule these checks
+when the owner says it is a good time. No GUI is to be launched during this handoff.
+
+The host branch is rebased onto unsigned-catalog staging commit
+`86c749cbd3a27de920329b512ea8a3f33baca74b` (#134). The matching add-ons pin uses protocol 2.
+The optional native fixture contains a plain `index.json` with only `format_version` and
+`entries`, plus the executable; it creates no signatures or keys.
+
+Run the following only during the orchestrator's scheduled GUI session, using fresh paths:
 
 ```powershell
 cargo build --release --locked --features preview
@@ -60,17 +69,15 @@ $env:TOOLBOKS_DATA_DIR = 'C:\Temp\disk-pilot-data' # fresh, absent
 target\release\toolboks.exe --disk-manager-check C:\Temp\disk-pilot-captures
 ```
 
-The PREVIEW-only checker uses the app's normal browser review/queue, installer, supervisor
-and drawing view. Its generated fixture has five files, four folders including the root,
-and 6,300,160 logical file bytes. The test input hook clicks the real Analyze space control
-at the rectangle reported by its tour anchor, then captures all five pages and checks all
-five `--open` page-name resolutions. It does not request elevation or run maintenance.
-Screenshots must be inspected for the scan totals, ranking and optimization gate; the
-checker does not substitute tour sample data for the real scan.
+The PREVIEW-only checker uses the app's browser review/queue, installer, supervisor and view.
+It generates five files, four folders including root, and 6,300,160 logical bytes. Its egui
+test input hook clicks the real Analyze space control at the SDK anchor's reported rectangle,
+restoring the real layout before clicking. It captures all five pages and checks all five
+`--open` page-name resolutions without requesting elevation or running maintenance.
 
-Direct computer-use inspection was refused with “Computer Use was not approved to use
-toolboks.” The built-in isolated PREVIEW integration checker supplies its own captures;
-manual keyboard/scaling and UAC checks remain outside this automated run.
+The emitted result covers install/navigation only. Inspect captures for scan completion,
+totals, ranking and the optimization gate before accepting the GUI test. Manual keyboard,
+scaling, cancelled-UAC and elevated analysis/helper checks also remain for the scheduled run.
 
 ## Findings for #89–#93
 
@@ -91,7 +98,5 @@ manual keyboard/scaling and UAC checks remain outside this automated run.
 
 ## Measurements
 
-Final release measurements and their raw samples are recorded beside this file before
-handoff. Host timing is Windows input-idle startup, not first paint. Add-on timing is spawn
-to the first headless protocol frame. Working set and private commit are separate values.
-The host still contains the other tools, so this pilot alone is not the <4 MB host target.
+See [measurements.md](measurements.md) for the release size comparison, headless first-frame
+and idle-memory samples, earlier baseline measurements, limits and pending GUI measurements.
