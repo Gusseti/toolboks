@@ -15,12 +15,18 @@ pub use toolboks_catalog::{
     SystemClock, TrustState, TrustedKeys,
 };
 
-/// PLACEHOLDER. All zero means "no key": every index is refused until the owner replaces these
-/// two constants, in a separate change, with the public keys made offline by
-/// `catalog-sign keygen` (see docs/catalog-signing.md). Only public keys ever belong here.
-const MAIN_KEY: [u8; 32] = [0; 32];
-/// PLACEHOLDER, see [`MAIN_KEY`]. The recovery key can only rotate the main key.
-const RECOVERY_KEY: [u8; 32] = [0; 32];
+/// The public catalog keys, made offline by `catalog-sign keygen` (see docs/catalog-signing.md).
+/// Only public keys ever belong here. The main key signs `index.json`; its key id is
+/// `d00f89ba25ebfb34`.
+const MAIN_KEY: [u8; 32] = [
+    0x3c, 0xc9, 0xc3, 0xb1, 0x31, 0x62, 0x4b, 0xa2, 0xda, 0xbe, 0x30, 0xa0, 0xcd, 0x02, 0xbf, 0xb9,
+    0x96, 0x54, 0x3b, 0x86, 0xa5, 0xa0, 0x66, 0x6d, 0xa8, 0xc4, 0xfd, 0xa0, 0x4a, 0x78, 0x2f, 0x1b,
+];
+/// The recovery key can only rotate the main key. Its key id is `cb3d106e82f520a2`.
+const RECOVERY_KEY: [u8; 32] = [
+    0x2d, 0x01, 0xb4, 0x1a, 0x58, 0xfc, 0x2c, 0x55, 0x5e, 0x1e, 0x3b, 0x33, 0x71, 0x38, 0x87, 0xa7,
+    0xdf, 0xce, 0x51, 0x2f, 0x14, 0xc4, 0xc5, 0x06, 0x3b, 0xb1, 0x3e, 0xfc, 0xbd, 0x4a, 0xa0, 0xbd,
+];
 /// Sequence of the last rotation already folded into [`MAIN_KEY`]. Stays 0 until a rotated key is
 /// built in; raise it then, so an old rotation statement cannot bring a retired key back.
 const ROTATION_FLOOR: u64 = 0;
@@ -179,6 +185,15 @@ mod tests {
             bytes,
             Some(&signature),
         )
+    }
+
+    #[test]
+    fn built_in_keys_are_the_ones_made_by_keygen() {
+        let keys = trusted_keys();
+        assert_eq!(toolboks_catalog::key_id(&keys.main), "d00f89ba25ebfb34");
+        assert_eq!(toolboks_catalog::key_id(&keys.recovery), "cb3d106e82f520a2");
+        assert_ne!(keys.main, keys.recovery);
+        assert_ne!(keys.main, [0; 32]);
     }
 
     #[test]
