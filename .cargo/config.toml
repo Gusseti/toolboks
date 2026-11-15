@@ -1,3 +1,4 @@
 # Link the C runtime statically so the exe is fully self-contained: no VC++ redistributable, no side files.
+# Restrict implicit DLL dependencies to System32, including before Rust's main runs.
 [target.'cfg(all(windows, target_env = "msvc"))']
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/DEPENDENTLOADFLAG:0x800"]

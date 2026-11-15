@@ -268,16 +268,24 @@ impl From<HttpError> for UpdateError {
             HttpError::Status(404) => UpdateError::NotFound,
             HttpError::Status(code) => UpdateError::Network(format!("server answered {code}")),
             HttpError::Other(msg) => UpdateError::Network(msg),
+            HttpError::Cancelled => UpdateError::Network("cancelled".into()),
         }
     }
 }
 
-/// Only GitHub's own hosts, over HTTPS, may serve an update.
-fn is_trusted_url(url: &str) -> bool {
+/// Only GitHub's own hosts, over HTTPS, may serve an update or an add-on.
+pub(crate) fn is_trusted_url(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://") else {
         return false;
     };
-    let host = rest.split('/').next().unwrap_or("");
+    // The host ends at the path, the query or the fragment, whichever comes first. Taking it
+    // only up to `/` would read `evil.example?x=.github.com` as a GitHub host.
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // No user info (`name@host`) and no port: GitHub's addresses have neither.
+    if host.is_empty() || host.contains(['@', ':']) {
+        return false;
+    }
+    let host = host.to_ascii_lowercase();
     host == "github.com"
         || host.ends_with(".github.com")
         || host.ends_with(".githubusercontent.com")
@@ -654,6 +662,22 @@ mod tests {
         assert!(is_trusted_url("https://objects.githubusercontent.com/a"));
         assert!(!is_trusted_url("http://github.com/a"));
         assert!(!is_trusted_url("https://github.com.evil.example/a"));
+        assert!(is_trusted_url(
+            "https://github.com/Gusseti/toolboks?x=1#top"
+        ));
+        assert!(is_trusted_url("https://GitHub.com/a"));
+        // The host ends at `?` and `#` too, not only at `/`.
+        assert!(!is_trusted_url("https://evil.example?x=.github.com"));
+        assert!(!is_trusted_url(
+            "https://evil.example#.githubusercontent.com"
+        ));
+        assert!(!is_trusted_url("https://evil.example?https://github.com/a"));
+        // User info and ports are refused.
+        assert!(!is_trusted_url("https://github.com@evil.example/a"));
+        assert!(!is_trusted_url("https://user:pw@github.com/a"));
+        assert!(!is_trusted_url("https://github.com:8443/a"));
+        assert!(!is_trusted_url("https:///a"));
+        assert!(!is_trusted_url("https://"));
     }
 
     #[test]

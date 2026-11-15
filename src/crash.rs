@@ -107,6 +107,42 @@ pub fn format_report(
     )
 }
 
+/// Plain-text report about an add-on that stopped, for the clipboard. Like the crash report,
+/// it is only copied when the user asks; nothing is written to disk or sent anywhere.
+#[allow(clippy::too_many_arguments)]
+pub fn format_addon_report<'a>(
+    version: &str,
+    name: &str,
+    id: &str,
+    addon_version: Option<&str>,
+    state: &str,
+    exit_code: Option<u32>,
+    starts: u32,
+    log: impl Iterator<Item = &'a str>,
+) -> String {
+    let mut report = format!(
+        "toolboks {version} add-on report\n\
+         Add-on: {name} ({id})\n\
+         Add-on SDK: {}\n\
+         State: {state}\n\
+         Last exit code: {}\n\
+         Starts this session: {starts}\n\
+         \n\
+         Last log lines:\n",
+        addon_version.unwrap_or("unknown"),
+        exit_code.map_or("none".to_string(), |code| format!("{code} (0x{code:08X})")),
+    );
+    let before = report.len();
+    for line in log {
+        report.push_str(line);
+        report.push('\n');
+    }
+    if report.len() == before {
+        report.push_str("(none)\n");
+    }
+    report
+}
+
 /// Closes the clipboard on drop.
 struct ClipboardGuard;
 
@@ -119,7 +155,7 @@ impl Drop for ClipboardGuard {
     }
 }
 
-fn copy_to_clipboard(text: &str) {
+pub(crate) fn copy_to_clipboard(text: &str) {
     let data = wide(text);
     let bytes = data.len() * std::mem::size_of::<u16>();
     // SAFETY: standard clipboard sequence. The global block is freed here unless the clipboard
@@ -150,7 +186,7 @@ fn copy_to_clipboard(text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::format_report;
+    use super::{format_addon_report, format_report};
 
     #[test]
     fn report_has_all_parts() {
@@ -161,5 +197,28 @@ mod tests {
         assert!(r.contains("Thread: main\n"));
         assert!(r.contains("addresses only"));
         assert!(r.contains("0: 0xdead"));
+    }
+
+    #[test]
+    fn addon_report_has_all_parts() {
+        let r = format_addon_report(
+            "0.12.5",
+            "Disk Manager",
+            "toolboks.disk-manager",
+            Some("0.4.0"),
+            "stopped: Crashed",
+            Some(3),
+            4,
+            ["12:00:00 it ended with exit code 3"].into_iter(),
+        );
+        assert!(r.starts_with("toolboks 0.12.5 add-on report\n"));
+        assert!(r.contains("Add-on: Disk Manager (toolboks.disk-manager)\n"));
+        assert!(r.contains("Add-on SDK: 0.4.0\n"));
+        assert!(r.contains("Last exit code: 3 (0x00000003)\n"));
+        assert!(r.contains("Starts this session: 4\n"));
+        assert!(r.ends_with("12:00:00 it ended with exit code 3\n"));
+        let empty = format_addon_report("1", "A", "a", None, "running", None, 1, [].into_iter());
+        assert!(empty.contains("Add-on SDK: unknown\n"));
+        assert!(empty.ends_with("Last log lines:\n(none)\n"));
     }
 }

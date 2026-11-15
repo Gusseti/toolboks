@@ -6,7 +6,7 @@ An add-on built from the SDK gets most of this for free: the host draws the side
 
 ## Checklist
 
-1. **Tokens only.** No own palette, font, corner radius or icon style. Native add-ons copy the token values from DESIGN.md (Tokens) into one small module and nowhere else (Disk Manager: `addons/disk-manager/src/theme.rs`). The accent marks selection only. Data colours come from the data set in DESIGN.md, are distinct from the accent and always sit next to a label.
+1. **Tokens only.** No own palette, font, corner radius or icon style. Native add-ons import tokens from `toolboks_shared::ui` (Disk Manager: `addons/disk-manager/src/theme.rs` in `toolboks-addons`). The accent marks selection only. Data colours come from the data set in DESIGN.md, are distinct from the accent and always sit next to a label.
 2. **Sentence case.** Sidebar entry, breadcrumb, page names, buttons and headings use sentence case. No uppercase labels, no emoji, no Unicode glyphs as icons. Page names are one or two words.
 3. **Plain wording, labelled estimates.** Say what the thing does for the person first, then offer detail. A measurement is a measurement; an estimate says "estimate" in the label and the tooltip. Say plainly what cannot be measured and why. An unavailable value is never shown as zero.
 4. **One primary button per view.** It has the accent fill. Other buttons are outlined. Buttons name their action ("Start optimization", not "OK").

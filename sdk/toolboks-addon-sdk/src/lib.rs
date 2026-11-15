@@ -9,6 +9,14 @@ pub const API_VERSION: u32 = 2;
 #[cfg(feature = "native-ui")]
 pub mod tutorial;
 
+#[cfg(feature = "runtime")]
+pub mod runtime;
+
+#[cfg(feature = "native-ui")]
+pub mod admin;
+#[cfg(feature = "native-ui")]
+pub use toolboks_addon_proto::{AdminOutcome, AdminRequest};
+
 /// Declarative tours only describe and navigate UI; they never execute actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,12 +79,35 @@ pub enum Capability {
     LiveAudio,
     SystemTuning,
     InputAutomation,
+    Administrator,
+}
+
+#[cfg(feature = "native-ui")]
+/// One item an add-on shows in the host's status bar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusItem {
+    pub text: String,
+    pub tooltip: Option<String>,
+}
+
+#[cfg(feature = "native-ui")]
+/// One entry an add-on adds to the host's tray menu. `id` comes back in
+/// [`NativeAddon::tray_action`] when the user chooses it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayItem {
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
 }
 
 #[cfg(feature = "native-ui")]
 pub enum HostRequest {
-    RestartElevated { page: String },
+    /// Legacy source contract; protocol-3 hosts refuse whole-interface elevation.
+    RestartElevated {
+        page: String,
+    },
     ReviewUpdate,
+    AdminOperation(AdminRequest),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -222,7 +253,8 @@ impl Package {
             return Err("Missing or oversized add-on metadata.".into());
         }
         if ![
-            "grid", "activity", "layers", "storage", "wrench", "leaf", "macro",
+            "grid", "activity", "layers", "storage", "wrench", "leaf", "macro", "sliders", "chip",
+            "shield", "mic", "gauge",
         ]
         .contains(&m.icon.as_str())
         {
@@ -265,6 +297,7 @@ impl Package {
                         | Capability::LiveAudio
                         | Capability::SystemTuning
                         | Capability::InputAutomation
+                        | Capability::Administrator
                 )
             })
         {
@@ -352,6 +385,15 @@ pub trait NativeAddon {
         _preferences: &std::collections::BTreeMap<String, serde_json::Value>,
     ) {
     }
+    /// Read-only preparation in the dedicated helper, never in the drawing runtime.
+    fn prepare_admin(
+        &mut self,
+        _request: &AdminRequest,
+    ) -> Result<Box<dyn admin::AdminChange>, String> {
+        Err("This add-on does not support administrator actions.".into())
+    }
+    /// Informational result in the unelevated UI; never use this to authorize a write.
+    fn admin_result(&mut self, _id: u64, _outcome: AdminOutcome) {}
     fn take_host_request(&mut self) -> Option<HostRequest> {
         None
     }
@@ -389,6 +431,16 @@ pub trait NativeAddon {
     fn tutorial_start(&mut self) {}
     fn tutorial_navigate(&mut self, _page: &str) {}
     fn tutorial_finish(&mut self) {}
+    /// Status bar items. Only the out-of-process runtime forwards them today.
+    fn status_items(&self) -> Vec<StatusItem> {
+        Vec::new()
+    }
+    /// Entries for the host's tray menu. Only the out-of-process runtime forwards them.
+    fn tray_items(&self) -> Vec<TrayItem> {
+        Vec::new()
+    }
+    /// The user chose the tray entry `id`. Only entries from [`Self::tray_items`] arrive.
+    fn tray_action(&mut self, _id: &str) {}
 }
 
 #[cfg(test)]
@@ -396,6 +448,23 @@ mod tests {
     use super::*;
     fn example() -> serde_json::Value {
         serde_json::from_str(include_str!("../../examples/hello-system.tbaddon")).unwrap()
+    }
+    #[test]
+    fn every_icon_the_host_draws_is_accepted_and_others_are_not() {
+        for icon in [
+            "grid", "activity", "layers", "storage", "wrench", "leaf", "macro", "sliders", "chip",
+            "shield", "mic", "gauge",
+        ] {
+            let mut v = example();
+            v["manifest"]["icon"] = serde_json::json!(icon);
+            assert!(
+                Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_ok(),
+                "{icon}"
+            );
+        }
+        let mut v = example();
+        v["manifest"]["icon"] = serde_json::json!("no-such-icon");
+        assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
     }
     #[test]
     fn starter_is_compatible() {
@@ -427,6 +496,7 @@ mod tests {
         v["manifest"]["capabilities"] = serde_json::json!([]);
         assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
         for capability in [
+            "administrator",
             "drive_optimize",
             "live_audio",
             "system_tuning",

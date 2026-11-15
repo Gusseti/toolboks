@@ -2,18 +2,28 @@
 
 A lightweight workspace for system utilities, written in Rust.
 
+## Where Toolboks is going
+
+Toolboks is becoming an empty shell that downloads every tool as an add-on: you pick the tools
+you want inside the app, and each one can be updated or removed on its own. The engine for that
+is available through the add-on browser (plan: issue #77). Disk Manager has moved to the
+add-ons repository; the other tools below remain part of the app. See [the architecture](docs/ADDON-ARCHITECTURE.md), the
+[add-on author guide](docs/ADDON-AUTHOR-GUIDE.md) and the
+[threat model](docs/ADDON-THREAT-MODEL.md).
+
 ## Local add-on preview
 
 The local development branch introduces a Stratum-inspired shell, a persistent sidebar,
-and an add-on framework. The original four tools (Memory Cleaner, Resource Monitor, Debloater and Event Watch) are separate built-in add-ons that can each be turned off.
+and an add-on framework. Every tool (Memory Cleaner, Resource Monitor, Debloater, Event Watch, Disk Manager, Audio Gainer, Macro Manager and System Profiles) is a separate add-on that you install from the add-on browser; Toolboks itself contains none.
 Local `.tbaddon` packages render inside the same window. See [the architecture](docs/ADDON-ARCHITECTURE.md),
 [SDK](sdk/README.md), and [preview build instructions](docs/LOCAL-DEVELOPMENT.md).
 
-The initial external runtime supports declarative pages, basic host metrics and saved
-preferences. **Disk Manager by stratum** is the first host-linked native add-on,
-with background disk analysis, an integrated space map, fragmentation reports and Windows drive optimization. Install it from the
-add-on browser in the current preview. See [Disk Manager](docs/DISK-MANAGER.md).
-Independent third-party native binaries and an online signed catalog remain later stages.
+The external runtime supports declarative packages and catalog-installed native executables.
+**Disk Manager by stratum** now lives in [toolboks-addons](https://github.com/fredhakon/toolboks-addons/tree/main/addons/disk-manager)
+as an independent executable, with the same scan pages and saved preferences. It is no longer
+compiled into Toolboks. Its first catalog publication is still required before users can install it.
+Drive-changing optimization is gated on #132's elevated helper and confirmation window, followed
+by a dependency repin and rebuild. See [Disk Manager](docs/DISK-MANAGER.md).
 
 Help offers full and current-tab walkthroughs with purple highlights and cancellation.
 See [Guided tours](docs/GUIDED-TOURS.md) and [Drive optimization](docs/DRIVE-OPTIMIZATION.md).

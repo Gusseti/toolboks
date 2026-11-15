@@ -13,7 +13,7 @@ Dark graphite, compact, calm. A tool you open for a minute next to a game or wor
 ## Layout
 
 - Window default 1120 x 760, resizable. Layout is structural: the sidebar collapses, lists and tables scroll, cards never shrink below their content.
-- **Sidebar**: 52 px icon rail with a hamburger at the top; the hamburger opens it to 204 px with names, and the active tool's pages nest under it. State is in memory only. Order: Home, the built-in tools, add-ons, then Add-ons browser at the bottom.
+- **Sidebar**: 52 px icon rail with a hamburger at the top; the hamburger opens it to 240 px with names (wider than the first mockup, which was 204 px: names such as "Resource Monitor" and the "New" tag need the room, and it suits the wider default windows), and the active tool's pages nest under it. State is in memory only. Order: Home, the built-in tools, add-ons, then Add-ons browser at the bottom.
 - **Header** (46 px): breadcrumb `Tool / Page` at the left, page controls at the right (for graph pages the range switch 1 min, 5 min, 1 h, 4 h, 24 h). No second tab strip: pages live in the sidebar.
 - **Status bar** (24 px): RAM, CPU, GPU, version. Tools may add short items; no more than three.
 - **Content**: 16 px padding, 8 to 12 px gap between cards. Master and detail is the default for a page about several things (list on the left, 260 to 290 px; detail on the right).
@@ -81,14 +81,14 @@ Text at least 4.5:1, large text 3:1. Nothing is conveyed by colour alone (data l
 
 ## Native notes (egui)
 
-The mockups are web; the app is native egui. Tokens live in `ui::apply_style` and the shared helpers in `src/ui.rs` (`graph_card`, `pill`, `card`, `toggle_switch`). Build new pages from those helpers; do not restyle widgets per page. Nothing here may write to disk: sidebar state, selected resource and range are in memory.
+The mockups are web; the app is native egui. Tokens live in `ui::apply_style` and the shared helpers in `shared/toolboks-shared/src/ui.rs` (`toolboks_shared::ui`: `graph_card`, `pill`, `card`, `toggle_switch`), which the host and every add-on use. Build new pages from those helpers; do not restyle widgets per page. Nothing here may write to disk: sidebar state, selected resource and range are in memory.
 
 ## For add-on authors
 
 An add-on renders inside the host workspace, so it inherits the shell: sidebar entry, header and breadcrumb, status bar and the tokens above.
 
 - Use the SDK's standard page parts (headings, notes, metrics, preference controls) before anything custom; they already follow this file.
-- A native add-on draws with the host's helpers (graph card, resource row, stat, table, button) and the tokens. Do not bring your own palette, font, corner radius or icon style.
+- A native add-on draws with the host's helpers (graph card, resource row, stat, table, button) and the tokens. Do not bring your own palette, font, corner radius or icon style. An add-on built as its own exe calls `toolboks_shared::ui::apply_style` once so its process has the same fonts, colours and spacing; see the [author guide](docs/ADDON-AUTHOR-GUIDE.md).
 - Pick your accent from the manifest's accent options; the accent is used for selection only. Data colours must be distinct from the accent and always labelled.
 - Icons: 1.7 px stroke, 24 px grid, rounded caps and joins, drawn in the host's icon style. No emoji or Unicode glyphs as icons.
 - Page types: **overview** (cards or master and detail), **table** (list with filters), **settings** (labelled controls), **tool** (preview, confirm, apply, undo). Name pages with one or two words; they appear in the sidebar under your add-on.

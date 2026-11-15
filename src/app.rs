@@ -5,13 +5,22 @@ use std::time::Duration;
 use eframe::egui;
 
 use crate::instance;
-use crate::tools;
 use crate::tray::{self, Tray};
 use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
+#[cfg(feature = "preview")]
+pub mod addon_check;
+#[cfg(feature = "preview")]
+pub mod disk_manager_check;
+mod marketplace;
+#[cfg(feature = "preview")]
+pub mod marketplace_check;
+#[cfg(feature = "preview")]
+pub mod restore_check;
 mod shell;
+pub(crate) mod store;
 mod tutorial;
-use crate::addons::{self, Registry, SystemAddon};
+use crate::addons::{self, Registry};
 use shell::Screen;
 
 /// Results sent back from the update worker thread.
@@ -30,8 +39,10 @@ enum UpdateState {
 }
 
 pub struct App {
-    base: SystemAddon,
-    native: crate::native::NativeHost,
+    market: crate::marketplace::Marketplace,
+    supervisor: Option<crate::supervisor::Supervisor>,
+    views: std::collections::BTreeMap<String, crate::addon_view::AddonView>,
+    services: crate::addon_services::Services,
     registry: Registry,
     screen: Screen,
     /// The sidebar shows names (204 px) instead of icons only (52 px). Memory only.
@@ -41,6 +52,7 @@ pub struct App {
     install_path: String,
     show_install: bool,
     pending_package: Option<toolboks_addon_sdk::Package>,
+    pending_declarative: Option<String>,
     detail: Option<String>,
     /// The add-on selected in the Home list (by id). Memory only.
     home_selected: Option<String>,
@@ -77,43 +89,45 @@ impl Drop for App {
     }
 }
 
-/// `--open "Tool"` or `--open "Tool/Page"` (case-insensitive, also `--open=...`) picks the page
-/// shown at start-up, e.g. `toolboks.exe --open "Resource Monitor/Details"`. Unknown names are
-/// ignored, so a typo just opens the first page.
-fn parse_open(args: &[String]) -> Option<(usize, usize)> {
-    let spec = args.iter().enumerate().find_map(|(i, a)| {
+/// `--open "Add-on"` or `--open "Add-on/Page"` (case-insensitive, also `--open=...`) names the
+/// installed add-on and page to show at start-up, e.g. `toolboks.exe --open "Resource
+/// Monitor/Details"`. A name that matches nothing, or an add-on that is off or not installed,
+/// leaves the overview with a short explanation instead.
+fn open_spec(args: &[String]) -> Option<String> {
+    args.iter().enumerate().find_map(|(i, a)| {
         a.strip_prefix("--open=")
             .map(str::to_string)
             .or_else(|| (a == "--open").then(|| args.get(i + 1).cloned()).flatten())
-    })?;
-    let (tool_name, page_name) = match spec.split_once('/') {
-        Some((t, p)) => (t.trim(), Some(p.trim())),
-        None => (spec.trim(), None),
-    };
-    let tool = tools::WORKSPACES
-        .iter()
-        .position(|(name, _)| name.eq_ignore_ascii_case(tool_name))?;
-    let page = page_name
-        .and_then(|name| {
-            tools::WORKSPACES[tool]
-                .1
-                .iter()
-                .position(|p| p.eq_ignore_ascii_case(name))
-        })
-        .unwrap_or(0);
-    Some((tool, page))
+    })
 }
 
-/// Whether `--open` may show tool number `tool`: a turned-off tool falls back to the overview
-/// with a short explanation instead.
-fn open_target(registry: &Registry, tool: usize) -> Result<(), String> {
-    match registry.builtins.get(tool) {
-        Some(m) if registry.enabled(&m.id) => Ok(()),
-        Some(m) => Err(format!(
-            "{} is turned off. You can turn it on again in the add-on browser.",
-            m.title
+/// Where a start-up `--open` spec leads: the screen and page, or a message to show.
+fn open_target(registry: &Registry, spec: &str) -> Result<(String, usize), String> {
+    let installed = crate::installer::installed(&registry.root);
+    match crate::addon_services::resolve_link(spec, &installed, |id| registry.enabled(id), &[]) {
+        crate::addon_services::Link::Open { id, page } => {
+            let index = page
+                .and_then(|name| {
+                    installed
+                        .iter()
+                        .find(|entry| entry.id == id)
+                        .and_then(|entry| {
+                            entry
+                                .pages
+                                .iter()
+                                .position(|p| p.eq_ignore_ascii_case(&name))
+                        })
+                })
+                .unwrap_or(0);
+            Ok((id, index))
+        }
+        crate::addon_services::Link::TurnedOff { title, .. } => Err(format!(
+            "{title} is turned off. You can turn it on again in the add-on browser."
         )),
-        None => Err("That tool is not available.".into()),
+        crate::addon_services::Link::NotInstalled { title, .. } => Err(format!(
+            "{title} is not installed. You can add it in the add-on browser."
+        )),
+        crate::addon_services::Link::Unknown => Err("That add-on is not available.".into()),
     }
 }
 
@@ -123,52 +137,60 @@ impl App {
         let registry = Registry::load(addons::data_root());
         let mut message = None;
         let keep_in_tray = registry.config.keep_in_tray;
-        let mut selected = (0, 0);
+        let mut addon_page = 0;
         let mut screen = Screen::Home;
-        if let Some((tool, page)) = parse_open(&args) {
-            match open_target(&registry, tool) {
-                Ok(()) => {
-                    selected = (tool, page);
-                    screen = Screen::Tool(tool);
+        let mut market = crate::marketplace::Marketplace::restore(&registry.root);
+        if !registry.config.restore_pending.is_empty() {
+            // Updating from the version that had the tools built in: offer them back, ticked.
+            screen = Screen::Pick;
+            for id in &registry.config.restore_pending {
+                market.select(id, true);
+            }
+        } else if !registry.config.first_run_complete
+            && registry.packages.is_empty()
+            && crate::installer::installed(&registry.root).is_empty()
+        {
+            // A first start has no tools yet: the picker opens by itself.
+            screen = Screen::Pick;
+        }
+        if let Some(spec) = open_spec(&args) {
+            match open_target(&registry, &spec) {
+                Ok((id, page)) => {
+                    screen = Screen::External(id);
+                    addon_page = page;
                 }
                 Err(text) => message = Some(text),
             }
         }
-        let mut native = crate::native::NativeHost::default();
         if let Some(index) = args.iter().position(|a| a == "--open-addon") {
             if let Some(id) = args.get(index + 1) {
-                if let Some(package) = registry
-                    .packages
-                    .iter()
-                    .find(|p| p.manifest.id == *id && registry.enabled(id))
-                {
+                let known = registry.packages.iter().any(|p| p.manifest.id == *id)
+                    || crate::installer::installed_entry(&registry.root, id).is_some();
+                if known && registry.enabled(id) {
                     screen = Screen::External(id.clone());
-                    if let Some(provider) = &package.manifest.native_provider {
-                        let page = args
-                            .iter()
-                            .position(|a| a == "--addon-page")
-                            .and_then(|i| args.get(i + 1))
-                            .map(String::as_str)
-                            .unwrap_or("0");
-                        native.navigate(provider, page);
-                    }
+                    addon_page = args
+                        .iter()
+                        .position(|a| a == "--addon-page")
+                        .and_then(|i| args.get(i + 1))
+                        .and_then(|page| page.parse().ok())
+                        .unwrap_or(0);
                 }
             }
         }
         Self {
-            native,
-            base: SystemAddon {
-                selected,
-                ..Default::default()
-            },
+            market,
+            supervisor: None,
+            views: Default::default(),
+            services: Default::default(),
             registry,
             screen,
             sidebar_expanded: false,
-            addon_page: 0,
+            addon_page,
             search: String::new(),
             install_path: String::new(),
             show_install: false,
             pending_package: None,
+            pending_declarative: None,
             detail: None,
             home_selected: None,
             remove_pending: None,
@@ -328,16 +350,6 @@ impl App {
     }
 }
 
-/// Flattens the status items of all tools (in tool order), trimmed, without empty ones.
-fn status_items(groups: impl IntoIterator<Item = Vec<String>>) -> Vec<String> {
-    groups
-        .into_iter()
-        .flatten()
-        .map(|item| item.trim().to_owned())
-        .filter(|item| !item.is_empty())
-        .collect()
-}
-
 /// Starts the freshly installed exe. It inherits this process's rights, admin included.
 fn restart() -> std::io::Result<()> {
     std::process::Command::new(std::env::current_exe()?)
@@ -366,24 +378,6 @@ impl eframe::App for App {
         }
         self.poll_update(ctx);
         self.tray_tick(ctx);
-        self.sync_workspaces();
-        self.native.sync_preferences(&self.registry);
-        self.native.tick(ctx);
-        if self.native.collect_preferences(&mut self.registry) {
-            self.preferences_dirty = Some(std::time::Instant::now());
-        }
-        for (tool, manifest) in self.base.tools.iter_mut().zip(&self.registry.builtins) {
-            if !self.registry.enabled(&manifest.id) {
-                *tool = None;
-            } else if let Some(tool) = tool {
-                tool.finish_pending(ctx);
-            }
-        }
-        if let Some(active) = self.base.active {
-            if let Some(tool) = &mut self.base.tools[active] {
-                tool.tick(ctx);
-            }
-        }
         if self
             .preferences_dirty
             .is_some_and(|t| t.elapsed() > Duration::from_millis(500))
@@ -408,28 +402,6 @@ impl App {
     fn install_in_progress(&self) -> bool {
         update::is_installing()
     }
-    fn sync_workspaces(&mut self) {
-        let active = match self.screen {
-            Screen::Tool(index)
-                if !self.hidden && self.registry.enabled(&self.registry.builtins[index].id) =>
-            {
-                Some(index)
-            }
-            _ => None,
-        };
-        self.base.show(active);
-        let provider = match &self.screen {
-            Screen::External(id) if !self.hidden && self.registry.enabled(id) => self
-                .registry
-                .packages
-                .iter()
-                .find(|p| &p.manifest.id == id)
-                .and_then(|p| p.manifest.native_provider.as_deref()),
-            _ => None,
-        };
-        self.native.show(provider, &self.registry);
-    }
-
     /// Tray mode: icon, menu, hiding on close, and keeping the app ticking while hidden.
     /// eframe 0.37 calls `logic` (and repaints every ~100 ms when asked) for a hidden window,
     /// so the tools' background work keeps running without any minimize trick.
@@ -591,7 +563,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_target, parse_open, status_items};
+    use super::{open_spec, open_target};
     use crate::addons::Registry;
 
     fn args(list: &[&str]) -> Vec<String> {
@@ -599,61 +571,25 @@ mod tests {
     }
 
     #[test]
-    fn open_picks_a_tool_and_page_case_insensitively() {
+    fn open_reads_the_name_in_both_forms() {
         assert_eq!(
-            parse_open(&args(&["--open", "resource monitor/DETAILS"])),
-            Some((1, 1))
+            open_spec(&args(&["--open", "resource monitor/DETAILS"])).as_deref(),
+            Some("resource monitor/DETAILS")
         );
         assert_eq!(
-            parse_open(&args(&["--open=Memory Cleaner/Advanced"])),
-            Some((0, 1))
+            open_spec(&args(&["--open=Memory Cleaner/Advanced"])).as_deref(),
+            Some("Memory Cleaner/Advanced")
         );
-        assert_eq!(
-            parse_open(&args(&["--open", "Resource Monitor"])),
-            Some((1, 0))
-        );
+        assert_eq!(open_spec(&args(&[])), None);
+        assert_eq!(open_spec(&args(&["--open"])), None);
     }
 
     #[test]
-    fn open_ignores_unknown_names_and_missing_values() {
-        assert_eq!(parse_open(&args(&[])), None);
-        assert_eq!(parse_open(&args(&["--open"])), None);
-        assert_eq!(parse_open(&args(&["--open", "Nope"])), None);
-        // A known tool with an unknown page opens that tool's first page.
-        assert_eq!(
-            parse_open(&args(&["--open", "Resource Monitor/Nope"])),
-            Some((1, 0))
-        );
-    }
-
-    #[test]
-    fn open_of_a_turned_off_tool_falls_back_with_a_message() {
+    fn open_of_an_add_on_that_is_not_installed_falls_back_with_a_message() {
         let root = std::env::temp_dir().join(format!("toolboks-open-{}", std::process::id()));
-        let mut registry = Registry::load(root.clone());
-        let (tool, _) = parse_open(&args(&["--open", "Resource Monitor/Details"])).unwrap();
-        assert!(open_target(&registry, tool).is_ok());
-        registry
-            .set_enabled("toolboks.resource-monitor", false)
-            .unwrap();
-        let message = open_target(&registry, tool).unwrap_err();
-        assert!(message.contains("Resource Monitor is turned off"));
-        // The other tools are unaffected.
-        assert!(open_target(&registry, 0).is_ok());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn status_items_keep_tool_order_and_skip_blanks() {
-        let groups = vec![
-            vec!["RAM 63%".to_owned(), "  ".to_owned()],
-            Vec::new(),
-            vec![" CPU 24% ".to_owned(), "GPU 7%".to_owned()],
-        ];
-        assert_eq!(status_items(groups), ["RAM 63%", "CPU 24%", "GPU 7%"]);
-    }
-
-    #[test]
-    fn status_items_empty_when_no_tool_reports() {
-        assert!(status_items([Vec::new(), Vec::new()]).is_empty());
+        let registry = Registry::load(root.clone());
+        let message = open_target(&registry, "Resource Monitor/Details").unwrap_err();
+        assert!(message.contains("not available"), "{message}");
+        std::fs::remove_dir_all(root).ok();
     }
 }

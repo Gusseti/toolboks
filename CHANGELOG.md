@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-15
+
+This is a big update: Toolboks is now a small shell and every tool is a separate add-on you download. **Read this before updating.** When you start the new version it offers to restore your tools; nothing is lost.
+
+### Changed (breaking)
+
+- **Toolboks is now a shell, and every tool is a separate add-on.** Memory Cleaner, Resource Monitor, Debloater, Event Watch, Disk Manager, Audio Gainer, Macro Manager and System Profiles are downloaded, updated and removed on their own from the add-on browser. The app itself no longer contains any tool, so it is smaller and starts faster.
+- **Updating keeps your tools.** The first time you start the new version, "Restore your tools" lists the tools you had, ticked. Install them with one click and review what each one asks to access. Your saved settings stay under the same names. If you are offline or the list cannot be reached, nothing is lost: the offer stays until the tools are installed or you choose to forget them.
+- **No more restarting as administrator.** Changes that need administrator rights are made by a small separate helper that shows its own Confirm or Cancel window listing exactly what will change. Toolboks and the add-ons never run as administrator themselves.
+- **`--open "Name/Page"`** now opens an installed add-on by its name.
+- **Cleaner sidebar:** every add-on has its own icon, a new add-on shows "New" until you open it (instead of "Installed" under every name), the title is bold, the open sidebar is wider (240 px), and "Pick your tools" only shows while you are on the Add-ons pages.
+- **After "Restore your tools" or picking tools,** Toolboks goes to your toolkit when the installs are done, and the picker no longer lists every installed add-on a second time.
+- Add-ons and the add-on list are not code signed (an owner decision); Windows SmartScreen may warn about each download.
+
 ## [0.12.6] - 2026-11-15
 
 ### Added

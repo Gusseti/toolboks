@@ -70,21 +70,17 @@ helpers and the tokens only, with no palette, font, radius or icon style of thei
 ## Trust and scope
 
 Publisher names in local manifests are descriptive, not authenticated identities.
-They never grant a checkmark. Embedded first-party records grant the checkmark to
-the four built-in tools and the exact Disk Manager package; these are listed first.
-Signed publisher identity, online discovery,
-and remote add-on updates are future work.
+They never grant a checkmark. Embedded first-party records still cover the four built-in tools
+and the exact Audio Gainer, Macro Manager and System Profiles packages. Disk Manager has
+moved to `toolboks-addons`: it is an executable installed through the catalog, whose
+entry supplies verification, page names, capabilities and background behavior.
 
 API 2 adds the optional `byline` and `native_provider` manifest fields. `native-ui`
-exposes the `NativeAddon` Rust trait with integrated rendering, background tick and
-cancellation hooks. The byline is subdued attribution next to an add-on's title.
-Native packages have no declarative pages and must match a provider trusted by the
-current host. Disk Manager by stratum is the first example.
-
-This is a **source-level host-linked contract**, not a dynamic DLL ABI. The preview
-does not load arbitrary executable code from packages. Third-party native binary
-distribution, signing and provider updates remain future work. API 1 packages keep
-working. See the included native reference source and its README for the boundary.
+exposes the `NativeAddon` Rust trait; `runtime::run_addon` runs it in a separate process.
+Local activation packages must match a provider still compiled into the host; they cannot
+start executables. Catalog installation uses the existing installer and supervisor.
+This is not a dynamic DLL ABI. API 1 declarative packages keep working. Publishing third-party
+native binaries remains future work.
 
 JSON Schema helps editors; the Rust validator is authoritative for cross-field
 rules, capability checks, duplicate IDs/keys and host compatibility.
@@ -133,7 +129,8 @@ remain compatible; the app release version is unchanged during local development
 storage optimization. Source providers receive the installed package capabilities
 through `set_capabilities` and must gate actions accordingly. The host trusts only
 its exact first-party providers; adding a capability to a manifest does not grant it.
-Disk Manager 0.1 remains read-only until its approved 0.2 package update is installed.
+Disk Manager keeps this capability in its executable manifest. Its drive-changing actions
+are gated on #132; analysis retains the existing elevation request.
 
 `live_audio` is a native-only capability for microphone monitoring and routing to
 user-selected outputs. Audio Gainer opens audio streams only after an explicit action.
@@ -141,9 +138,24 @@ user-selected outputs. Audio Gainer opens audio streams only after an explicit a
 `system_tuning` is a native-only capability for the System Profiles add-on. Applying
 or restoring a profile requires an explicit action and administrator rights.
 
-`take_host_request` can return `ReviewUpdate` or `RestartElevated { page }`. The host
-handles the package review or user-requested administrator restart. `navigate(page)`
-restores the requested native page after restart without automatically doing work.
-A tutorial route remains navigation only. The native example includes the updated
-Disk Manager source, Windows backend, legacy manifest and permission-gating example.
-See DRIVE-OPTIMIZATION.md for the execution boundaries and intentional test limits.
+`take_host_request` can return `ReviewUpdate` or `AdminOperation(AdminRequest)`. The
+host starts a separate administrator helper, keeping the interface unelevated. Only a native
+Confirm/Cancel dialog owned by the helper can approve its exact change. `RestartElevated` is
+legacy and refused. Use `run_addon_with_admin` and `admin::AdminChange`; see the author guide.
+`administrator`, `drive_optimize` and `system_tuning` require this boundary for every action.
+A tutorial route remains navigation only. Disk Manager source and Windows backend now live
+in `toolboks-addons/addons/disk-manager`; the host contains no Disk Manager provider.
+See [DRIVE-OPTIMIZATION.md](../docs/DRIVE-OPTIMIZATION.md) for the execution boundaries and intentional test limits.
+
+## Add-ons as their own exe
+
+A native add-on can be built as its own program with `runtime::run_addon` (SDK feature `runtime`)
+and the same `NativeAddon` trait. Toolboks starts it and shows its page inside the Toolboks
+window. Besides the hooks above, the trait has `status_items` (status bar), `tray_items` and
+`tray_action` (optional tray entries). Tours work as for source providers: mark anchors with
+`tutorial::mark` or `tutorial::region`; the host draws the overlay.
+
+Start with the [add-on author guide](../docs/ADDON-AUTHOR-GUIDE.md): it builds and runs the sample
+in `examples/hello-addon` with the test host. The wire protocol (version 3) and the host services
+are described in [ADDON-PROTOCOL.md](../docs/ADDON-PROTOCOL.md). Toolboks itself does not start
+add-on exes yet; that arrives with the add-on browser.

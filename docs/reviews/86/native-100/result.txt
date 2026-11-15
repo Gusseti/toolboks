@@ -1,0 +1,1 @@
+PASS: fresh first-run; no preselection; two tools reviewed together, installed from signed local catalog, and opened in the same real native window. Update, remove choices, real failed download and tour captured. State tests cover removal effects.

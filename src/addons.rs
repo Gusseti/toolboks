@@ -8,187 +8,61 @@ use std::{
 };
 use toolboks_addon_sdk::{Package, MAX_PACKAGE_BYTES};
 
-/// The built-in tools, in the same order as `tools::all()`: one manifest each.
-pub const BUILTIN_MANIFESTS: [&str; 4] = [
-    include_str!("../assets/memory-cleaner.json"),
-    include_str!("../assets/resource-monitor.json"),
-    include_str!("../assets/debloater.json"),
-    include_str!("../assets/event-watch.json"),
-];
-/// The IDs of [`BUILTIN_MANIFESTS`], same order (a test keeps the two in step).
-pub const BUILTIN_IDS: [&str; 4] = [
+/// The single "System Essentials" entry that older versions stored. It is gone now; saved
+/// settings that mention it are dropped when the configuration is loaded.
+pub const LEGACY_BASE_ID: &str = "toolboks.system-essentials";
+pub const SDK_EXAMPLE: &str = include_str!("../sdk/examples/hello-system.tbaddon");
+
+/// The tools that used to be part of Toolboks itself (or were host-linked add-ons). They are
+/// separate add-ons now. Their ids are kept so a user who updates from an earlier version gets
+/// the same tools back, with the preferences already saved under these ids.
+pub const FORMER_BUILTIN_IDS: [&str; 8] = [
     "toolboks.memory-cleaner",
     "toolboks.resource-monitor",
     "toolboks.debloater",
     "toolboks.event-watch",
+    "toolboks.disk-manager",
+    "toolboks.aural",
+    "toolboks.system-profiles",
+    "toolboks.macro-manager",
 ];
-/// The single "System Essentials" entry that older versions stored. It is gone now; saved
-/// settings that mention it are dropped when the configuration is loaded.
-pub const LEGACY_BASE_ID: &str = "toolboks.system-essentials";
-pub fn builtin_manifests() -> Vec<toolboks_addon_sdk::Manifest> {
-    BUILTIN_MANIFESTS
-        .iter()
-        .map(|m| serde_json::from_str(m).expect("bundled manifest"))
-        .collect()
-}
-pub const SDK_EXAMPLE: &str = include_str!("../sdk/examples/hello-system.tbaddon");
-pub fn official_disk_package() -> Package {
-    serde_json::from_str(toolboks_disk_manager::PACKAGE).expect("bundled disk package")
-}
-pub const AURAL_ID: &str = "toolboks.aural";
-pub const LEGACY_AURAL_PACKAGE: &str = include_str!("../assets/aural-legacy-0.1.tbaddon");
-pub const PROFILES_ID: &str = "toolboks.system-profiles";
-pub const MACRO_ID: &str = "toolboks.macro-manager";
-pub const OFFICIAL_ADDONS: [&str; 4] = [toolboks_disk_manager::ID, AURAL_ID, PROFILES_ID, MACRO_ID];
 
-pub fn official_package(id: &str) -> Option<Package> {
-    match id {
-        MACRO_ID => Some(
-            serde_json::from_str(include_str!("../assets/macro-manager.tbaddon"))
-                .expect("bundled Macro Manager package"),
-        ),
-        toolboks_disk_manager::ID => Some(official_disk_package()),
-        AURAL_ID => Some(
-            serde_json::from_str(include_str!("../assets/aural.tbaddon"))
-                .expect("bundled Aural package"),
-        ),
-        PROFILES_ID => Some(
-            serde_json::from_str(include_str!("../assets/system-profiles.tbaddon"))
-                .expect("bundled System Profiles package"),
-        ),
-        _ => None,
-    }
-}
-
-pub fn trusted_native(p: &Package) -> bool {
-    let Ok(value) = serde_json::to_value(p) else {
-        return false;
-    };
-    let official = official_package(&p.manifest.id).and_then(|p| serde_json::to_value(p).ok());
-    official.as_ref() == Some(&value)
-        || (p.manifest.id == AURAL_ID
-            && serde_json::from_str::<Package>(LEGACY_AURAL_PACKAGE)
-                .ok()
-                .is_some_and(|mut previous| {
-                    if serde_json::to_value(&previous).ok().as_ref() == Some(&value) {
-                        return true;
-                    }
-                    previous.manifest.title = "Aural".into();
-                    previous.manifest.byline = None;
-                    serde_json::to_value(previous).ok().as_ref() == Some(&value)
-                }))
-        || (p.manifest.id == toolboks_disk_manager::ID
-            && serde_json::from_str::<Package>(toolboks_disk_manager::LEGACY_PACKAGE)
-                .ok()
-                .and_then(|p| serde_json::to_value(p).ok())
-                .as_ref()
-                == Some(&value))
-}
+/// Native providers are no longer linked into Toolboks, so a package that names one cannot run.
 fn validate_provider(p: &Package) -> Result<(), String> {
-    if (p.manifest.native_provider.is_some() || OFFICIAL_ADDONS.contains(&p.manifest.id.as_str()))
-        && !trusted_native(p)
-    {
-        Err("This native package does not match a trusted provider in this Toolboks build.".into())
+    if p.manifest.native_provider.is_some() {
+        Err("This package needs a tool that is no longer built into Toolboks. Install it from the add-on browser.".into())
     } else {
         Ok(())
-    }
-}
-#[derive(Default)]
-pub struct SystemAddon {
-    pub tools: [Option<Box<dyn crate::tools::Tool>>; crate::tools::COUNT],
-    pub selected: (usize, usize),
-    pub active: Option<usize>,
-}
-
-impl SystemAddon {
-    pub fn show(&mut self, active: Option<usize>) {
-        if self.active == active {
-            return;
-        }
-        if let Some(old) = self.active {
-            if self.tools[old].as_mut().is_some_and(|tool| !tool.suspend()) {
-                self.tools[old] = None;
-            }
-        }
-        if let Some(index) = active {
-            match &mut self.tools[index] {
-                Some(tool) => tool.resume(),
-                slot @ None => *slot = Some(crate::tools::build(index)),
-            }
-        }
-        self.active = active;
     }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub first_run_complete: bool,
     pub keep_in_tray: bool,
     pub sidebar_collapsed: bool,
     pub disabled: Vec<String>,
     pub preferences: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+    /// Set once the update from the version that had the tools built in has been looked at.
+    pub platform_migrated: bool,
+    /// Tools the user had before the update that are not installed yet: offered once at the
+    /// first start as "Restore your tools" and kept until they are installed or skipped.
+    pub restore_pending: Vec<String>,
+    /// Add-ons installed or updated that have not been opened since: they show "New" in the
+    /// sidebar until the user switches to them.
+    pub new_addons: Vec<String>,
 }
 pub struct Registry {
-    /// Built-in tools, in tool order (index matches `SystemAddon::tools`).
-    pub builtins: Vec<toolboks_addon_sdk::Manifest>,
     pub packages: Vec<Package>,
     pub config: Config,
     pub root: PathBuf,
     pub errors: Vec<String>,
 }
-pub fn data_root() -> PathBuf {
-    let name = if cfg!(feature = "preview") {
-        "Toolboks Preview"
-    } else {
-        "Toolboks"
-    };
-    // TOOLBOKS_DATA_DIR is useful for isolated automated tests and portable developer runs.
-    if let Some(path) = std::env::var_os("TOOLBOKS_DATA_DIR") {
-        return PathBuf::from(path).join(name);
-    }
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .unwrap_or_default()
-                .parent()
-                .unwrap_or(Path::new("."))
-                .to_owned()
-        })
-        .join(name)
-}
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let temp = path.with_extension("pending");
-    fs::write(&temp, bytes).map_err(|e| e.to_string())?;
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::{
-            core::PCWSTR,
-            Win32::Storage::FileSystem::{
-                MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-            },
-        };
-        let from: Vec<_> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
-        let to: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        unsafe {
-            MoveFileExW(
-                PCWSTR(from.as_ptr()),
-                PCWSTR(to.as_ptr()),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        }
-        .map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(windows))]
-    fs::rename(temp, path).map_err(|e| e.to_string())?;
-    Ok(())
-}
+// Shared with add-ons, so they find and write their data the same way as the host.
+pub use toolboks_shared::storage::{data_root, write_atomic};
 fn reserved(id: &str) -> bool {
-    id == LEGACY_BASE_ID || BUILTIN_IDS.contains(&id)
+    id == LEGACY_BASE_ID
 }
 fn read_package(path: &Path) -> Result<Package, String> {
     let file = fs::File::open(path).map_err(|e| format!("Could not open package: {e}"))?;
@@ -196,53 +70,83 @@ fn read_package(path: &Path) -> Result<Package, String> {
     file.take(MAX_PACKAGE_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
-    let mut p = Package::parse(&bytes, env!("CARGO_PKG_VERSION"))?;
+    let p = Package::parse(&bytes, env!("CARGO_PKG_VERSION"))?;
     validate_provider(&p)?;
     if reserved(&p.manifest.id) {
         return Err("A bundled add-on cannot be replaced by a local package.".into());
     }
-    if p.manifest.id == AURAL_ID {
-        // Normalize display metadata only. New capabilities require update review,
-        // not an implicit replacement of the installed package on startup.
-        p.manifest.title = "Audio Gainer".into();
-        p.manifest.byline = Some("by aural".into());
-    }
     Ok(p)
 }
+/// The id of a package file left by a version that linked this tool into Toolboks, if it is one.
+fn obsolete_provider_package(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let manifest = value.get("manifest")?;
+    let id = manifest.get("id")?.as_str()?;
+    (manifest
+        .get("native_provider")
+        .is_some_and(|p| !p.is_null())
+        && FORMER_BUILTIN_IDS.contains(&id))
+    .then(|| id.to_owned())
+}
+
 impl Registry {
     pub fn load(root: PathBuf) -> Self {
         let mut r = Self {
-            builtins: builtin_manifests(),
             packages: vec![],
             config: Config::default(),
             root,
             errors: vec![],
         };
         let config = r.root.join("config.json");
+        let existing_install = config.exists() || r.root.join("addons").is_dir();
+        let mut config_readable = true;
         if config.exists() {
-            match fs::read(&config)
-                .map_err(|e| e.to_string())
-                .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
-            {
+            match fs::read(&config).map_err(|e| e.to_string()).and_then(|b| {
+                // Some editors add a byte-order mark; it is not part of the JSON.
+                let json = b.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&b);
+                serde_json::from_slice(json).map_err(|e| e.to_string())
+            }) {
                 Ok(c) => r.config = c,
-                Err(e) => r.errors.push(format!(
-                    "Configuration could not be read. Defaults are in use: {e}"
-                )),
+                Err(e) => {
+                    config_readable = false;
+                    r.errors.push(format!(
+                        "Configuration could not be read. Defaults are in use: {e}"
+                    ));
+                }
             }
         }
         // The old combined entry no longer exists; forget anything saved for it.
         r.config.disabled.retain(|s| s != LEGACY_BASE_ID);
         r.config.preferences.remove(LEGACY_BASE_ID);
         let folder = r.root.join("addons");
+        let mut former_installed: Vec<String> = Vec::new();
         match fs::read_dir(&folder) {
             Ok(entries) => {
                 for entry in entries.flatten() {
-                    let path = entry.path();
+                    let mut path = entry.path();
+                    // A catalog install: `addons/<id>/<active version>/package.tbaddon`.
+                    let mut expected = path.file_stem().map(|f| f.to_owned());
+                    if path.is_dir() {
+                        let Some(active) = crate::installer::active_package(&path) else {
+                            continue;
+                        };
+                        expected = path.file_name().map(|f| f.to_owned());
+                        path = active;
+                    }
                     if path.extension().is_some_and(|x| x == "tbaddon") {
+                        // A host-linked tool installed by the previous version: its code is not
+                        // in Toolboks any more, so the file is obsolete. It is counted for the
+                        // restore offer below and removed quietly.
+                        if let Some(id) = obsolete_provider_package(&path) {
+                            former_installed.push(id);
+                            let _ = fs::remove_file(&path);
+                            continue;
+                        }
                         match read_package(&path) {
                             Ok(p) => {
-                                if path
-                                    .file_stem()
+                                if expected
+                                    .as_deref()
                                     .is_some_and(|f| f == p.manifest.id.as_str())
                                     && !r.packages.iter().any(|a| a.manifest.id == p.manifest.id)
                                 {
@@ -262,9 +166,42 @@ impl Registry {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => r.errors.push(format!("Add-ons could not be read: {e}")),
         }
-        r.packages
-            .sort_by_key(|p| (!trusted_native(p), p.manifest.title.to_lowercase()));
+        r.packages.sort_by_key(|p| p.manifest.title.to_lowercase());
+        r.plan_restore(existing_install, config_readable, former_installed);
         r
+    }
+    /// Works out, once, which tools the user had before the update and does not have yet. A new
+    /// install has nothing to restore. Nothing is lost if the catalog cannot be reached now: the
+    /// list stays in the configuration until the tools are installed or skipped.
+    ///
+    /// A configuration that could not be read is left exactly as it is: nothing is decided or
+    /// saved from the defaults that stand in for it, so the user's file is never overwritten here.
+    fn plan_restore(
+        &mut self,
+        existing_install: bool,
+        config_readable: bool,
+        former_installed: Vec<String>,
+    ) {
+        if !config_readable || self.config.platform_migrated {
+            return;
+        }
+        self.config.platform_migrated = true;
+        if !existing_install {
+            return;
+        }
+        let mut wanted: Vec<String> = FORMER_BUILTIN_IDS
+            .iter()
+            .filter(|id| {
+                // The first four were built in and on unless turned off; the others were
+                // installed add-ons, so only those that were actually installed come back.
+                let built_in = FORMER_BUILTIN_IDS[..4].contains(id);
+                self.enabled(id) && (built_in || former_installed.iter().any(|f| f == *id))
+            })
+            .map(|id| (*id).to_owned())
+            .collect();
+        wanted.retain(|id| crate::installer::installed_entry(&self.root, id).is_none());
+        self.config.restore_pending = wanted;
+        let _ = self.save();
     }
     pub fn save(&self) -> Result<(), String> {
         write_atomic(
@@ -275,11 +212,8 @@ impl Registry {
     pub fn enabled(&self, id: &str) -> bool {
         !self.config.disabled.iter().any(|s| s == id)
     }
-    pub fn builtin_index(&self, id: &str) -> Option<usize> {
-        self.builtins.iter().position(|m| m.id == id)
-    }
     pub fn verified(&self, id: &str) -> bool {
-        self.builtin_index(id).is_some() || OFFICIAL_ADDONS.contains(&id)
+        crate::installer::installed_entry(&self.root, id).is_some_and(|entry| entry.verified)
     }
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> Result<(), String> {
         let before = self.config.clone();
@@ -326,18 +260,32 @@ impl Registry {
         self.packages.retain(|a| a.manifest.id != p.manifest.id);
         self.packages.push(p);
         self.packages
-            .sort_by_key(|a| (!trusted_native(a), a.manifest.title.to_lowercase()));
+            .sort_by_key(|a| a.manifest.title.to_lowercase());
         Ok(())
     }
+    #[cfg(test)]
     pub fn uninstall(&mut self, id: &str) -> Result<(), String> {
+        self.remove(id, false)
+    }
+    /// Removes an add-on. With `keep_data` its preferences and data folder stay, so a later
+    /// install picks them up again.
+    pub fn remove(&mut self, id: &str, keep_data: bool) -> Result<(), String> {
         if reserved(id) || !self.packages.iter().any(|p| p.manifest.id == id) {
             return Err("This add-on cannot be removed.".into());
         }
-        fs::remove_file(self.root.join("addons").join(format!("{id}.tbaddon")))
-            .map_err(|e| e.to_string())?;
+        let flat = self.root.join("addons").join(format!("{id}.tbaddon"));
+        if flat.exists() {
+            fs::remove_file(flat).map_err(|e| e.to_string())?;
+        } else {
+            // Installed from the catalog: drop every version folder.
+            crate::installer::remove(&self.root, id, keep_data)?;
+        }
+        if !keep_data {
+            crate::installer::remove_data(&self.root, id)?;
+            self.config.preferences.remove(id);
+        }
         self.packages.retain(|p| p.manifest.id != id);
         self.config.disabled.retain(|s| s != id);
-        self.config.preferences.remove(id);
         self.save()
     }
 }
@@ -345,140 +293,16 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn official_macro_manager_package_validates_and_rejects_impersonation() {
-        let mut package = official_package(MACRO_ID).unwrap();
-        package.validate(env!("CARGO_PKG_VERSION")).unwrap();
-        assert!(trusted_native(&package));
-        assert!(package
-            .manifest
-            .capabilities
-            .contains(&toolboks_addon_sdk::Capability::InputAutomation));
-        package.manifest.publisher = "Other publisher".into();
-        assert!(validate_provider(&package).is_err());
+
+    fn temp(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("toolboks-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        root
     }
 
-    #[test]
-    fn built_in_workspaces_load_on_demand_and_release_on_navigation() {
-        let mut session = SystemAddon::default();
-        assert!(session.tools.iter().all(Option::is_none));
-        session.show(Some(1));
-        assert!(session.tools[1].is_some());
-        assert_eq!(session.tools.iter().flatten().count(), 1);
-        session.show(Some(3));
-        assert!(session.tools[1].is_none());
-        assert!(session.tools[3].is_some());
-        session.show(None);
-        assert!(session.tools.iter().all(Option::is_none));
-    }
-
-    #[test]
-    fn official_aural_package_cannot_be_impersonated() {
-        let package = official_package(AURAL_ID).unwrap();
-        package.validate(env!("CARGO_PKG_VERSION")).unwrap();
-        assert!(trusted_native(&package));
-        assert_eq!(package.manifest.title, "Audio Gainer");
-        assert_eq!(package.manifest.byline.as_deref(), Some("by aural"));
-        assert_eq!(
-            package.manifest.capabilities,
-            [
-                toolboks_addon_sdk::Capability::LiveAudio,
-                toolboks_addon_sdk::Capability::LocalPreferences
-            ]
-        );
-
-        let mut previous: Package = serde_json::from_str(LEGACY_AURAL_PACKAGE).unwrap();
-        assert!(trusted_native(&previous));
-        previous.manifest.title = "Aural".into();
-        previous.manifest.byline = None;
-        assert!(trusted_native(&previous));
-        let mut spoof = previous;
-        spoof.manifest.native_provider = None;
-        assert!(validate_provider(&spoof).is_err());
-    }
-
-    #[test]
-    fn legacy_aural_update_requires_explicit_saved_preferences_grant() {
-        use toolboks_addon_sdk::Capability;
-        let root =
-            std::env::temp_dir().join(format!("toolboks-aural-permissions-{}", std::process::id()));
-        let legacy: Package = serde_json::from_str(LEGACY_AURAL_PACKAGE).unwrap();
-        let mut registry = Registry::load(root.clone());
-        registry.install(legacy.clone()).unwrap();
-        let mut reloaded = Registry::load(root.clone());
-        let installed = reloaded
-            .packages
-            .iter()
-            .find(|p| p.manifest.id == AURAL_ID)
-            .unwrap();
-        assert!(reloaded.errors.is_empty());
-        assert!(trusted_native(installed));
-        assert_eq!(installed.manifest.version, "0.1.0");
-        assert!(!installed
-            .manifest
-            .capabilities
-            .contains(&Capability::LocalPreferences));
-        let mut forged = legacy;
-        forged
-            .manifest
-            .capabilities
-            .push(Capability::LocalPreferences);
-        assert!(validate_provider(&forged).is_err());
-        reloaded
-            .install(official_package(AURAL_ID).unwrap())
-            .unwrap();
-        let updated = Registry::load(root.clone());
-        let installed = updated
-            .packages
-            .iter()
-            .find(|p| p.manifest.id == AURAL_ID)
-            .unwrap();
-        assert_eq!(installed.manifest.version, "0.2.0");
-        assert!(installed
-            .manifest
-            .capabilities
-            .contains(&Capability::LocalPreferences));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn system_profiles_requires_the_exact_official_package() {
-        let package = official_package(PROFILES_ID).unwrap();
-        package.validate(env!("CARGO_PKG_VERSION")).unwrap();
-        assert!(validate_provider(&package).is_ok());
-        assert_eq!(
-            package.manifest.capabilities,
-            [toolboks_addon_sdk::Capability::SystemTuning]
-        );
-        let mut spoof = package;
-        spoof.manifest.native_provider = None;
-        assert!(validate_provider(&spoof).is_err());
-    }
-
-    #[test]
-    fn legacy_disk_package_keeps_read_only_permissions_until_update() {
-        let legacy: Package = serde_json::from_str(toolboks_disk_manager::LEGACY_PACKAGE).unwrap();
-        legacy.validate("0.8.2").unwrap();
-        assert!(trusted_native(&legacy));
-        assert!(!legacy
-            .manifest
-            .capabilities
-            .contains(&toolboks_addon_sdk::Capability::DriveOptimize));
-        let mut forged = legacy.clone();
-        forged
-            .manifest
-            .capabilities
-            .push(toolboks_addon_sdk::Capability::DriveOptimize);
-        assert!(!trusted_native(&forged));
-        let current = official_disk_package();
-        assert!(trusted_native(&current));
-        assert!(current
-            .manifest
-            .capabilities
-            .contains(&toolboks_addon_sdk::Capability::DriveOptimize));
-    }
     #[test]
     fn installation_persistence_and_removal() {
-        let root = std::env::temp_dir().join(format!("toolboks-addons-{}", std::process::id()));
+        let root = temp("addons");
         let mut r = Registry::load(root.clone());
         let p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
         r.install(p.clone()).unwrap();
@@ -492,43 +316,10 @@ mod tests {
         assert!(Registry::load(root.clone()).packages.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
-    #[test]
-    fn cannot_impersonate_bundled_addon() {
-        let mut r = Registry::load(std::env::temp_dir());
-        let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
-        p.manifest.id = "toolboks.event-watch".into();
-        assert!(r.install(p).is_err());
-    }
-    #[test]
-    fn only_exact_first_party_native_packages_are_accepted() {
-        let p = official_disk_package();
-        assert!(validate_provider(&p).is_ok());
-        let mut spoof = p.clone();
-        spoof.manifest.author = "Someone else".into();
-        assert!(validate_provider(&spoof).is_err());
-        let mut spoof = p;
-        spoof.manifest.native_provider = None;
-        assert!(validate_provider(&spoof).is_err());
-    }
-    #[test]
-    fn native_activation_package_roundtrips_through_installer() {
-        let root =
-            std::env::temp_dir().join(format!("toolboks-disk-package-{}", std::process::id()));
-        let mut registry = Registry::load(root.clone());
-        registry.install(official_disk_package()).unwrap();
-        let mut loaded = Registry::load(root.clone());
-        assert!(loaded.errors.is_empty());
-        assert!(loaded.verified(toolboks_disk_manager::ID));
-        assert_eq!(
-            loaded.packages[0].manifest.native_provider.as_deref(),
-            Some(toolboks_disk_manager::PROVIDER)
-        );
-        loaded.uninstall(toolboks_disk_manager::ID).unwrap();
-        std::fs::remove_dir_all(root).unwrap();
-    }
+
     #[test]
     fn package_update_preserves_preferences_and_ignores_invalid_files() {
-        let root = std::env::temp_dir().join(format!("toolboks-upgrade-{}", std::process::id()));
+        let root = temp("upgrade");
         let mut r = Registry::load(root.clone());
         let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
         let id = p.manifest.id.clone();
@@ -549,50 +340,18 @@ mod tests {
         assert_eq!(reloaded.errors.len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
+
     #[test]
-    fn every_builtin_manifest_parses_and_validates() {
-        let manifests = builtin_manifests();
-        assert_eq!(manifests.len(), BUILTIN_IDS.len());
-        for (i, m) in manifests.iter().enumerate() {
-            assert_eq!(m.id, BUILTIN_IDS[i]);
-            assert_eq!(
-                m.title,
-                crate::tools::WORKSPACES[i].0,
-                "manifest order matches tool order"
-            );
-            assert_eq!(m.version, env!("CARGO_PKG_VERSION"));
-            assert_eq!(m.min_toolboks_version, env!("CARGO_PKG_VERSION"));
-            let package = serde_json::json!({
-                "schema_version": 1,
-                "manifest": m,
-                "pages": [{"id": "home", "title": "Home", "widgets": []}],
-            });
-            Package::parse(package.to_string().as_bytes(), env!("CARGO_PKG_VERSION")).unwrap();
-        }
-        assert!(manifests[1]
-            .capabilities
-            .contains(&toolboks_addon_sdk::Capability::HostMetrics));
+    fn a_package_that_names_a_host_linked_tool_is_refused() {
+        let mut r = Registry::load(temp("provider"));
+        let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
+        p.manifest.native_provider = Some("toolboks.aural".into());
+        assert!(r.install(p).is_err());
     }
-    #[test]
-    fn disabling_a_builtin_persists_and_enabling_restores_it() {
-        let root = std::env::temp_dir().join(format!("toolboks-builtin-{}", std::process::id()));
-        let mut r = Registry::load(root.clone());
-        for id in BUILTIN_IDS {
-            assert!(r.enabled(id), "{id} starts enabled");
-        }
-        r.set_enabled("toolboks.resource-monitor", false).unwrap();
-        let mut reloaded = Registry::load(root.clone());
-        assert!(!reloaded.enabled("toolboks.resource-monitor"));
-        assert!(reloaded.enabled("toolboks.memory-cleaner"));
-        reloaded
-            .set_enabled("toolboks.resource-monitor", true)
-            .unwrap();
-        assert!(Registry::load(root.clone()).enabled("toolboks.resource-monitor"));
-        fs::remove_dir_all(root).unwrap();
-    }
+
     #[test]
     fn old_system_essentials_settings_are_dropped_without_error() {
-        let root = std::env::temp_dir().join(format!("toolboks-legacy-{}", std::process::id()));
+        let root = temp("legacy");
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("config.json"),
@@ -605,18 +364,115 @@ mod tests {
         assert!(r.config.keep_in_tray);
         assert_eq!(r.config.disabled, ["com.example.x"]);
         assert!(r.config.preferences.is_empty());
-        for id in BUILTIN_IDS {
-            assert!(r.enabled(id));
-        }
         fs::remove_dir_all(root).unwrap();
     }
+
     #[test]
-    fn local_packages_cannot_take_old_or_new_builtin_ids() {
-        let mut r = Registry::load(std::env::temp_dir());
-        for id in [LEGACY_BASE_ID, "toolboks.debloater"] {
-            let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
-            p.manifest.id = id.into();
-            assert!(r.install(p).is_err());
-        }
+    fn local_packages_cannot_take_the_old_combined_id() {
+        let mut r = Registry::load(temp("reserved"));
+        let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
+        p.manifest.id = LEGACY_BASE_ID.into();
+        assert!(r.install(p).is_err());
+    }
+
+    // ---- the update from the version that had the tools built in -----------------------
+
+    #[test]
+    fn a_new_install_has_nothing_to_restore() {
+        let root = temp("fresh");
+        let r = Registry::load(root.clone());
+        assert!(r.config.platform_migrated);
+        assert!(r.config.restore_pending.is_empty());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn an_old_install_gets_its_four_built_in_tools_back_unless_they_were_turned_off() {
+        let root = temp("old");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("config.json"),
+            br#"{"first_run_complete":true,"disabled":["toolboks.debloater"],
+            "preferences":{"toolboks.resource-monitor":{"x":1}}}"#,
+        )
+        .unwrap();
+        let r = Registry::load(root.clone());
+        assert_eq!(
+            r.config.restore_pending,
+            [
+                "toolboks.memory-cleaner",
+                "toolboks.resource-monitor",
+                "toolboks.event-watch"
+            ]
+        );
+        // Their saved settings stay where the add-ons will look for them.
+        assert_eq!(r.config.preferences["toolboks.resource-monitor"]["x"], 1);
+        // The offer is made once: a later start does not make it again.
+        let again = Registry::load(root.clone());
+        assert_eq!(again.config.restore_pending, r.config.restore_pending);
+        assert!(again.config.platform_migrated);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn host_linked_add_ons_installed_before_are_offered_and_their_old_files_removed() {
+        let root = temp("linked");
+        fs::create_dir_all(root.join("addons")).unwrap();
+        fs::write(root.join("config.json"), br#"{"first_run_complete":true}"#).unwrap();
+        let old = |id: &str| {
+            format!(
+                r##"{{"schema_version":1,"manifest":{{"id":"{id}","title":"x","native_provider":"{id}","description":"d","long_description":"l","version":"0.1.0","author":"a","publisher":"p","category":"c","icon":"i","accent":"#000000","api_version":2,"min_toolboks_version":"0.12.0","license":"MIT","capabilities":[]}},"pages":[]}}"##
+            )
+        };
+        fs::write(
+            root.join("addons/toolboks.aural.tbaddon"),
+            old("toolboks.aural"),
+        )
+        .unwrap();
+        let r = Registry::load(root.clone());
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(r.packages.is_empty());
+        assert!(r
+            .config
+            .restore_pending
+            .contains(&"toolboks.aural".to_string()));
+        assert!(!r
+            .config
+            .restore_pending
+            .contains(&"toolboks.macro-manager".to_string()));
+        assert!(!root.join("addons/toolboks.aural.tbaddon").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_config_is_never_overwritten_by_the_update_step() {
+        let root = temp("unreadable");
+        fs::create_dir_all(&root).unwrap();
+        let broken = b"{ this is not json";
+        fs::write(root.join("config.json"), broken).unwrap();
+        let r = Registry::load(root.clone());
+        assert_eq!(r.errors.len(), 1);
+        assert!(!r.config.platform_migrated);
+        assert!(r.config.restore_pending.is_empty());
+        assert_eq!(fs::read(root.join("config.json")).unwrap(), broken);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_config_saved_with_a_byte_order_mark_is_read() {
+        let root = temp("bom");
+        fs::create_dir_all(&root).unwrap();
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes
+            .extend_from_slice(br#"{"first_run_complete":true,"disabled":["toolboks.debloater"]}"#);
+        fs::write(root.join("config.json"), bytes).unwrap();
+        let r = Registry::load(root.clone());
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(!r.enabled("toolboks.debloater"));
+        assert!(!r
+            .config
+            .restore_pending
+            .contains(&"toolboks.debloater".to_string()));
+        fs::remove_dir_all(root).unwrap();
     }
 }
