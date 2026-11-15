@@ -1009,6 +1009,25 @@ impl App {
             });
             ui.add_space(look::GAP);
         }
+        let updates = self.pending_updates();
+        if !updates.is_empty() && self.market.review.is_none() {
+            // Updates are found from the list the app fetches; say so here, not only in the browser.
+            panel().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    let titles: Vec<String> = updates.iter().map(|u| u.title.clone()).collect();
+                    ui.label(
+                        RichText::new(crate::marketplace::update_line(&titles))
+                            .color(look::AMBER)
+                            .strong(),
+                    );
+                    if primary(ui, "Update").clicked() {
+                        self.review_updates(updates.clone());
+                    }
+                });
+            });
+            ui.add_space(look::GAP);
+        }
         if self.registry.packages.is_empty()
             && crate::installer::installed(&self.registry.root).is_empty()
         {
@@ -1076,7 +1095,13 @@ impl App {
                                 } else {
                                     MUTED
                                 };
-                                if list_row(ui, &e.m, e.status(), tint, i == selected, accent(&e.m))
+                                // An add-on with an update says "Update" where it said "On".
+                                let (status, tint) = if updates.iter().any(|u| u.id == e.m.id) {
+                                    ("Update", look::AMBER)
+                                } else {
+                                    (e.status(), tint)
+                                };
+                                if list_row(ui, &e.m, status, tint, i == selected, accent(&e.m))
                                     .clicked()
                                 {
                                     self.home_selected = Some(e.m.id.clone());
@@ -1096,6 +1121,10 @@ impl App {
     }
     /// The right side of Home: the chosen add-on, what it does, and the one thing to do next.
     fn addon_detail_card(&mut self, ui: &mut egui::Ui, e: &Entry) {
+        let update = self
+            .pending_updates()
+            .into_iter()
+            .find(|entry| entry.id == e.m.id);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -1125,11 +1154,27 @@ impl App {
                 },
                 false,
             );
+            if let Some(update) = &update {
+                ui.add_space(look::SPACE_XS);
+                badge(
+                    ui,
+                    &format!("Update available: v{}", update.version),
+                    look::AMBER,
+                    false,
+                );
+            }
             ui.add_space(look::GAP);
             ui.label(&e.m.description);
             ui.add_space(look::SPACE_L);
             ui.horizontal_wrapped(|ui| {
-                if primary(ui, e.action()).clicked() {
+                if let Some(update) = &update {
+                    if primary(ui, "Update").clicked() {
+                        self.review_updates(vec![update.clone()]);
+                    }
+                    if ui.button(e.action()).clicked() {
+                        self.run_action(e);
+                    }
+                } else if primary(ui, e.action()).clicked() {
                     self.run_action(e);
                 }
                 if ui.button("View details").clicked() {

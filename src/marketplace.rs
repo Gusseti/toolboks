@@ -30,6 +30,39 @@ pub enum InstallStatus {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn only_installed_add_ons_with_a_newer_listed_version_are_pending() {
+        let mut newer = entry("test.newer");
+        newer.version = "1.2.0".into();
+        let mut same = entry("test.same");
+        same.version = "1.0.0".into();
+        let mut missing = entry("test.missing");
+        missing.version = "3.0.0".into();
+        let list = [newer, same, missing];
+        let installed = |id: &str| match id {
+            "test.newer" => Some("1.0.0".to_string()),
+            "test.same" => Some("1.0.0".to_string()),
+            _ => None,
+        };
+        let pending = pending_updates(&list, installed);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "test.newer");
+        // An older listed version never offers a downgrade.
+        assert!(pending_updates(&list, |_| Some("9.0.0".to_string())).is_empty());
+    }
+
+    #[test]
+    fn the_update_line_names_what_can_be_updated() {
+        let one = ["Audio Gainer".to_string()];
+        let two = ["Audio Gainer".to_string(), "Disk Manager".to_string()];
+        assert_eq!(update_line(&[]), "");
+        assert_eq!(update_line(&one), "Update available: Audio Gainer");
+        assert_eq!(
+            update_line(&two),
+            "2 updates available: Audio Gainer, Disk Manager"
+        );
+    }
+
+    #[test]
     fn both_list_addresses_are_trusted_github_hosts() {
         assert!(crate::update::is_trusted_url(catalog::URL));
         assert!(crate::update::is_trusted_url(catalog::FRESH_URL));
@@ -416,6 +449,29 @@ pub fn update_available(installed: Option<&str>, entry: &Entry) -> bool {
     installed.is_some_and(|old| {
         toolboks_addon_sdk::version(old) < toolboks_addon_sdk::version(&entry.version)
     })
+}
+/// The listed add-ons that have a newer version than the installed one, in list order.
+/// `installed` gives the installed version of an id, if it is installed.
+pub fn pending_updates(
+    entries: &[Entry],
+    installed: impl Fn(&str) -> Option<String>,
+) -> Vec<Entry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            can_install(entry) && update_available(installed(&entry.id).as_deref(), entry)
+        })
+        .cloned()
+        .collect()
+}
+/// The line at the top of Home when updates wait: "Update available: Audio Gainer" or
+/// "2 updates available: Audio Gainer, Disk Manager".
+pub fn update_line(titles: &[String]) -> String {
+    match titles {
+        [] => String::new(),
+        [one] => format!("Update available: {one}"),
+        many => format!("{} updates available: {}", many.len(), many.join(", ")),
+    }
 }
 pub fn pick_rank(entry: &Entry) -> usize {
     let suffix = entry.id.rsplit('.').next().unwrap_or(&entry.id);
