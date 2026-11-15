@@ -927,6 +927,20 @@ impl App {
         }
     }
 
+    /// The listed add-ons that have an update waiting, as catalog entries ready for the review.
+    pub(super) fn pending_updates(&self) -> Vec<Entry> {
+        market::pending_updates(&self.market.entries, |id| self.installed_version(id))
+    }
+
+    /// Opens the normal access review for these updates in the Add-ons browser.
+    pub(super) fn review_updates(&mut self, updates: Vec<Entry>) {
+        if updates.is_empty() || self.market.busy() {
+            return;
+        }
+        self.market.review = Some(updates);
+        self.screen = Screen::Browser;
+    }
+
     /// What the sidebar row of an add-on says at its right end: an update first, else "New".
     pub(super) fn addon_tag(&self, id: &str) -> Tag {
         if self.market_status(id).as_deref() == Some("Update available") {

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Updates are shown on Home.** When an add-on has a newer version, the top of Home says "Update available: Audio Gainer" (or "2 updates available: ...") with an **Update** button that opens the normal access review. The add-on's row says "Update" instead of "On", and its card shows the new version with an **Update** button.
+
 ## [0.13.2] - 2026-11-15
 
 ### Fixed
