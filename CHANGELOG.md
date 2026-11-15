@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-15
+
+This is a big update: Toolboks is now a small shell and every tool is a separate add-on you download. **Read this before updating.** When you start the new version it offers to restore your tools; nothing is lost.
+
 ### Changed (breaking)
 
 - **Toolboks is now a shell, and every tool is a separate add-on.** Memory Cleaner, Resource Monitor, Debloater, Event Watch, Disk Manager, Audio Gainer, Macro Manager and System Profiles are downloaded, updated and removed on their own from the add-on browser. The app itself no longer contains any tool, so it is smaller and starts faster.
