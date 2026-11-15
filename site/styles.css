@@ -385,9 +385,6 @@ section.block { padding-block: 140px 0; }
 .close h2 { font-size: clamp(2.75rem, 9vw, 7rem); line-height: .95; letter-spacing: -0.045em; font-weight: 800; }
 .close h2 .num { font-family: var(--display); letter-spacing: -0.045em; }
 .close h2 .exe { color: var(--accent-text); }
-.signed { margin-top: 14px; color: var(--muted); font-size: .875rem; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
-.signed .vbadge { margin-left: 0; padding: 3px 5px; }
-.signed .pending { color: var(--muted); }
 .close-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; margin-top: 48px; align-items: start; }
 .facts { display: grid; gap: 0; border-top: 1px solid var(--line-soft); }
 .facts div { display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding-block: 14px; border-bottom: 1px solid var(--line-soft); font-size: .9375rem; }
