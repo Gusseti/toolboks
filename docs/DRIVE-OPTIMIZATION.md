@@ -1,5 +1,13 @@
 # Drive optimization in Disk Manager
 
+Disk Manager now runs as an executable from `toolboks-addons`, not inside the host binary.
+The protocol 2 pilot keeps fragmentation analysis and its existing elevation request, but
+**Defragment, TRIM and Optimize with Windows are disabled in both UI and backend** pending
+#132's separate elevated helper and native confirmation window. Repin the host dependencies
+and rebuild after #132 merges to staging for protocol 3. No replacement dialog is implemented
+by this pilot. The maintenance behavior described below is the original implementation and
+must be revalidated after #132 before it is enabled for executable distribution.
+
 Open Disk Manager > Optimization. This view is available without running a folder scan.
 It reads local fixed-drive metadata and retained Microsoft-Windows-Defrag success
 records, and shows the last recorded defrag and TRIM separately in local time.
@@ -35,12 +43,10 @@ this version does not expose an in-app stop control. After success, history is
 refreshed and a fresh analysis attempted. A failed post-analysis does not turn an
 otherwise successful optimization into a false failure or show an old report as new.
 
-Disk Manager 0.2 adds the `drive_optimize` capability. The exact original 0.1 package
-remains trusted, but keeps read-only permissions. Its Optimization tab offers Review
-Disk Manager update; the standard package review shows the new capability. Until
-the update is installed, analysis and optimization controls remain unavailable.
-Preferences survive the package update. Third-party declarative packages cannot
-request the new native capability or self-authorize a native provider.
+Disk Manager retains the `drive_optimize` capability and requests it in the catalog install
+review. The old 0.1/0.2 local activation packages no longer activate a compiled-in provider.
+Saved settings, selected drive, cached reports and the add-on data folder keep the same ID.
+Third-party declarative packages cannot request native capabilities or self-authorize a provider.
 
 Help includes five new guided steps. Tour sample data is clearly labeled and never
 starts a drive-information query, fragmentation analysis, defrag, TRIM or elevation.

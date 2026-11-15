@@ -9,6 +9,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     fs::create_dir(&folder)?;
     let native = args.next();
+    if native.as_deref() == Some("--native-addon") {
+        let manifest = args.next().ok_or("Expected manifest path")?;
+        let exe = args.next().ok_or("Expected executable path")?;
+        let services = args.next().ok_or("Expected host-services.json path")?;
+        return native_fixture(&folder, &manifest, &exe, &services);
+    }
     let version = args.next().unwrap_or_else(|| "1.0.0".into());
     if toolboks_addon_sdk::version(&version).is_none() {
         return Err("Expected x.y.z version".into());
@@ -143,5 +149,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Local test catalog: {}. Preview builds only; never publish this catalog.",
         folder.display()
     );
+    Ok(())
+}
+
+/// An isolated, unsigned fixture for a real native executable. The updated preview
+/// catalog reader accepts the same plain index as production; no keys are involved.
+fn native_fixture(
+    folder: &std::path::Path,
+    manifest: &str,
+    exe: &str,
+    services: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let package =
+        toolboks_addon_sdk::Package::parse(&fs::read(manifest)?, env!("CARGO_PKG_VERSION"))?;
+    let m = package.manifest;
+    let services: serde_json::Value = serde_json::from_slice(&fs::read(services)?)?;
+    let bytes = fs::read(exe)?;
+    let filename = std::path::Path::new(exe)
+        .file_name()
+        .ok_or("Expected executable filename")?
+        .to_str()
+        .ok_or("Expected UTF-8 executable filename")?;
+    fs::write(folder.join(filename), &bytes)?;
+    let entry = serde_json::json!({
+        "id":m.id, "title":m.title, "byline":m.byline,
+        "short_description":m.description, "long_description":m.long_description,
+        "publisher":m.publisher, "category":m.category, "icon":m.icon, "accent":m.accent,
+        "kind":"native", "version":m.version, "min_toolboks_version":m.min_toolboks_version,
+        "protocol_version":toolboks_addon_proto::PROTOCOL_VERSION,
+        "download_url":format!("https://github.com/fredhakon/toolboks-addons/releases/download/fixture/{filename}"),
+        "size":bytes.len(), "sha256":sha256_hex(&bytes), "verified":true, "channel":"stable",
+        "capabilities":m.capabilities, "pages":services["pages"], "background":services["background"],
+        "release_notes":"Local native migration check. Drive-changing optimization is gated on #132."
+    });
+    let index =
+        serde_json::to_vec_pretty(&serde_json::json!({"format_version":1, "entries":[entry]}))?;
+    toolboks_catalog::Index::parse(&index)?;
+    fs::write(folder.join("index.json"), index)?;
+    println!("Unsigned local native fixture: {}", folder.display());
     Ok(())
 }

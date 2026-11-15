@@ -831,7 +831,7 @@ impl App {
         muted(ui, description);
         ui.add_space(look::SPACE_M);
     }
-    /// Every add-on the person can see: the built-in tools, the Disk Manager and any package they
+    /// Every add-on the person can see: the built-in tools and any package they
     /// installed, with its state.
     fn entries(&self) -> Vec<Entry> {
         let mut list = Vec::new();

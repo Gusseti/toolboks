@@ -32,7 +32,7 @@ follow the tool.
 
 | Tool | ID (unchanged) | Code in the host today | Folder in the add-ons repo | Issue |
 |---|---|---|---|---|
-| Disk Manager | `toolboks.disk-manager` | `addons/disk-manager/` | `addons/disk-manager/` | [#88](https://github.com/Gusseti/toolboks/issues/88) (pilot) |
+| Disk Manager | `toolboks.disk-manager` | Removed by the pilot | `addons/disk-manager/` | [#88](https://github.com/Gusseti/toolboks/issues/88) (code moved; publication and #132 rebuild pending) |
 | Resource Monitor | `toolboks.resource-monitor` | `src/tools/resources/` | `addons/resource-monitor/` | [#89](https://github.com/Gusseti/toolboks/issues/89) |
 | Memory Cleaner | `toolboks.memory-cleaner` | `src/tools/memory/` | `addons/memory-cleaner/` | [#90](https://github.com/Gusseti/toolboks/issues/90) |
 | Event Watch | `toolboks.event-watch` | `src/tools/events/` | `addons/event-watch/` | [#91](https://github.com/Gusseti/toolboks/issues/91) |
@@ -125,7 +125,7 @@ What each tool needs beyond the common steps:
 
 | Tool | Extra care |
 |---|---|
-| Disk Manager | Drive optimization needs administrator rights. Its results decide whether the design holds for the rest. |
+| Disk Manager | Fragmentation analysis uses the existing elevation request. Defrag, TRIM and Windows-selected optimization are gated on #132; repin and rebuild after its protocol 3 helper merges. Results and remaining checks: `docs/reviews/88/`. |
 | Resource Monitor | Runs in the background so the history recorder (#64) keeps recording with the window hidden. The history files live in its data folder. |
 | Memory Cleaner | Runs in the background for automatic cleaning. Some actions need administrator rights. |
 | Event Watch | Check which pages need administrator rights to read event logs and crash dumps. |
@@ -149,7 +149,8 @@ Until step 4, the tools that have not moved stay built into the app and keep wor
 
 ## Open points
 
-- The add-ons repo is private. The app cannot read a private catalog.
+- The add-ons repo is public and its catalog is an unsigned plain list. Disk Manager still needs its first owner/orchestrator release and catalog entry.
+- The protocol 2 pilot must be repinned and rebuilt after #132 merges to staging, before it can run on that protocol 3 host.
 - The add-ons repo is pinned to a host commit on `staging`. Before the first real release it
   should point at a released host version ([#117](https://github.com/Gusseti/toolboks/issues/117)).
 - Nothing is signed: not the catalog and not the exes (owner decision, 2026-11-15). Windows

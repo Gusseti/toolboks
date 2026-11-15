@@ -5,17 +5,20 @@
 - **No signatures (owner decision):** the add-on catalog is a plain list anyone can publish. It is not signed, so the catalog keys, key rotation, expiry and replay checks, the `catalog-sign` tool and `docs/catalog-signing.md` are gone. A download is still checked against the size and SHA-256 its entry declares. Older indexes with `sequence`, dates or `publisher_key_id` still read. See `docs/catalog.md` and the note at the top of `docs/ADDON-THREAT-MODEL.md`.
 
 - **Add-on browser and first run (#86):** choose tools with nothing preselected, review several installs together, and download them through the checked catalog and existing installer. Browse by search, category or installed state; inspect screenshots, access and release notes; update, open or remove without leaving Toolboks. Installs show progress and failures stay in the sidebar until dismissed, including after a restart. Removal keeps data by default, with an explicit option to delete it. Local `.tbaddon` review and a browser walkthrough remain available.
-- **Installed native add-ons:** catalog-installed programs open through the existing supervisor and drawing view in the Toolboks window. Updates wait for the old program to stop. A local test catalog is available only to preview builds for first-run checks; release builds never accept its keys or file transport.
+- **Installed native add-ons:** catalog-installed programs open through the existing supervisor and drawing view in the Toolboks window. Updates wait for the old program to stop. A local test catalog is available only to preview builds for first-run checks; release builds never accept its file transport.
 - **Browser look:** the add-on browser follows the landing page: wide rows, a 340 px detail pane, icon tiles, verified pills and category buttons, in Schibsted Grotesk. The source values are in `docs/reviews/86/visual-spec.md` and the side-by-side check in `docs/reviews/86/compare/`.
 - **Other add-on screens (#115):** the first-run picker, full details page, install review, removal dialog and sidebar states use the browser's rows, Verified pills, buttons and type. Sidebar states are pills: purple for an update, red for a failed install. A failed install shows its message and Try again under the Install button.
+- **Disk Manager pilot (#88):** moved its code and executable build to `toolboks-addons`. This host no longer includes its provider or activation package. The catalog executable retains ID `toolboks.disk-manager`, five pages, preferences and data folder; existing data is kept when an old activation package is ignored. First catalog publication is still required.
 - **Catalog entries:** optional `byline` field, such as "by stratum", shown in the details.
 - **Catalog address:** the browser and the first-run picker list only what the catalog at `src/catalog.rs::URL` returns. Nothing in those lists is built into the app.
 
 ## Not changed here
 
-- The built-in tools and the add-ons shipped inside the app (Disk Manager, Aural, System Profiles, Macro Manager) stay until they move to the catalog (#88 to #93) and are removed with a migration (#94). Local packages still cannot take a built-in tool's ID. The first-run picker opens by itself only when the app has no tools; until #94 it is reached from the sidebar.
+- The built-in tools and the add-ons shipped inside the app (Aural, System Profiles, Macro Manager) stay until they move to the catalog (#89 to #93) and are removed with a migration (#94). Local packages still cannot take a built-in tool's ID. The first-run picker opens by itself only when the app has no tools; until #94 it is reached from the sidebar.
 
 ## Release prerequisites
+
+- **Disk Manager:** first owner/orchestrator release and the scheduled GUI catalog install check/screenshots (pending, not run) remain. Defrag, TRIM and Windows-selected optimization are gated on #132. After its protocol 3 helper merges to staging, repin host dependencies and rebuild/retest the add-on before publication.
 
 - The public `toolboks-addons` repo and its catalog exist. Public downloads need the first add-on released into the catalog. The catalog address is `src/catalog.rs::URL`.
 

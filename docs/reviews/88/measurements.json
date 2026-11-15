@@ -1,0 +1,126 @@
+{
+  "date": "2026-11-15",
+  "baseline_host_commit": "86c749cbd3a27de920329b512ea8a3f33baca74b",
+  "host_code_commit": "d27c94b",
+  "build": "cargo build --release --locked --features preview; same MSVC/static CRT profile for both host binaries",
+  "host_exe_before_bytes": 8462336,
+  "host_exe_after_bytes": 8241152,
+  "host_exe_reduction_bytes": 221184,
+  "host_exe_reduction_percent": 2.6137463697967087,
+  "host_before_sha256": "a68a98b4691f26fa81fa1c0a1f60939e37766cf1ec227f0dd3da913b0681bae3",
+  "host_after_sha256": "94ded2b6cbe350572a5704418637662f3eb4f7c819424b4c2d1a2cff8e365560",
+  "addon_exe_sha256": "f4a093e8dd513dd282322fd8b92ec0e3343d3e0af4fcab34d458251196ff2853",
+  "addon": {
+    "addon": "disk-manager",
+    "exe_bytes": 3579392,
+    "method": "Three sequential local launches over stdio, without clearing OS caches; spawn to first 1000x650 frame; suspended idle after 5 s. Working set and private commit are process-only; not the named-pipe installer or host UI.",
+    "protocol": 2,
+    "samples": [
+      {
+        "first_frame_ms": 145.36450000000002,
+        "idle_memory": {
+          "private_bytes": 2768896,
+          "working_set_bytes": 10514432
+        }
+      },
+      {
+        "first_frame_ms": 24.8099,
+        "idle_memory": {
+          "private_bytes": 2764800,
+          "working_set_bytes": 10506240
+        }
+      },
+      {
+        "first_frame_ms": 25.375999999999998,
+        "idle_memory": {
+          "private_bytes": 2764800,
+          "working_set_bytes": 10506240
+        }
+      }
+    ]
+  },
+  "host_before_home": {
+    "label": "baseline-unsigned-home",
+    "exe_bytes": 8462336,
+    "method": "Three sequential PREVIEW launches without clearing OS caches, fresh TOOLBOKS_DATA_DIR per run, spawn to Windows input idle (not first paint), process memory after 5 seconds. No scan.",
+    "open": "Home",
+    "samples": [
+      {
+        "input_idle_ms": 763.1684,
+        "working_set_bytes": 176402432,
+        "private_bytes": 145776640,
+        "child_count": 0,
+        "child_working_set_bytes": 0,
+        "child_private_bytes": 0,
+        "total_working_set_bytes": 176402432,
+        "total_private_bytes": 145776640
+      },
+      {
+        "input_idle_ms": 240.8356,
+        "working_set_bytes": 111329280,
+        "private_bytes": 87175168,
+        "child_count": 0,
+        "child_working_set_bytes": 0,
+        "child_private_bytes": 0,
+        "total_working_set_bytes": 111329280,
+        "total_private_bytes": 87175168
+      },
+      {
+        "input_idle_ms": 211.8471,
+        "working_set_bytes": 113610752,
+        "private_bytes": 90750976,
+        "child_count": 0,
+        "child_working_set_bytes": 0,
+        "child_private_bytes": 0,
+        "total_working_set_bytes": 113610752,
+        "total_private_bytes": 90750976
+      }
+    ]
+  },
+  "host_before_disk": {
+    "label": "baseline-unsigned-disk",
+    "exe_bytes": 8462336,
+    "method": "Three sequential PREVIEW launches without clearing OS caches, fresh TOOLBOKS_DATA_DIR per run, spawn to Windows input idle (not first paint), process memory after 5 seconds. No scan.",
+    "open": "Disk Manager/Overview",
+    "samples": [
+      {
+        "input_idle_ms": 204.84910000000002,
+        "working_set_bytes": 106012672,
+        "private_bytes": 81879040,
+        "child_count": 0,
+        "child_working_set_bytes": 0,
+        "child_private_bytes": 0,
+        "total_working_set_bytes": 106012672,
+        "total_private_bytes": 81879040
+      },
+      {
+        "input_idle_ms": 257.2094,
+        "working_set_bytes": 105967616,
+        "private_bytes": 81780736,
+        "child_count": 0,
+        "child_working_set_bytes": 0,
+        "child_private_bytes": 0,
+        "total_working_set_bytes": 105967616,
+        "total_private_bytes": 81780736
+      },
+      {
+        "input_idle_ms": 213.8694,
+        "working_set_bytes": 116973568,
+        "private_bytes": 93347840,
+        "child_count": 0,
+        "child_working_set_bytes": 0,
+        "child_private_bytes": 0,
+        "total_working_set_bytes": 116973568,
+        "total_private_bytes": 93347840
+      }
+    ]
+  },
+  "post_move_host_startup_and_ram": {
+    "status": "pending, not run",
+    "reason": "Owner stopped GUI launches while gaming; orchestrator will schedule a suitable time."
+  },
+  "scheduled_gui_acceptance_and_pr_screenshots": {
+    "status": "pending, not run",
+    "reason": "Owner-requested GUI pause. Earlier local investigation is not included as final acceptance evidence."
+  }
+}

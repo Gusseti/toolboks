@@ -15,9 +15,7 @@ pub struct NativeHost {
 
 impl NativeHost {
     pub fn pages(provider: &str) -> &'static [&'static str] {
-        if provider == toolboks_disk_manager::PROVIDER {
-            &toolboks_disk_manager::PAGES
-        } else if provider == crate::addons::MACRO_ID {
+        if provider == crate::addons::MACRO_ID {
             &macros::PAGES
         } else {
             &[]
@@ -109,9 +107,6 @@ impl NativeHost {
             return None;
         }
         let create: fn() -> Box<dyn NativeAddon> = match provider {
-            toolboks_disk_manager::PROVIDER => {
-                || Box::new(toolboks_disk_manager::DiskManager::default())
-            }
             crate::addons::AURAL_ID => || Box::new(aural::Aural::default()),
             crate::addons::PROFILES_ID => || Box::new(profiles::Gaming::default()),
             crate::addons::MACRO_ID => || Box::new(macros::MacroManager::default()),
@@ -335,7 +330,7 @@ mod tests {
         let flag = Arc::new(AtomicBool::new(false));
         let mut host = NativeHost::default();
         host.active.insert(
-            toolboks_disk_manager::PROVIDER.into(),
+            crate::addons::MACRO_ID.into(),
             Box::new(Probe {
                 cancelled: flag.clone(),
                 background: true,
@@ -343,14 +338,14 @@ mod tests {
         );
         let mut registry =
             Registry::load(std::env::temp_dir().join("toolboks-native-lifecycle-test"));
-        registry.packages = vec![crate::addons::official_disk_package()];
-        host.show(Some(toolboks_disk_manager::PROVIDER), &registry);
+        registry.packages = vec![crate::addons::official_package(crate::addons::MACRO_ID).unwrap()];
+        host.show(Some(crate::addons::MACRO_ID), &registry);
         assert!(!flag.load(Ordering::Relaxed));
         registry
             .config
             .disabled
-            .push(toolboks_disk_manager::ID.into());
-        host.show(Some(toolboks_disk_manager::PROVIDER), &registry);
+            .push(crate::addons::MACRO_ID.into());
+        host.show(Some(crate::addons::MACRO_ID), &registry);
         assert!(flag.load(Ordering::Relaxed));
         assert!(host.active.is_empty());
     }
@@ -361,19 +356,19 @@ mod tests {
         let mut registry =
             Registry::load(std::env::temp_dir().join("toolboks-native-lifecycle-test"));
         registry.packages = vec![
-            crate::addons::official_disk_package(),
+            crate::addons::official_package(crate::addons::MACRO_ID).unwrap(),
             crate::addons::official_package(crate::addons::AURAL_ID).unwrap(),
         ];
-        let disk_cancelled = Arc::new(AtomicBool::new(false));
+        let macro_cancelled = Arc::new(AtomicBool::new(false));
         let audio_cancelled = Arc::new(AtomicBool::new(false));
         host.active.insert(
-            toolboks_disk_manager::PROVIDER.into(),
+            crate::addons::MACRO_ID.into(),
             Box::new(Probe {
-                cancelled: disk_cancelled.clone(),
+                cancelled: macro_cancelled.clone(),
                 background: false,
             }),
         );
-        host.show(Some(toolboks_disk_manager::PROVIDER), &registry);
+        host.show(Some(crate::addons::MACRO_ID), &registry);
         host.active.insert(
             crate::addons::AURAL_ID.into(),
             Box::new(Probe {
@@ -383,7 +378,7 @@ mod tests {
         );
         host.show(Some(crate::addons::AURAL_ID), &registry);
         host.show(None, &registry);
-        assert!(disk_cancelled.load(Ordering::Relaxed));
+        assert!(macro_cancelled.load(Ordering::Relaxed));
         assert!(!audio_cancelled.load(Ordering::Relaxed));
         assert_eq!(host.active.len(), 1);
     }

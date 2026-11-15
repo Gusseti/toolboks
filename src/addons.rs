@@ -32,16 +32,13 @@ pub fn builtin_manifests() -> Vec<toolboks_addon_sdk::Manifest> {
         .collect()
 }
 pub const SDK_EXAMPLE: &str = include_str!("../sdk/examples/hello-system.tbaddon");
-pub fn official_disk_package() -> Package {
-    serde_json::from_str(toolboks_disk_manager::PACKAGE).expect("bundled disk package")
-}
 pub const AURAL_ID: &str = "toolboks.aural";
 pub const LEGACY_AURAL_PACKAGE: &str = include_str!("../assets/aural-legacy-0.1.tbaddon");
 pub const PROFILES_ID: &str = "toolboks.system-profiles";
 pub const MACRO_ID: &str = "toolboks.macro-manager";
 /// Hardcoded for now. The catalog replaces it: the verified flag and the list order come
 /// from `crate::catalog` (`Index::listing` and `Index::verified`) once the UI is moved over.
-pub const OFFICIAL_ADDONS: [&str; 4] = [toolboks_disk_manager::ID, AURAL_ID, PROFILES_ID, MACRO_ID];
+pub const OFFICIAL_ADDONS: [&str; 3] = [AURAL_ID, PROFILES_ID, MACRO_ID];
 
 pub fn official_package(id: &str) -> Option<Package> {
     match id {
@@ -49,7 +46,6 @@ pub fn official_package(id: &str) -> Option<Package> {
             serde_json::from_str(include_str!("../assets/macro-manager.tbaddon"))
                 .expect("bundled Macro Manager package"),
         ),
-        toolboks_disk_manager::ID => Some(official_disk_package()),
         AURAL_ID => Some(
             serde_json::from_str(include_str!("../assets/aural.tbaddon"))
                 .expect("bundled Aural package"),
@@ -79,12 +75,6 @@ pub fn trusted_native(p: &Package) -> bool {
                     previous.manifest.byline = None;
                     serde_json::to_value(previous).ok().as_ref() == Some(&value)
                 }))
-        || (p.manifest.id == toolboks_disk_manager::ID
-            && serde_json::from_str::<Package>(toolboks_disk_manager::LEGACY_PACKAGE)
-                .ok()
-                .and_then(|p| serde_json::to_value(p).ok())
-                .as_ref()
-                == Some(&value))
 }
 fn validate_provider(p: &Package) -> Result<(), String> {
     if (p.manifest.native_provider.is_some() || OFFICIAL_ADDONS.contains(&p.manifest.id.as_str()))
@@ -434,28 +424,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_disk_package_keeps_read_only_permissions_until_update() {
-        let legacy: Package = serde_json::from_str(toolboks_disk_manager::LEGACY_PACKAGE).unwrap();
-        legacy.validate("0.8.2").unwrap();
-        assert!(trusted_native(&legacy));
-        assert!(!legacy
-            .manifest
-            .capabilities
-            .contains(&toolboks_addon_sdk::Capability::DriveOptimize));
-        let mut forged = legacy.clone();
-        forged
-            .manifest
-            .capabilities
-            .push(toolboks_addon_sdk::Capability::DriveOptimize);
-        assert!(!trusted_native(&forged));
-        let current = official_disk_package();
-        assert!(trusted_native(&current));
-        assert!(current
-            .manifest
-            .capabilities
-            .contains(&toolboks_addon_sdk::Capability::DriveOptimize));
-    }
-    #[test]
     fn installation_persistence_and_removal() {
         let root = std::env::temp_dir().join(format!("toolboks-addons-{}", std::process::id()));
         let mut r = Registry::load(root.clone());
@@ -480,7 +448,7 @@ mod tests {
     }
     #[test]
     fn only_exact_first_party_native_packages_are_accepted() {
-        let p = official_disk_package();
+        let p = official_package(MACRO_ID).unwrap();
         assert!(validate_provider(&p).is_ok());
         let mut spoof = p.clone();
         spoof.manifest.author = "Someone else".into();
@@ -490,20 +458,49 @@ mod tests {
         assert!(validate_provider(&spoof).is_err());
     }
     #[test]
-    fn native_activation_package_roundtrips_through_installer() {
-        let root =
-            std::env::temp_dir().join(format!("toolboks-disk-package-{}", std::process::id()));
-        let mut registry = Registry::load(root.clone());
-        registry.install(official_disk_package()).unwrap();
-        let mut loaded = Registry::load(root.clone());
-        assert!(loaded.errors.is_empty());
-        assert!(loaded.verified(toolboks_disk_manager::ID));
-        assert_eq!(
-            loaded.packages[0].manifest.native_provider.as_deref(),
-            Some(toolboks_disk_manager::PROVIDER)
-        );
-        loaded.uninstall(toolboks_disk_manager::ID).unwrap();
-        std::fs::remove_dir_all(root).unwrap();
+    fn disk_manager_move_keeps_preferences_and_data_without_trusting_old_package() {
+        let id = "toolboks.disk-manager";
+        assert!(!OFFICIAL_ADDONS.contains(&id));
+        assert!(official_package(id).is_none());
+        let root = std::env::temp_dir().join(format!("toolboks-disk-move-{}", std::process::id()));
+        fs::create_dir_all(root.join("addons")).unwrap();
+        fs::create_dir_all(root.join("addon-data").join(id)).unwrap();
+        let data = root.join("addon-data").join(id).join("existing.json");
+        fs::write(&data, b"existing data").unwrap();
+        let mut package =
+            Package::parse(SDK_EXAMPLE.as_bytes(), env!("CARGO_PKG_VERSION")).unwrap();
+        package.manifest.id = id.into();
+        package.manifest.native_provider = Some("stratum.disk-manager".into());
+        package.manifest.api_version = 2;
+        package.pages.clear();
+        assert!(!trusted_native(&package));
+        fs::write(
+            root.join("addons").join(format!("{id}.tbaddon")),
+            serde_json::to_vec(&package).unwrap(),
+        )
+        .unwrap();
+        let mut config = Config::default();
+        let prefs = BTreeMap::from([
+            ("settings".into(), serde_json::json!({"path": "C:\\saved"})),
+            ("optimize_selected_drive".into(), serde_json::json!("D:")),
+            ("fragmentation_reports".into(), serde_json::json!({})),
+        ]);
+        config.preferences.insert(id.into(), prefs.clone());
+        config.disabled.push(id.into());
+        fs::write(
+            root.join("config.json"),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+        let registry = Registry::load(root.clone());
+        assert!(registry.packages.is_empty());
+        assert_eq!(registry.errors.len(), 1);
+        assert_eq!(registry.config.preferences[id], prefs);
+        assert!(!registry.enabled(id));
+        assert_eq!(fs::read(data).unwrap(), b"existing data");
+        registry.save().unwrap();
+        assert_eq!(Registry::load(root.clone()).config.preferences[id], prefs);
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn package_update_preserves_preferences_and_ignores_invalid_files() {
