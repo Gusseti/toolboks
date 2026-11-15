@@ -22,16 +22,16 @@ Every add-on follows the design system in [DESIGN.md](../DESIGN.md) and passes t
 | Piece | Where | State |
 |---|---|---|
 | Wire protocol (version 2) and SDK runtime `run_addon` | `sdk/toolboks-addon-proto`, `sdk/toolboks-addon-sdk` | Built and tested |
-| Host view: paints an add-on's frames, forwards input | `src/addon_view/` | Built and tested; used by the test host only |
-| Supervisor: starts, checks, watches and stops add-on processes | `src/supervisor/` | Built and tested; not called by the app yet |
-| Host services: status bar items, links, tours, tray, background add-ons, preferences | `src/addon_services.rs` | Built and tested; not called by the app yet |
-| Catalog: format, entry and download checks (the list is not signed) | `shared/toolboks-catalog`, `src/catalog.rs` | Built and tested |
-| Installer: download, verify, install, update, roll back, remove | `src/installer.rs` | Built and tested; not called by the app yet |
+| Host view: paints an add-on's frames, forwards input | `src/addon_view/` | Used by catalog-installed native add-ons and the test host |
+| Supervisor: starts, checks, watches and stops add-on processes | `src/supervisor/` | Built and used by the app |
+| Host services: status bar items, links, tours, tray, background add-ons, preferences | `src/addon_services.rs` | Built and used by the app |
+| Catalog: format, entry and download checks (the list is not signed) | `shared/toolboks-catalog`, `src/catalog.rs` | Built and used by the app |
+| Installer: download, verify, install, update, roll back, remove | `src/installer.rs` | Built and used by the app |
 | Shared code for add-ons: look, formatting, elevation check, storage, Debloater engine | `shared/` | Built; used by the host and the add-ons |
 | Sample add-on and test host | `sdk/examples/hello-addon`, `examples/addon_host.rs` | Built; see [ADDON-AUTHOR-GUIDE.md](ADDON-AUTHOR-GUIDE.md) |
 | Add-on browser as the marketplace, first-run screen | `src/marketplace.rs`, `src/app/marketplace.rs`, `src/app/store.rs` | Built; lists only what the catalog returns, so it is empty until an add-on is listed |
 | Repository and release workflow for first-party add-ons | [`toolboks-addons`](https://github.com/fredhakon/toolboks-addons) | Built (#83); no real tool released yet |
-| The tools as add-on exes | #88 to #93 | Not built; they are still compiled into the app (see "Today") |
+| The tools as add-on exes | #88 to #93 | Disk Manager moved to the add-ons repo; the others remain compiled in (see "Today") |
 
 Where each tool goes and how the move works: [ADDON-MOVE.md](ADDON-MOVE.md).
 
@@ -67,7 +67,7 @@ add-on's own data, kept or deleted on removal as the user chooses.
 
 ## Today
 
-Until the tools move (#88 to #94), the app works as before. Toolboks owns the window, background
+Disk Manager has moved out (#88); until the remaining tools move (#89 to #94), they stay compiled in. Toolboks owns the window, background
 palette, collapsible sidebar, overview, local add-on browser, settings and status bar. Add-ons
 render inside that workspace.
 The four original tools are separate preinstalled (built-in) add-ons with their own
@@ -86,21 +86,18 @@ the former combined `toolboks.system-essentials` entry are ignored and dropped.
 
 A `.tbaddon` is a validated UTF-8 JSON package. SDK API 1 renders declarative pages
 with headings, notes, metrics and namespaced preference controls. SDK API 2 can
-activate an approved native provider compiled into the host. Disk Manager by stratum
-is the first native provider, implemented in a separate workspace crate.
+activate an approved native provider compiled into the host, for the tools that have not moved.
 
-Disk Manager, Audio Gainer, Macro Manager and System Profiles are compiled into the host
-today and switched on by their packages; `NativeAddon` is the same Rust trait an add-on exe
-implements, so moving one out does not change its page code. Packages cannot load arbitrary
-native executables. Publishing by anyone but the Toolboks team remains future work. Package ID, title,
-descriptions, publisher, icon, byline, compatibility and capabilities are standardized
-by the SDK; the Rust validator is authoritative for cross-field rules.
+Audio Gainer, Macro Manager and System Profiles remain compiled into the host and switched on
+by their packages. Disk Manager is an independent executable in `toolboks-addons`, installed
+through the catalog. Its legacy activation packages no longer resolve a provider;
+the host keeps their saved preferences and data. The other tools' trust and package behavior
+is unchanged. Publishing by anyone but the Toolboks team remains future work.
 
 Verification of local packages is an embedded first-party allowlist, not a self-declared
-manifest flag. For catalog add-ons it comes from the catalog. The host recognizes exact approved Disk Manager
-packages. Version 0.1 keeps its read-only access; version 0.2 requests drive optimization
-through the installation review. Modifying an old manifest to add that capability
-fails the trust check. Verified first-party entries appear first in the browser.
+manifest flag. For catalog add-ons it comes from the catalog. Disk Manager no longer
+has an entry in the embedded allowlist. Its executable retains `toolboks.disk-manager`, its
+five pages and preference names. See [DISK-MANAGER.md](DISK-MANAGER.md).
 
 The registry revalidates installed packages at launch, skips invalid/conflicting ones,
 and reports errors in Settings. Installation and updates review the package's access;
@@ -135,8 +132,9 @@ Disk Manager follows DESIGN.md (tokens in its `theme.rs`, inline stats bar, hair
 cards, sentence-case table headers). It uses background scanning and export workers, a packed clickable map,
 folder browsing, largest-file rankings, filters, type totals and coverage reports.
 Drive optimization uses Windows numeric analysis and retained success history.
-HDD defrag, SSD TRIM and Windows-selected fallback actions require an approved
-capability, administrator access and explicit operation confirmation. See
+HDD defrag, SSD TRIM and Windows-selected fallback actions are gated in the executable
+until #132 supplies its elevated helper and confirmation. The pilot remains on protocol 2;
+after #132 merges, the add-on must be repinned and rebuilt for protocol 3. See
 [DISK-MANAGER.md](DISK-MANAGER.md) and [DRIVE-OPTIMIZATION.md](DRIVE-OPTIMIZATION.md).
 
 The `preview` feature isolates the app's data/instance identity and disables all

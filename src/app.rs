@@ -9,6 +9,8 @@ use crate::tools;
 use crate::tray::{self, Tray};
 use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
+#[cfg(feature = "preview")]
+pub mod disk_manager_check;
 mod marketplace;
 #[cfg(feature = "preview")]
 pub mod marketplace_check;

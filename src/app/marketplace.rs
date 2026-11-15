@@ -856,6 +856,13 @@ impl App {
             std::time::Instant::now(),
         );
         if let Some(view) = self.views.get_mut(id) {
+            #[cfg(feature = "preview")]
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::unique("disk-pilot-origin"),
+                    ui.available_rect_before_wrap().min,
+                )
+            });
             view.set_interactive(self.tour.is_none());
             view.show(ui, ui.available_rect_before_wrap());
         } else {

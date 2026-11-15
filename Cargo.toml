@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/Gusseti/toolboks"
 
 [workspace]
-members = ["sdk/toolboks-addon-sdk", "sdk/examples/hello-addon", "sdk/toolboks-addon-proto", "addons/disk-manager", "shared/toolboks-shared", "shared/toolboks-debloat-engine", "shared/toolboks-catalog"]
+members = ["sdk/toolboks-addon-sdk", "sdk/examples/hello-addon", "sdk/toolboks-addon-proto", "shared/toolboks-shared", "shared/toolboks-debloat-engine", "shared/toolboks-catalog"]
 resolver = "2"
 
 [features]
@@ -17,7 +17,6 @@ preview = ["toolboks-shared/preview"]
 [dependencies]
 toolboks-addon-sdk = { path = "sdk/toolboks-addon-sdk", features = ["native-ui"] }
 toolboks-addon-proto = { path = "sdk/toolboks-addon-proto" }
-toolboks-disk-manager = { path = "addons/disk-manager" }
 toolboks-debloat-engine = { path = "shared/toolboks-debloat-engine" }
 toolboks-shared = { path = "shared/toolboks-shared", features = ["ui"] }
 # Signed add-on catalog: verification only, see src/catalog.rs.

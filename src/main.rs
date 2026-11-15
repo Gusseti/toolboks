@@ -61,6 +61,19 @@ fn main() -> eframe::Result {
             app::store::install_fonts(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             #[cfg(feature = "preview")]
+            if let Some(index) = args.iter().position(|arg| arg == "--disk-manager-check") {
+                let output =
+                    std::path::PathBuf::from(args.get(index + 1).expect("screenshot folder"));
+                assert!(std::env::var_os("TOOLBOKS_TEST_CATALOG").is_some());
+                assert!(std::env::var_os("TOOLBOKS_DATA_DIR").is_some());
+                assert!(
+                    !addons::data_root().exists(),
+                    "Use a fresh isolated data folder"
+                );
+                std::fs::create_dir_all(&output).expect("create screenshot folder");
+                return Ok(Box::new(app::disk_manager_check::Check::new(output)));
+            }
+            #[cfg(feature = "preview")]
             if let Some(index) = args.iter().position(|arg| arg == "--marketplace-check") {
                 let output =
                     std::path::PathBuf::from(args.get(index + 1).expect("screenshot folder"));
