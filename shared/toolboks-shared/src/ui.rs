@@ -73,16 +73,28 @@ fn install_system_font(ctx: &egui::Context) {
     };
     let fonts_dir = std::path::Path::new(&dir).join("Fonts");
     // Static Segoe UI: the variable font is not worth the risk of a parse failure at start-up.
-    let Ok(bytes) = std::fs::read(fonts_dir.join("segoeui.ttf")) else {
+    let segoe = std::fs::read(fonts_dir.join("segoeui.ttf"));
+    // Consolas for fixed-width text. An add-on runs without egui's bundled fonts, so without
+    // this its times, codes and reports would be drawn as empty boxes.
+    let consolas = std::fs::read(fonts_dir.join("consola.ttf"));
+    if segoe.is_err() && consolas.is_err() {
         return;
-    };
+    }
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "segoe-ui".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-    );
-    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-        family.insert(0, "segoe-ui".to_owned());
+    for (name, family, bytes) in [
+        ("segoe-ui", egui::FontFamily::Proportional, segoe),
+        ("consolas", egui::FontFamily::Monospace, consolas),
+    ] {
+        let Ok(bytes) = bytes else {
+            continue;
+        };
+        fonts.font_data.insert(
+            name.to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        if let Some(list) = fonts.families.get_mut(&family) {
+            list.insert(0, name.to_owned());
+        }
     }
     ctx.set_fonts(fonts);
 }
