@@ -62,7 +62,6 @@ addons/<name>/            one crate per add-on
   src/main.rs             calls run_addon from the SDK
   tests/protocol.rs       starts the built exe and talks the protocol to it
 catalog/index.json        the list the app reads
-catalog/index.json.sig    its signature
 tools/repo/               checks manifests and updates the catalog after a release
 .github/workflows/        pull request checks and the release workflow
 ```
@@ -80,15 +79,12 @@ tools/repo/               checks manifests and updates the catalog after a relea
 4. **Catalog pull request.** The workflow opens a pull request that adds the new version to
    `catalog/index.json` with its download address, size, SHA-256 and the host versions it works
    with. This step needs the `CATALOG_PR_TOKEN` secret.
-5. **Sign.** The owner reviews the pull request and signs the catalog on their own PC with
-   `catalog-sign`. The private key never goes into GitHub. See
-   [catalog-signing.md](catalog-signing.md).
-6. **Merge.** Once the signed catalog is on `main`, every Toolboks install sees the new version.
+5. **Merge.** Review and merge the pull request. Once the catalog is on `main`, every Toolboks
+   install sees the new version. The catalog is not signed; see [catalog.md](catalog.md).
 
 In the app:
 
-1. The add-on browser downloads the catalog and its signature and refuses a list it cannot
-   check.
+1. The add-on browser downloads the catalog and refuses a list that is not valid.
 2. The user picks an add-on and sees what it can access before anything is installed.
 3. The installer downloads the exe and keeps it only if its size and SHA-256 match the catalog.
 4. The supervisor checks the exe again before each start, starts it, and restarts it if it
@@ -140,7 +136,7 @@ What each tool needs beyond the common steps:
 
 1. **Before any tool moves:** the add-on browser ([#86](https://github.com/Gusseti/toolboks/issues/86)),
    the security findings ([#95](https://github.com/Gusseti/toolboks/issues/95)), a public
-   catalog with real keys ([#116](https://github.com/Gusseti/toolboks/issues/116)) and the
+   catalog ([#116](https://github.com/Gusseti/toolboks/issues/116)) and the
    administrator-rights decision ([#118](https://github.com/Gusseti/toolboks/issues/118)).
 2. **Pilot:** Disk Manager (#88).
 3. **The rest:** #89 to #93, in any order, after the pilot.
@@ -154,9 +150,7 @@ Until step 4, the tools that have not moved stay built into the app and keep wor
 ## Open points
 
 - The add-ons repo is private. The app cannot read a private catalog.
-- The app's catalog public keys are placeholders, so it accepts no catalog yet.
 - The add-ons repo is pinned to a host commit on `staging`. Before the first real release it
   should point at a released host version ([#117](https://github.com/Gusseti/toolboks/issues/117)).
-- Whether to buy a code-signing certificate before the first public add-on release is undecided
-  (#95, #50). Without one, Windows SmartScreen and antivirus programs are likely to warn about
-  each download.
+- Nothing is signed: not the catalog and not the exes (owner decision, 2026-11-15). Windows
+  SmartScreen and antivirus programs are likely to warn about each download.

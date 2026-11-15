@@ -25,24 +25,24 @@ Every add-on follows the design system in [DESIGN.md](../DESIGN.md) and passes t
 | Host view: paints an add-on's frames, forwards input | `src/addon_view/` | Built and tested; used by the test host only |
 | Supervisor: starts, checks, watches and stops add-on processes | `src/supervisor/` | Built and tested; not called by the app yet |
 | Host services: status bar items, links, tours, tray, background add-ons, preferences | `src/addon_services.rs` | Built and tested; not called by the app yet |
-| Signed catalog: format, verifier, offline signing tool | `shared/toolboks-catalog`, `src/catalog.rs`, `tools/catalog-sign` | Built and tested; the built-in keys are placeholders, so no index is accepted yet |
+| Catalog: format, entry and download checks (the list is not signed) | `shared/toolboks-catalog`, `src/catalog.rs` | Built and tested |
 | Installer: download, verify, install, update, roll back, remove | `src/installer.rs` | Built and tested; not called by the app yet |
 | Shared code for add-ons: look, formatting, elevation check, storage, Debloater engine | `shared/` | Built; used by the host and the add-ons |
 | Sample add-on and test host | `sdk/examples/hello-addon`, `examples/addon_host.rs` | Built; see [ADDON-AUTHOR-GUIDE.md](ADDON-AUTHOR-GUIDE.md) |
-| Add-on browser as the marketplace, first-run screen | `src/marketplace.rs`, `src/app/marketplace.rs`, `src/app/store.rs` | Built; lists only what the signed catalog returns, so it is empty until a catalog is published (#116) |
+| Add-on browser as the marketplace, first-run screen | `src/marketplace.rs`, `src/app/marketplace.rs`, `src/app/store.rs` | Built; lists only what the catalog returns, so it is empty until an add-on is listed |
 | Repository and release workflow for first-party add-ons | [`toolboks-addons`](https://github.com/fredhakon/toolboks-addons) | Built (#83); no real tool released yet |
 | The tools as add-on exes | #88 to #93 | Not built; they are still compiled into the app (see "Today") |
 
 Where each tool goes and how the move works: [ADDON-MOVE.md](ADDON-MOVE.md).
 
 Details: [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md) (protocol, connection, supervisor, host
-services), [catalog-signing.md](catalog-signing.md) (catalog format and the owner's runbook),
+services), [catalog.md](catalog.md) (the catalog format),
 [ADDON-THREAT-MODEL.md](ADDON-THREAT-MODEL.md) (what can go wrong and what is still open).
 
 ## How a native add-on runs
 
 1. **Install.** The user picks it in the add-on browser. The installer downloads the exe from
-   GitHub over HTTPS and places it only when its size and SHA-256 match the signed catalog. The
+   GitHub over HTTPS and places it only when its size and SHA-256 match the catalog. The
    previous version stays until the new one has started once; a new version that never starts is
    rolled back.
 2. **Start.** When the page is opened (or at launch for a background add-on), the supervisor
@@ -97,7 +97,7 @@ descriptions, publisher, icon, byline, compatibility and capabilities are standa
 by the SDK; the Rust validator is authoritative for cross-field rules.
 
 Verification of local packages is an embedded first-party allowlist, not a self-declared
-manifest flag. For catalog add-ons it comes from the signed catalog. The host recognizes exact approved Disk Manager
+manifest flag. For catalog add-ons it comes from the catalog. The host recognizes exact approved Disk Manager
 packages. Version 0.1 keeps its read-only access; version 0.2 requests drive optimization
 through the installation review. Modifying an old manifest to add that capability
 fails the trust check. Verified first-party entries appear first in the browser.

@@ -2,13 +2,14 @@
 
 ## Added
 
-- **Catalog keys (#116):** the app now trusts the real public catalog keys, made offline by the owner (main key id `d00f89ba25ebfb34`, recovery key id `cb3d106e82f520a2`) instead of the all-zero placeholders. The app accepts an add-on list only when it is signed by the main key; a list is still needed.
+- **No signatures (owner decision):** the add-on catalog is a plain list anyone can publish. It is not signed, so the catalog keys, key rotation, expiry and replay checks, the `catalog-sign` tool and `docs/catalog-signing.md` are gone. A download is still checked against the size and SHA-256 its entry declares. Older indexes with `sequence`, dates or `publisher_key_id` still read. See `docs/catalog.md` and the note at the top of `docs/ADDON-THREAT-MODEL.md`.
+
 - **Add-on browser and first run (#86):** choose tools with nothing preselected, review several installs together, and download them through the checked catalog and existing installer. Browse by search, category or installed state; inspect screenshots, access and release notes; update, open or remove without leaving Toolboks. Installs show progress and failures stay in the sidebar until dismissed, including after a restart. Removal keeps data by default, with an explicit option to delete it. Local `.tbaddon` review and a browser walkthrough remain available.
-- **Installed native add-ons:** catalog-installed programs open through the existing supervisor and drawing view in the Toolboks window. Updates wait for the old program to stop. A signed local test catalog is available only to preview builds for first-run checks; release builds never accept its keys or file transport.
+- **Installed native add-ons:** catalog-installed programs open through the existing supervisor and drawing view in the Toolboks window. Updates wait for the old program to stop. A local test catalog is available only to preview builds for first-run checks; release builds never accept its keys or file transport.
 - **Browser look:** the add-on browser follows the landing page: wide rows, a 340 px detail pane, icon tiles, verified pills and category buttons, in Schibsted Grotesk. The source values are in `docs/reviews/86/visual-spec.md` and the side-by-side check in `docs/reviews/86/compare/`.
 - **Other add-on screens (#115):** the first-run picker, full details page, install review, removal dialog and sidebar states use the browser's rows, Verified pills, buttons and type. Sidebar states are pills: purple for an update, red for a failed install. A failed install shows its message and Try again under the Install button.
 - **Catalog entries:** optional `byline` field, such as "by stratum", shown in the details.
-- **Catalog address:** the browser and the first-run picker list only what the signed catalog at `src/catalog.rs::URL` returns. Nothing in those lists is built into the app.
+- **Catalog address:** the browser and the first-run picker list only what the catalog at `src/catalog.rs::URL` returns. Nothing in those lists is built into the app.
 
 ## Not changed here
 
@@ -16,7 +17,7 @@
 
 ## Release prerequisites
 
-- The catalog keys, the public `toolboks-addons` repo and a signed (empty) catalog exist. Public downloads still need the first add-on released into the catalog; renew the catalog before 2027-01-14. The catalog address is `src/catalog.rs::URL`.
+- The public `toolboks-addons` repo and its catalog exist. Public downloads need the first add-on released into the catalog. The catalog address is `src/catalog.rs::URL`.
 
 ## Existing platform work
 
@@ -35,14 +36,14 @@
 
 ## Fixed
 
-- **Add-on launch hardening (#95, F2/F3):** every privileged native launch needs a still-valid signed catalog and uses its hash and granted elevation capability instead of writable install records. Missing or expired catalogs require a refresh; rollback versions absent from the catalog cannot elevate. MSVC builds load implicit DLL dependencies from System32 only, and installed version folders with extra files or redirected paths are refused.
+- **Add-on launch hardening (#95, F2/F3):** every privileged native launch reads the saved catalog entry and uses its hash and granted elevation capability instead of writable install records. A missing saved catalog requires a refresh; rollback versions absent from the catalog cannot elevate. MSVC builds load implicit DLL dependencies from System32 only, and installed version folders with extra files or redirected paths are refused.
 - **Hidden add-ons (#95, F7):** non-background add-ons exit when their page is left, including cancellation during launch. Reopening waits for an exiting process and starts a new one. Background add-ons retain their process.
 
 - **Download address check:** the check that only GitHub may serve an update or an add-on now reads the host correctly. An address such as `https://evil.example?x=.github.com` was accepted before; addresses with user info or a port are refused too. No known way to reach the flaw existed, since addresses come from a signed catalog or from GitHub's own answers.
 
 ## Release blockers
 
-- **Add-on security owner decisions (#95):** F4 (privileged UI confirmation boundary), F5 (offline host release-signing key custody/recovery) and F6 (code-signing certificate) are accepted risks pending owner decision, documented in `docs/ADDON-THREAT-MODEL.md`. They do not authorize a first public add-on release.
+- **Add-on security owner decisions (#95):** F4 (privileged UI confirmation boundary, being built in #132) is open. F5 (host release signing) and F6 (code signing) are accepted risks with no work planned (owner decision, 2026-11-15), documented in `docs/ADDON-THREAT-MODEL.md`. They do not authorize a first public add-on release.
 
 ## Not verified
 

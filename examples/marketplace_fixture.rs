@@ -1,10 +1,5 @@
-use ed25519_compact::{KeyPair, Seed};
-use std::{
-    fs,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
-use toolboks_catalog::{hex_encode, key_id, sha256_hex, SignatureFile};
+use std::{fs, path::PathBuf};
+use toolboks_catalog::sha256_hex;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -139,31 +134,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "capabilities": ["local_preferences"], "pages": ["Overview", "Preferences"]
         }));
     }
-    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let index = serde_json::to_vec_pretty(&serde_json::json!({
-        "format_version": 1, "sequence": if version == "1.0.0" { 1 } else { 2 }, "generated_at": now.saturating_sub(60),
-        "expires_at": now + 7 * 86400, "entries": entries
+        "format_version": 1, "entries": entries
     }))?;
     toolboks_catalog::Index::parse(&index).map_err(|error| format!("{error:?}"))?;
-    let keys = KeyPair::from_seed(Seed::new([86; 32]));
-    let signature = SignatureFile {
-        key_id: key_id(&keys.pk),
-        signature: hex_encode(&keys.sk.sign(&index, None)[..]),
-        rotations: vec![],
-    };
     fs::write(folder.join("index.json"), &index)?;
-    fs::write(
-        folder.join("index.json.sig"),
-        serde_json::to_vec(&signature)?,
-    )?;
-    fs::write(folder.join("catalog-public.txt"), hex_encode(&keys.pk[..]))?;
-    let recovery = KeyPair::from_seed(Seed::new([87; 32]));
-    fs::write(
-        folder.join("recovery-public.txt"),
-        hex_encode(&recovery.pk[..]),
-    )?;
     println!(
-        "Local test catalog: {}. Preview builds only. Fixed test key; never publish this catalog.",
+        "Local test catalog: {}. Preview builds only; never publish this catalog.",
         folder.display()
     );
     Ok(())

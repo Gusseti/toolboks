@@ -3,7 +3,7 @@
 //! - An add-on starts when its page is opened ([`Supervisor::open`]) or, for a background
 //!   add-on, when the host asks ([`Supervisor::start_background`]).
 //! - Before every start the exe is hashed and held open until the process runs. Normal starts
-//!   use the install record; privileged starts require a currently valid signed catalog entry.
+//!   use the install record; privileged starts require a current catalog entry.
 //!   Installed version folders refuse unexpected files or redirected paths.
 //! - Each launch gets two named pipes that only the current user can open and a random token
 //!   the add-on must present (see `pipe`), then the protocol handshake.
@@ -570,7 +570,7 @@ fn launch(
     // Also covers ordinary children of an already elevated host, not just UAC restarts.
     if elevated || crate::elevation::is_elevated() {
         let root = spec.installed_root.as_ref().ok_or_else(|| refused(
-            "Only installed add-ons from a valid signed catalog can start with administrator rights.".into()))?;
+            "Only installed add-ons that the current catalog lists can start with administrator rights.".into()))?;
         let version = exe
             .parent()
             .and_then(|path| path.file_name())

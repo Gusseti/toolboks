@@ -1,16 +1,7 @@
-//! Signed add-on catalog: the `index.json` format, its detached signature file and the verifier.
+//! The add-on catalog: the `index.json` format, entry checks and download checks.
 //!
-//! Trust model:
-//! - The index is signed as the exact bytes of the file (no JSON canonicalisation) with the main
-//!   ed25519 key. The signature lives beside it in `index.json.sig` ([`SignatureFile`]).
-//! - A second, recovery key can only sign a [`Rotation`] statement that names a new main key. An
-//!   index signed by the recovery key itself is refused.
-//! - Nothing in the index is parsed before the signature over its bytes has been checked.
-//! - A short validity window (`expires_at`) and a monotonic `sequence` stop an old index from being
-//!   replayed to push an old, vulnerable add-on version.
-//!
-//! This crate only verifies. Keys are created and used offline by `tools/catalog-sign`; see
-//! `docs/catalog-signing.md`. The entry point is [`verify`].
+//! The catalog is a plain list that anyone can publish. It is not signed. What is still checked
+//! is the shape of the list and, for every download, the size and SHA-256 the entry declares.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,17 +13,9 @@ use toolboks_addon_sdk::{valid_id, version};
 /// ignored); a change in meaning does, and older hosts then refuse the whole index.
 pub const FORMAT_VERSION: u32 = 1;
 pub const MAX_INDEX_BYTES: usize = 2 * 1024 * 1024;
-pub const MAX_SIGNATURE_BYTES: usize = 64 * 1024;
 pub const MAX_ENTRIES: usize = 4096;
-pub const MAX_ROTATIONS: usize = 16;
-/// Longest allowed gap between `generated_at` and `expires_at`. Keeps the replay window short even
-/// if a far-future expiry is signed by mistake.
-pub const MAX_VALIDITY_SECS: u64 = 90 * 24 * 60 * 60;
 /// Sanity limit for the `size` an entry may declare.
 pub const MAX_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
-/// First line of the message a rotation signature covers. It is not valid JSON, so a rotation
-/// signature can never double as an index signature.
-const ROTATION_DOMAIN: &str = "toolboks-catalog-rotation-v1";
 
 /// Lowercase hex.
 pub fn hex_encode(bytes: &[u8]) -> String {
@@ -71,132 +54,21 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex_encode(&digest)
 }
 
-/// Id of a public key: the first 8 bytes of its SHA-256, in hex. Derived, never chosen, so two
-/// keys cannot share an id by mistake and an id cannot be moved to another key.
-pub fn key_id(key: &[u8; 32]) -> String {
-    let digest: [u8; 32] = Sha256::digest(key).into();
-    hex_encode(&digest[..8])
-}
-
-/// True when `signature_hex` is a valid ed25519 signature of `message` under `key`. The all-zero
-/// placeholder key never verifies anything.
-pub fn check_signature(key: &[u8; 32], message: &[u8], signature_hex: &str) -> bool {
-    let Some(signature) = hex_decode::<64>(signature_hex) else {
-        return false;
-    };
-    *key != [0u8; 32]
-        && ed25519_compact::PublicKey::new(*key)
-            .verify(message, &ed25519_compact::Signature::new(signature))
-            .is_ok()
-}
-
-/// Seconds since the Unix epoch. Injected so tests and tools can pin the time.
-pub trait Clock {
-    fn now(&self) -> u64;
-}
-
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now(&self) -> u64 {
-        // A clock before 1970 is broken: report the far future so every index counts as expired.
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(u64::MAX, |d| d.as_secs())
-    }
-}
-
-pub struct FixedClock(pub u64);
-
-impl Clock for FixedClock {
-    fn now(&self) -> u64 {
-        self.0
-    }
-}
-
-/// The public keys compiled into the verifier.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TrustedKeys {
-    /// Signs `index.json`.
-    pub main: [u8; 32],
-    /// Signs rotation statements only.
-    pub recovery: [u8; 32],
-    /// Rotation statements with a sequence at or below this are ignored. Raise it to the latest
-    /// rotation's sequence whenever a rotated key becomes the built-in `main`, so an old statement
-    /// cannot move trust back to a retired key.
-    pub rotation_floor: u64,
-}
-
-impl TrustedKeys {
-    fn usable(&self) -> bool {
-        self.main != [0u8; 32] && self.recovery != [0u8; 32] && self.main != self.recovery
-    }
-}
-
 /// Why an index was not accepted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refused {
-    /// The built-in keys are placeholders (all zero) or the two keys are the same.
-    PlaceholderKeys,
-    MissingSignature,
-    MalformedSignature,
-    /// Signed by a key this host does not know.
-    UnknownKey,
-    /// Signed by the built-in main key after a rotation replaced it.
-    RetiredKey,
-    /// The recovery key may only sign rotation statements.
-    SignedByRecoveryKey,
-    /// The signature does not match the bytes (tampered file or wrong key).
-    BadSignature,
-    RotationMalformed,
-    RotationSignedByMainKey,
-    RotationBadSignature,
-    RotationOutOfOrder,
     UnknownFormat(u32),
     Malformed(String),
-    Expired,
-    /// The index is older than one this host already accepted.
-    Replayed {
-        last: u64,
-        got: u64,
-    },
-    /// The index was good but the new trust state could not be saved (set by the host).
+    /// The index was good but could not be saved (set by the host).
     NotPersisted(String),
 }
 
 impl fmt::Display for Refused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PlaceholderKeys => write!(f, "no catalog keys are configured"),
-            Self::MissingSignature => write!(f, "the catalog signature is missing"),
-            Self::MalformedSignature => write!(f, "the catalog signature file is malformed"),
-            Self::UnknownKey => write!(f, "the catalog is signed by an unknown key"),
-            Self::RetiredKey => write!(f, "the catalog is signed by a retired key"),
-            Self::SignedByRecoveryKey => {
-                write!(f, "the recovery key may not sign the catalog")
-            }
-            Self::BadSignature => write!(f, "the catalog signature does not match"),
-            Self::RotationMalformed => write!(f, "a key rotation statement is malformed"),
-            Self::RotationSignedByMainKey => {
-                write!(f, "a key rotation must be signed by the recovery key")
-            }
-            Self::RotationBadSignature => {
-                write!(
-                    f,
-                    "a key rotation statement is not signed by the recovery key"
-                )
-            }
-            Self::RotationOutOfOrder => write!(f, "key rotation statements are out of order"),
             Self::UnknownFormat(v) => write!(f, "catalog format {v} is not supported"),
             Self::Malformed(why) => write!(f, "the catalog is malformed: {why}"),
-            Self::Expired => write!(f, "the catalog has expired"),
-            Self::Replayed { last, got } => {
-                write!(
-                    f,
-                    "the catalog is older than the last one accepted ({got} < {last})"
-                )
-            }
-            Self::NotPersisted(why) => write!(f, "the catalog state could not be saved: {why}"),
+            Self::NotPersisted(why) => write!(f, "the catalog could not be saved: {why}"),
         }
     }
 }
@@ -232,10 +104,6 @@ pub struct Entry {
     /// publisher.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub byline: Option<String>,
-    /// Reserved for per-publisher keys. Format 1 trusts the catalog key alone and does not check
-    /// this; when present it must be shaped like a [`key_id`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub publisher_key_id: Option<String>,
     pub category: String,
     pub icon: String,
     pub accent: String,
@@ -344,12 +212,6 @@ impl Entry {
                 .is_none_or(|byline| text(byline, 1, 60, false)),
             "byline",
         )?;
-        ok(
-            self.publisher_key_id
-                .as_deref()
-                .is_none_or(|id| hex_decode::<8>(id).is_some()),
-            "publisher_key_id",
-        )?;
         ok(text(&self.category, 1, 40, false), "category")?;
         ok(text(&self.icon, 0, 64, false), "icon")?;
         ok(text(&self.accent, 0, 64, false), "accent")?;
@@ -417,20 +279,15 @@ impl Entry {
     }
 }
 
-/// The parsed `index.json`. Times are seconds since the Unix epoch.
+/// The parsed `index.json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Index {
     pub format_version: u32,
-    /// Goes up with every published index; a host never goes back to a lower one.
-    pub sequence: u64,
-    pub generated_at: u64,
-    pub expires_at: u64,
     pub entries: Vec<Entry>,
 }
 
 impl Index {
-    /// Parses and structurally validates index bytes. This does NOT check the signature: hosts go
-    /// through [`verify`]; the signing tool uses this to refuse a bad index before signing it.
+    /// Parses and structurally validates index bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, Refused> {
         #[derive(Deserialize)]
         struct Head {
@@ -455,14 +312,6 @@ impl Index {
         let bad = |why: String| Err(Refused::Malformed(why));
         if self.format_version != FORMAT_VERSION {
             return Err(Refused::UnknownFormat(self.format_version));
-        }
-        if self.sequence == 0 {
-            return bad("sequence must be at least 1".into());
-        }
-        if self.expires_at <= self.generated_at
-            || self.expires_at - self.generated_at > MAX_VALIDITY_SECS
-        {
-            return bad("expires_at must be after generated_at, by at most 90 days".into());
         }
         if self.entries.len() > MAX_ENTRIES {
             return bad("too many entries".into());
@@ -505,228 +354,9 @@ impl Index {
     }
 }
 
-/// Recovery-key statement that makes `new_key` the main key.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Rotation {
-    /// The new main public key, hex.
-    pub new_key: String,
-    /// [`key_id`] of `new_key`.
-    pub key_id: String,
-    /// Starts at 1 and goes up; a host never goes back to a lower rotation.
-    pub sequence: u64,
-    pub issued_at: u64,
-    /// Hex signature by the recovery key over [`rotation_message`].
-    pub signature: String,
-}
-
-/// The exact bytes a rotation signature covers. Built from the fields, which each have a single
-/// spelling, so no JSON canonicalisation is involved.
-pub fn rotation_message(new_key: &[u8; 32], sequence: u64, issued_at: u64) -> Vec<u8> {
-    format!(
-        "{ROTATION_DOMAIN}\n{}\n{}\n{sequence}\n{issued_at}\n",
-        key_id(new_key),
-        hex_encode(new_key)
-    )
-    .into_bytes()
-}
-
-impl Rotation {
-    fn shaped(&self) -> bool {
-        hex_decode::<32>(&self.new_key).is_some()
-            && hex_decode::<8>(&self.key_id).is_some()
-            && hex_decode::<64>(&self.signature).is_some()
-    }
-
-    /// The new main key, if the recovery key really signed this statement.
-    fn trusted_key(&self, keys: &TrustedKeys) -> Result<[u8; 32], Refused> {
-        let key = hex_decode::<32>(&self.new_key).ok_or(Refused::RotationMalformed)?;
-        // The recovery key must never end up signing indexes, not even by naming itself.
-        if self.sequence == 0
-            || key == [0u8; 32]
-            || key == keys.recovery
-            || self.key_id != key_id(&key)
-        {
-            return Err(Refused::RotationMalformed);
-        }
-        let message = rotation_message(&key, self.sequence, self.issued_at);
-        if check_signature(&keys.recovery, &message, &self.signature) {
-            Ok(key)
-        } else if check_signature(&keys.main, &message, &self.signature) {
-            Err(Refused::RotationSignedByMainKey)
-        } else {
-            Err(Refused::RotationBadSignature)
-        }
-    }
-}
-
-/// The detached `index.json.sig`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SignatureFile {
-    /// [`key_id`] of the key that signed the index.
-    pub key_id: String,
-    /// Hex ed25519 signature over the exact bytes of `index.json`.
-    pub signature: String,
-    /// Every rotation so far, oldest first. Carried by each signature file after a rotation so a
-    /// fresh install learns the current main key.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rotations: Vec<Rotation>,
-}
-
-impl SignatureFile {
-    pub fn parse(bytes: &[u8]) -> Result<Self, Refused> {
-        if bytes.len() > MAX_SIGNATURE_BYTES {
-            return Err(Refused::MalformedSignature);
-        }
-        let file: Self = serde_json::from_slice(bytes).map_err(|_| Refused::MalformedSignature)?;
-        let shaped = hex_decode::<8>(&file.key_id).is_some()
-            && hex_decode::<64>(&file.signature).is_some()
-            && file.rotations.len() <= MAX_ROTATIONS
-            && file.rotations.iter().all(Rotation::shaped);
-        if shaped {
-            Ok(file)
-        } else {
-            Err(Refused::MalformedSignature)
-        }
-    }
-}
-
-/// What a host remembers between runs. The host persists it after every accepted index.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrustState {
-    /// Sequence of the last accepted index.
-    #[serde(default)]
-    pub last_sequence: u64,
-    /// The newest accepted rotation. Kept whole, with its signature, and checked again on every
-    /// use, so a damaged or edited state file cannot introduce a key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rotation: Option<Rotation>,
-}
-
-/// An accepted index and the trust state to persist with it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Accepted {
-    pub index: Index,
-    pub state: TrustState,
-}
-
-/// The newest rotation that counts and the main key in force. `offered` is the chain from the
-/// signature file; every statement in it must be good, even ones this host is already past.
-fn current_main(
-    keys: &TrustedKeys,
-    state: &TrustState,
-    offered: &[Rotation],
-) -> Result<(Option<Rotation>, [u8; 32]), Refused> {
-    // A stored rotation only counts while the built-in recovery key still vouches for it and it is
-    // above the floor. After a host update with new built-in keys it simply drops out.
-    let mut current = state
-        .rotation
-        .as_ref()
-        .filter(|r| r.sequence > keys.rotation_floor)
-        .and_then(|r| Some((r.clone(), r.trusted_key(keys).ok()?)));
-    let mut previous = 0;
-    for rotation in offered {
-        let key = rotation.trusted_key(keys)?;
-        if rotation.sequence <= previous {
-            return Err(Refused::RotationOutOfOrder);
-        }
-        previous = rotation.sequence;
-        let seen = current
-            .as_ref()
-            .map_or(keys.rotation_floor, |(r, _)| r.sequence);
-        if rotation.sequence > seen {
-            current = Some((rotation.clone(), key));
-        }
-    }
-    Ok(match current {
-        Some((rotation, key)) => (Some(rotation), key),
-        None => (None, keys.main),
-    })
-}
-
-/// Verifies `index` (the exact bytes of `index.json`) against `signature` (the bytes of
-/// `index.json.sig`, `None` when it could not be fetched).
-///
-/// On success the caller MUST persist `Accepted::state` before using the index; it carries the
-/// replay floor and any accepted key rotation. Nothing is remembered when an index is refused.
-pub fn verify(
-    keys: &TrustedKeys,
-    state: &TrustState,
-    index: &[u8],
-    signature: Option<&[u8]>,
-    clock: &dyn Clock,
-) -> Result<Accepted, Refused> {
-    if !keys.usable() {
-        return Err(Refused::PlaceholderKeys);
-    }
-    let signature = match signature {
-        Some(bytes) if !bytes.is_empty() => SignatureFile::parse(bytes)?,
-        _ => return Err(Refused::MissingSignature),
-    };
-    let (rotation, main) = current_main(keys, state, &signature.rotations)?;
-    if signature.key_id != key_id(&main) {
-        return Err(if signature.key_id == key_id(&keys.recovery) {
-            Refused::SignedByRecoveryKey
-        } else if rotation.is_some() && signature.key_id == key_id(&keys.main) {
-            Refused::RetiredKey
-        } else {
-            Refused::UnknownKey
-        });
-    }
-    if !check_signature(&main, index, &signature.signature) {
-        // Refused either way; this only tells the owner which mistake was made.
-        return Err(
-            if check_signature(&keys.recovery, index, &signature.signature) {
-                Refused::SignedByRecoveryKey
-            } else {
-                Refused::BadSignature
-            },
-        );
-    }
-    // Only now, with the bytes authenticated, is the JSON looked at.
-    let index = Index::parse(index)?;
-    if clock.now() >= index.expires_at {
-        return Err(Refused::Expired);
-    }
-    if index.sequence < state.last_sequence {
-        return Err(Refused::Replayed {
-            last: state.last_sequence,
-            got: index.sequence,
-        });
-    }
-    let state = TrustState {
-        last_sequence: index.sequence,
-        rotation,
-    };
-    Ok(Accepted { index, state })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_compact::{KeyPair, Seed};
-
-    // TEST KEYS ONLY: derived from fixed seeds, never trusted outside this test module.
-    const MAIN: [u8; 32] = [1; 32];
-    const RECOVERY: [u8; 32] = [2; 32];
-    const NEXT: [u8; 32] = [3; 32];
-    const STRANGER: [u8; 32] = [4; 32];
-    const NOW: u64 = 1_800_000_000;
-
-    fn public(seed: [u8; 32]) -> [u8; 32] {
-        *KeyPair::from_seed(Seed::new(seed)).pk
-    }
-
-    fn sign(seed: [u8; 32], message: &[u8]) -> String {
-        hex_encode(&KeyPair::from_seed(Seed::new(seed)).sk.sign(message, None)[..])
-    }
-
-    fn keys() -> TrustedKeys {
-        TrustedKeys {
-            main: public(MAIN),
-            recovery: public(RECOVERY),
-            rotation_floor: 0,
-        }
-    }
 
     fn entry(id: &str, version: &str) -> Entry {
         Entry {
@@ -736,7 +366,6 @@ mod tests {
             long_description: String::new(),
             publisher: "Toolboks".into(),
             byline: None,
-            publisher_key_id: None,
             category: "system".into(),
             icon: "box".into(),
             accent: "#4f8cff".into(),
@@ -757,50 +386,15 @@ mod tests {
         }
     }
 
-    fn index(sequence: u64) -> Index {
+    fn index() -> Index {
         Index {
             format_version: FORMAT_VERSION,
-            sequence,
-            generated_at: NOW - 100,
-            expires_at: NOW + 1000,
             entries: vec![entry("toolboks.sample", "1.0.0")],
         }
     }
 
     fn bytes(index: &Index) -> Vec<u8> {
         serde_json::to_vec_pretty(index).unwrap()
-    }
-
-    fn signed(seed: [u8; 32], bytes: &[u8], rotations: Vec<Rotation>) -> Vec<u8> {
-        serde_json::to_vec(&SignatureFile {
-            key_id: key_id(&public(seed)),
-            signature: sign(seed, bytes),
-            rotations,
-        })
-        .unwrap()
-    }
-
-    fn rotation(signer: [u8; 32], new: [u8; 32], sequence: u64) -> Rotation {
-        let new_key = public(new);
-        Rotation {
-            new_key: hex_encode(&new_key),
-            key_id: key_id(&new_key),
-            sequence,
-            issued_at: NOW - 50,
-            signature: sign(signer, &rotation_message(&new_key, sequence, NOW - 50)),
-        }
-    }
-
-    fn check(
-        state: &TrustState,
-        index: &[u8],
-        signature: Option<&[u8]>,
-    ) -> Result<Accepted, Refused> {
-        verify(&keys(), state, index, signature, &FixedClock(NOW))
-    }
-
-    fn fresh() -> TrustState {
-        TrustState::default()
     }
 
     fn host() -> Host<'static> {
@@ -813,194 +407,43 @@ mod tests {
 
     #[test]
     fn accepts_a_good_index() {
-        let index = index(7);
-        let bytes = bytes(&index);
-        let accepted = check(&fresh(), &bytes, Some(&signed(MAIN, &bytes, vec![]))).unwrap();
-        assert_eq!(accepted.index, index);
-        assert_eq!(accepted.state.last_sequence, 7);
-        assert_eq!(accepted.state.rotation, None);
+        let index = index();
+        assert_eq!(Index::parse(&bytes(&index)), Ok(index));
     }
 
     #[test]
-    fn refuses_a_missing_signature() {
-        let bytes = bytes(&index(1));
-        assert_eq!(
-            check(&fresh(), &bytes, None),
-            Err(Refused::MissingSignature)
-        );
-        assert_eq!(
-            check(&fresh(), &bytes, Some(b"")),
-            Err(Refused::MissingSignature)
-        );
-    }
-
-    #[test]
-    fn refuses_a_malformed_signature() {
-        let bytes = bytes(&index(1));
-        let good: SignatureFile = serde_json::from_slice(&signed(MAIN, &bytes, vec![])).unwrap();
-        let short = SignatureFile {
-            signature: good.signature[..126].to_string(),
-            ..good.clone()
-        };
-        let upper = SignatureFile {
-            signature: good.signature.to_uppercase(),
-            ..good.clone()
-        };
-        let not_hex = SignatureFile {
-            signature: "zz".repeat(64),
-            ..good.clone()
-        };
-        let bad_id = SignatureFile {
-            key_id: "main".into(),
-            ..good
-        };
-        let mut cases: Vec<Vec<u8>> = [short, upper, not_hex, bad_id]
-            .iter()
-            .map(|file| serde_json::to_vec(file).unwrap())
-            .collect();
-        cases.push(b"not json".to_vec());
-        cases.push(b"{}".to_vec());
-        cases.push(sign(MAIN, &bytes).into_bytes());
-        for case in cases {
-            assert_eq!(
-                check(&fresh(), &bytes, Some(&case)),
-                Err(Refused::MalformedSignature),
-                "{}",
-                String::from_utf8_lossy(&case)
-            );
-        }
-    }
-
-    #[test]
-    fn refuses_a_wrong_key() {
-        let bytes = bytes(&index(1));
-        // A stranger signing under their own key id.
-        assert_eq!(
-            check(&fresh(), &bytes, Some(&signed(STRANGER, &bytes, vec![]))),
-            Err(Refused::UnknownKey)
-        );
-        // A stranger claiming the main key's id.
-        let forged = serde_json::to_vec(&SignatureFile {
-            key_id: key_id(&public(MAIN)),
-            signature: sign(STRANGER, &bytes),
-            rotations: vec![],
-        })
-        .unwrap();
-        assert_eq!(
-            check(&fresh(), &bytes, Some(&forged)),
-            Err(Refused::BadSignature)
-        );
-    }
-
-    #[test]
-    fn refuses_an_index_signed_by_the_recovery_key() {
-        let bytes = bytes(&index(1));
-        assert_eq!(
-            check(&fresh(), &bytes, Some(&signed(RECOVERY, &bytes, vec![]))),
-            Err(Refused::SignedByRecoveryKey)
-        );
-        // The same signature filed under the main key's id.
-        let relabelled = serde_json::to_vec(&SignatureFile {
-            key_id: key_id(&public(MAIN)),
-            signature: sign(RECOVERY, &bytes),
-            rotations: vec![],
-        })
-        .unwrap();
-        assert_eq!(
-            check(&fresh(), &bytes, Some(&relabelled)),
-            Err(Refused::SignedByRecoveryKey)
-        );
-    }
-
-    #[test]
-    fn refuses_tampered_bytes() {
-        let original = bytes(&index(1));
-        let signature = signed(MAIN, &original, vec![]);
-        // Point the entry at another hash: the signature was made over the original bytes.
-        let mut changed = index(1);
-        changed.entries[0].sha256 = sha256_hex(b"evil!");
-        assert_eq!(
-            check(&fresh(), &bytes(&changed), Some(&signature)),
-            Err(Refused::BadSignature)
-        );
-        // Even a change that keeps the JSON equal (trailing space) is refused: bytes are signed.
-        let mut padded = original.clone();
-        padded.push(b' ');
-        assert_eq!(
-            check(&fresh(), &padded, Some(&signature)),
-            Err(Refused::BadSignature)
-        );
-    }
-
-    #[test]
-    fn refuses_an_expired_index() {
-        let index = index(1);
-        let bytes = bytes(&index);
-        let signature = signed(MAIN, &bytes, vec![]);
-        for now in [index.expires_at, index.expires_at + 1, u64::MAX] {
-            assert_eq!(
-                verify(
-                    &keys(),
-                    &fresh(),
-                    &bytes,
-                    Some(&signature),
-                    &FixedClock(now)
-                ),
-                Err(Refused::Expired)
-            );
-        }
-        let last_second = FixedClock(index.expires_at - 1);
-        assert!(verify(&keys(), &fresh(), &bytes, Some(&signature), &last_second).is_ok());
-    }
-
-    #[test]
-    fn refuses_a_replayed_lower_sequence() {
-        let state = TrustState {
-            last_sequence: 5,
-            rotation: None,
-        };
-        let old = bytes(&index(4));
-        assert_eq!(
-            check(&state, &old, Some(&signed(MAIN, &old, vec![]))),
-            Err(Refused::Replayed { last: 5, got: 4 })
-        );
-        // The same index again is fine, and a newer one moves the floor.
-        let same = bytes(&index(5));
-        assert!(check(&state, &same, Some(&signed(MAIN, &same, vec![]))).is_ok());
-        let newer = bytes(&index(6));
-        let accepted = check(&state, &newer, Some(&signed(MAIN, &newer, vec![]))).unwrap();
-        assert_eq!(accepted.state.last_sequence, 6);
+    fn old_fields_from_signed_indexes_are_ignored() {
+        // Earlier indexes carried a sequence, dates and a publisher key id. They still read.
+        let mut value = serde_json::to_value(index()).unwrap();
+        value["sequence"] = 9.into();
+        value["generated_at"] = 1.into();
+        value["expires_at"] = 2.into();
+        value["entries"][0]["publisher_key_id"] = "0123456789abcdef".into();
+        let parsed = Index::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(parsed, index());
     }
 
     #[test]
     fn refuses_an_unknown_format_version() {
-        let mut future = index(1);
+        let mut future = index();
         future.format_version = 2;
-        let bytes = bytes(&future);
         assert_eq!(
-            check(&fresh(), &bytes, Some(&signed(MAIN, &bytes, vec![]))),
+            Index::parse(&bytes(&future)),
             Err(Refused::UnknownFormat(2))
         );
         // A future format with a different shape is still reported as unknown, not as broken.
         let other = br#"{"format_version": 3, "packages": {}}"#;
-        assert_eq!(
-            check(&fresh(), other, Some(&signed(MAIN, other, vec![]))),
-            Err(Refused::UnknownFormat(3))
-        );
+        assert_eq!(Index::parse(other), Err(Refused::UnknownFormat(3)));
     }
 
     #[test]
     fn refuses_a_structurally_bad_index() {
         let refused = |change: fn(&mut Index)| {
-            let mut index = index(1);
+            let mut index = index();
             change(&mut index);
-            let bytes = bytes(&index);
-            let result = check(&fresh(), &bytes, Some(&signed(MAIN, &bytes, vec![])));
+            let result = Index::parse(&bytes(&index));
             assert!(matches!(result, Err(Refused::Malformed(_))), "{result:?}");
         };
-        refused(|i| i.sequence = 0);
-        refused(|i| i.expires_at = i.generated_at);
-        refused(|i| i.expires_at = i.generated_at + MAX_VALIDITY_SECS + 1);
         refused(|i| i.entries[0].id = "Not An Id".into());
         refused(|i| i.entries[0].version = "1.0".into());
         refused(|i| i.entries[0].min_toolboks_version = "newest".into());
@@ -1010,43 +453,15 @@ mod tests {
         refused(|i| i.entries[0].size = 0);
         refused(|i| i.entries[0].title = String::new());
         refused(|i| i.entries[0].capabilities = vec!["Run Anything".into()]);
-        refused(|i| i.entries[0].publisher_key_id = Some("someone".into()));
         refused(|i| i.entries.push(i.entries[0].clone()));
         // A missing `verified` flag is an error, never a silent default.
-        let mut value = serde_json::to_value(index(1)).unwrap();
+        let mut value = serde_json::to_value(index()).unwrap();
         value["entries"][0]
             .as_object_mut()
             .unwrap()
             .remove("verified");
-        let bytes = serde_json::to_vec(&value).unwrap();
-        let result = check(&fresh(), &bytes, Some(&signed(MAIN, &bytes, vec![])));
+        let result = Index::parse(&serde_json::to_vec(&value).unwrap());
         assert!(matches!(result, Err(Refused::Malformed(_))), "{result:?}");
-    }
-
-    #[test]
-    fn placeholder_keys_refuse_everything() {
-        let bytes = bytes(&index(1));
-        let signature = signed(MAIN, &bytes, vec![]);
-        let zero = TrustedKeys {
-            main: [0; 32],
-            recovery: [0; 32],
-            rotation_floor: 0,
-        };
-        let half = TrustedKeys {
-            recovery: [0; 32],
-            ..keys()
-        };
-        let same = TrustedKeys {
-            recovery: public(MAIN),
-            ..keys()
-        };
-        for keys in [zero, half, same] {
-            assert_eq!(
-                verify(&keys, &fresh(), &bytes, Some(&signature), &FixedClock(NOW)),
-                Err(Refused::PlaceholderKeys)
-            );
-        }
-        assert!(!check_signature(&[0; 32], &bytes, &"0".repeat(128)));
     }
 
     #[test]
@@ -1119,147 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_rotation_signed_by_the_wrong_key() {
-        let bytes = bytes(&index(1));
-        for (signer, expected) in [
-            (MAIN, Refused::RotationSignedByMainKey),
-            (STRANGER, Refused::RotationBadSignature),
-            (NEXT, Refused::RotationBadSignature),
-        ] {
-            let chain = vec![rotation(signer, NEXT, 1)];
-            assert_eq!(
-                check(&fresh(), &bytes, Some(&signed(NEXT, &bytes, chain.clone()))),
-                Err(expected.clone())
-            );
-            // A bad statement spoils the file even when the main key signed the index itself.
-            assert_eq!(
-                check(&fresh(), &bytes, Some(&signed(MAIN, &bytes, chain))),
-                Err(expected)
-            );
-        }
-    }
-
-    #[test]
-    fn refuses_a_bad_rotation_statement() {
-        let bytes = bytes(&index(1));
-        // The recovery key may not name itself as the main key.
-        let to_recovery = vec![rotation(RECOVERY, RECOVERY, 1)];
-        assert_eq!(
-            check(
-                &fresh(),
-                &bytes,
-                Some(&signed(RECOVERY, &bytes, to_recovery))
-            ),
-            Err(Refused::RotationMalformed)
-        );
-        // A signed statement cannot be re-pointed at another key or sequence.
-        let mut moved = rotation(RECOVERY, NEXT, 1);
-        moved.new_key = hex_encode(&public(STRANGER));
-        moved.key_id = key_id(&public(STRANGER));
-        assert_eq!(
-            check(
-                &fresh(),
-                &bytes,
-                Some(&signed(STRANGER, &bytes, vec![moved]))
-            ),
-            Err(Refused::RotationBadSignature)
-        );
-        let mut bumped = rotation(RECOVERY, NEXT, 1);
-        bumped.sequence = 9;
-        assert_eq!(
-            check(&fresh(), &bytes, Some(&signed(NEXT, &bytes, vec![bumped]))),
-            Err(Refused::RotationBadSignature)
-        );
-        let backwards = vec![rotation(RECOVERY, NEXT, 2), rotation(RECOVERY, STRANGER, 1)];
-        assert_eq!(
-            check(&fresh(), &bytes, Some(&signed(NEXT, &bytes, backwards))),
-            Err(Refused::RotationOutOfOrder)
-        );
-    }
-
-    #[test]
-    fn accepts_a_good_index_after_rotation() {
-        let chain = vec![rotation(RECOVERY, NEXT, 1)];
-        let first = bytes(&index(1));
-        let accepted = check(&fresh(), &first, Some(&signed(NEXT, &first, chain.clone()))).unwrap();
-        assert_eq!(accepted.state.rotation, Some(chain[0].clone()));
-        // The remembered rotation is enough: later files need not repeat the chain.
-        let second = bytes(&index(2));
-        let again = check(
-            &accepted.state,
-            &second,
-            Some(&signed(NEXT, &second, vec![])),
-        )
-        .unwrap();
-        assert_eq!(again.state.rotation, Some(chain[0].clone()));
-        assert_eq!(again.state.last_sequence, 2);
-    }
-
-    #[test]
-    fn refuses_the_old_main_key_after_rotation() {
-        let chain = vec![rotation(RECOVERY, NEXT, 1)];
-        let first = bytes(&index(1));
-        let state = check(&fresh(), &first, Some(&signed(NEXT, &first, chain.clone())))
-            .unwrap()
-            .state;
-        let later = bytes(&index(2));
-        // With the chain left out (what a holder of the leaked old key would send) and with it.
-        for rotations in [vec![], chain] {
-            assert_eq!(
-                check(&state, &later, Some(&signed(MAIN, &later, rotations))),
-                Err(Refused::RetiredKey)
-            );
-        }
-    }
-
-    #[test]
-    fn never_goes_back_to_an_older_rotation() {
-        let first = rotation(RECOVERY, NEXT, 1);
-        let second = rotation(RECOVERY, STRANGER, 2);
-        let bytes = bytes(&index(1));
-        let chain = vec![first.clone(), second.clone()];
-        let state = check(&fresh(), &bytes, Some(&signed(STRANGER, &bytes, chain)))
-            .unwrap()
-            .state;
-        assert_eq!(state.rotation, Some(second));
-        // Replaying only the first statement does not bring its key back.
-        let replay = signed(NEXT, &bytes, vec![first.clone()]);
-        assert_eq!(
-            check(&state, &bytes, Some(&replay)),
-            Err(Refused::UnknownKey)
-        );
-        // The built-in floor does the same for a fresh install of a newer host.
-        let raised = TrustedKeys {
-            rotation_floor: 1,
-            ..keys()
-        };
-        let clock = FixedClock(NOW);
-        let replay = signed(NEXT, &bytes, vec![first.clone()]);
-        assert_eq!(
-            verify(&raised, &fresh(), &bytes, Some(&replay), &clock),
-            Err(Refused::UnknownKey)
-        );
-        // A stored rotation at or below the floor, or one the recovery key no longer vouches for,
-        // drops out and the built-in main key is in force again.
-        let stale = TrustState {
-            last_sequence: 0,
-            rotation: Some(first),
-        };
-        let by_main = signed(MAIN, &bytes, vec![]);
-        assert!(verify(&raised, &stale, &bytes, Some(&by_main), &clock).is_ok());
-        let edited = TrustState {
-            last_sequence: 0,
-            rotation: Some(rotation(STRANGER, STRANGER, 5)),
-        };
-        assert!(check(&edited, &bytes, Some(&by_main)).is_ok());
-        let by_stranger = signed(STRANGER, &bytes, vec![]);
-        assert_eq!(
-            check(&edited, &bytes, Some(&by_stranger)),
-            Err(Refused::UnknownKey)
-        );
-    }
-
-    #[test]
     fn checks_download_size_and_sha256() {
         let entry = entry("toolboks.sample", "1.0.0");
         assert_eq!(
@@ -1295,7 +569,7 @@ mod tests {
         too_new.min_toolboks_version = "9.0.0".into();
         let mut preview = entry("toolboks.preview-only", "0.1.0");
         preview.channel = Channel::Preview;
-        let mut index = index(1);
+        let mut index = index();
         index.entries = vec![community, old, too_new, new, preview];
         assert_eq!(index.validate(), Ok(()));
         let listed: Vec<(&str, &str)> = index
@@ -1327,7 +601,5 @@ mod tests {
         ] {
             assert_eq!(hex_decode::<4>(bad), None, "{bad}");
         }
-        assert_eq!(key_id(&public(MAIN)).len(), 16);
-        assert_ne!(key_id(&public(MAIN)), key_id(&public(RECOVERY)));
     }
 }

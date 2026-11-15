@@ -129,7 +129,7 @@ confirmation or host message is not user consent across that boundary. The owner
 this boundary (F4 in `ADDON-THREAT-MODEL.md`) and the implementation/tests must be complete
 before a privileged native add-on ships.
 
-To reach users, the add-on needs an entry in the signed catalog. An entry states, among other
+To reach users, the add-on needs an entry in the catalog. An entry states, among other
 things:
 
 | Field | Meaning |
@@ -142,10 +142,9 @@ things:
 | `capabilities` | What the add-on may do, shown to the user before installing. |
 | `pages` | Your page names, so `--open "Title/Page"` links work. |
 | `background` | `true` if the add-on keeps working while hidden; Toolboks then starts it at launch. |
-| `verified`, `channel` | Set by the catalog owner. |
+| `verified`, `channel` | Set by whoever publishes the catalog. Nothing checks them. |
 
-The full format is in [catalog-signing.md](catalog-signing.md). The catalog is signed offline by
-its owner; an add-on author never holds a signing key.
+The full format is in [catalog.md](catalog.md). The catalog is a plain list and is not signed.
 
 **Not ready yet:** the repository and the release workflow for first-party add-ons (#83), and the
 add-on browser that downloads from the catalog (#86). Only first-party add-ons are published for

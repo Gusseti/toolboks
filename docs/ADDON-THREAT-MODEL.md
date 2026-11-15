@@ -7,6 +7,22 @@ services (`src/addon_view/`, `src/addon_services.rs`), and local `.tbaddon` pack
 (`src/addons.rs`). It was written from a read of that code on 2026-11-14. Nothing here was tested
 by attacking a running build.
 
+> **Owner decision, 2026-11-15: nothing is signed.** The catalog is a plain list that anyone can
+> publish, and neither it nor the exes are signed. The catalog keys, rotation, expiry and replay
+> checks and the signing tool were removed (the catalog-signing text below is kept as the record
+> of the earlier design and no longer describes the code). The community catalog model is the
+> reason: Toolboks does not decide who may publish.
+>
+> What is still checked: the shape of the list, and for every download the size and SHA-256 the
+> entry declares, so a damaged or swapped download is thrown away. What is **not** protected any
+> more, all **accepted**: whoever can change the catalog file can list any add-on, set `verified`
+> and grant a native add-on the right to ask for administrator rights; an old list can be served
+> again; a replaced release asset together with a replaced list is accepted. F2 now means only
+> that an elevated start reads the saved catalog entry, not the install records the user account
+> can edit. F5 and F6 (release and code signing) are accepted risks with no work planned.
+> Administrator rights still need the confirmation dialog owned by the elevated process (#132).
+> Revisit before there are real users.
+
 Each threat ends in one of three states:
 
 - **Covered**: the code stops it, and a test shows it.

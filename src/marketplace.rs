@@ -384,29 +384,12 @@ fn load_catalog(root: &Path) -> Result<Index, String> {
     #[cfg(feature = "preview")]
     if let Some(folder) = fixture() {
         let bytes = std::fs::read(folder.join("index.json")).map_err(|error| error.to_string())?;
-        let signature =
-            std::fs::read(folder.join("index.json.sig")).map_err(|error| error.to_string())?;
-        let public = std::fs::read_to_string(folder.join("catalog-public.txt"))
-            .map_err(|error| error.to_string())?;
-        let main =
-            toolboks_catalog::hex_decode(public.trim()).ok_or("Invalid preview public key")?;
-        let public = std::fs::read_to_string(folder.join("recovery-public.txt"))
-            .map_err(|error| error.to_string())?;
-        let recovery =
-            toolboks_catalog::hex_decode(public.trim()).ok_or("Invalid preview recovery key")?;
-        return catalog::accept_preview(root, &bytes, &signature, main, recovery)
-            .map_err(|error| format!("Could not check the test add-on list: {error:?}"));
-    }
-    if catalog::trusted_keys().main == [0; 32] {
-        return Err("Add-on downloads are not ready in this build. Your installed tools and local packages still work.".into());
+        return catalog::accept(root, &bytes)
+            .map_err(|error| format!("Could not read the test add-on list: {error}"));
     }
     let bytes = fetched(catalog::URL, toolboks_catalog::MAX_INDEX_BYTES)?;
-    let signature = fetched(
-        &format!("{}.sig", catalog::URL),
-        toolboks_catalog::MAX_SIGNATURE_BYTES,
-    )?;
-    catalog::accept(root, &bytes, Some(&signature))
-        .map_err(|_| "Could not check the add-on list. Try again later. No downloads are allowed until the list can be checked.".into())
+    catalog::accept(root, &bytes)
+        .map_err(|_| "Could not read the add-on list. Try again later.".into())
 }
 #[cfg(feature = "preview")]
 fn fixture() -> Option<PathBuf> {
@@ -601,10 +584,7 @@ impl Marketplace {
                                 .collect();
                             self.selected
                                 .retain(|id| self.entries.iter().any(|entry| &entry.id == id));
-                            let _ = installer::record_update_check(
-                                root,
-                                toolboks_catalog::Clock::now(&catalog::SystemClock),
-                            );
+                            let _ = installer::record_update_check(root, catalog::now());
                         }
                         Err(error) => {
                             self.entries.clear();
