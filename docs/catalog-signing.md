@@ -173,6 +173,7 @@ replace it soon.
   The app starts it at launch while it is turned on.
 - `capabilities`: `administrator`, `drive_optimize` or `system_tuning` let a native add-on ask for
   a restart with administrator rights (a UAC prompt for that add-on only).
+- `byline` (optional, at most 60 characters) is the maker's credit shown in the details, such as "by stratum".
 - `publisher_key_id` (optional) is reserved for per-publisher keys and is not checked yet.
 
 `index.json.sig`:

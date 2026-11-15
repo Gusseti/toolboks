@@ -16,6 +16,7 @@ mod crash;
 mod elevation;
 mod installer;
 mod instance;
+mod marketplace;
 mod native;
 mod supervisor;
 mod tools;
@@ -36,7 +37,12 @@ fn main() -> eframe::Result {
             instance::APP_NAME,
             env!("CARGO_PKG_VERSION")
         ))
-        .with_inner_size([1540.0, 960.0])
+        .with_inner_size(if args.iter().any(|arg| arg == "--marketplace-check") {
+            // The screenshot check runs at the width its reference captures were taken at.
+            [1120.0, 760.0]
+        } else {
+            [1540.0, 960.0]
+        })
         .with_min_inner_size([1060.0, 720.0]);
     // The window and taskbar icon. If the embedded image cannot be read, Windows keeps the exe's
     // own icon (see build.rs), so a bad image never stops the app from starting.
@@ -50,8 +56,31 @@ fn main() -> eframe::Result {
     eframe::run_native(
         instance::APP_NAME,
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             ui::apply_style(&cc.egui_ctx);
+            app::store::install_fonts(&cc.egui_ctx);
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+            #[cfg(feature = "preview")]
+            if let Some(index) = args.iter().position(|arg| arg == "--marketplace-check") {
+                let output =
+                    std::path::PathBuf::from(args.get(index + 1).expect("screenshot folder"));
+                let updates =
+                    std::path::PathBuf::from(args.get(index + 2).expect("update catalog folder"));
+                assert!(std::env::var_os("TOOLBOKS_TEST_CATALOG").is_some());
+                assert!(std::env::var_os("TOOLBOKS_DATA_DIR").is_some());
+                assert!(
+                    !addons::data_root().exists(),
+                    "Use a fresh isolated data folder"
+                );
+                std::fs::create_dir_all(&output).expect("create screenshot folder");
+                let scale = args
+                    .get(index + 3)
+                    .map_or(1.0, |value| value.parse().expect("scale"));
+                cc.egui_ctx.set_zoom_factor(scale);
+                return Ok(Box::new(app::marketplace_check::Check::new(
+                    output, updates,
+                )));
+            }
             Ok(Box::new(app::App::new()))
         }),
     )

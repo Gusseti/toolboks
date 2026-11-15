@@ -34,6 +34,9 @@ const ROTATION_FLOOR: u64 = 0;
 /// Add-on protocol versions this build can talk to.
 pub const PROTOCOL_VERSIONS: &[u32] = &[toolboks_addon_proto::PROTOCOL_VERSION];
 
+pub const URL: &str =
+    "https://raw.githubusercontent.com/fredhakon/toolboks-addons/main/catalog/index.json";
+
 pub fn trusted_keys() -> TrustedKeys {
     TrustedKeys {
         main: MAIN_KEY,
@@ -156,6 +159,27 @@ fn elevated_entry_with(
 /// replay protection depends on it.
 pub fn accept(root: &Path, index: &[u8], signature: Option<&[u8]>) -> Result<Index, Refused> {
     accept_with(&trusted_keys(), &SystemClock, root, index, signature)
+}
+
+#[cfg(feature = "preview")]
+pub fn accept_preview(
+    root: &Path,
+    index: &[u8],
+    signature: &[u8],
+    main: [u8; 32],
+    recovery: [u8; 32],
+) -> Result<Index, Refused> {
+    accept_with(
+        &TrustedKeys {
+            main,
+            recovery,
+            rotation_floor: 0,
+        },
+        &SystemClock,
+        root,
+        index,
+        Some(signature),
+    )
 }
 
 fn accept_with(

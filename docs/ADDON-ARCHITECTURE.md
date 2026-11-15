@@ -29,8 +29,8 @@ Every add-on follows the design system in [DESIGN.md](../DESIGN.md) and passes t
 | Installer: download, verify, install, update, roll back, remove | `src/installer.rs` | Built and tested; not called by the app yet |
 | Shared code for add-ons: look, formatting, elevation check, storage, Debloater engine | `shared/` | Built; used by the host and the add-ons |
 | Sample add-on and test host | `sdk/examples/hello-addon`, `examples/addon_host.rs` | Built; see [ADDON-AUTHOR-GUIDE.md](ADDON-AUTHOR-GUIDE.md) |
-| Add-on browser as the marketplace, first-run screen | #86 | Not built |
-| Repository and release workflow for first-party add-ons | #83 | Not built |
+| Add-on browser as the marketplace, first-run screen | `src/marketplace.rs`, `src/app/marketplace.rs`, `src/app/store.rs` | Built; lists only what the signed catalog returns, so it is empty until a catalog is published (#116) |
+| Repository and release workflow for first-party add-ons | [`toolboks-addons`](https://github.com/fredhakon/toolboks-addons) | Built (#83); no real tool released yet |
 | The tools as add-on exes | #88 to #93 | Not built; they are still compiled into the app (see "Today") |
 
 Where each tool goes and how the move works: [ADDON-MOVE.md](ADDON-MOVE.md).

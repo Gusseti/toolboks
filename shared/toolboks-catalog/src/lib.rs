@@ -228,6 +228,10 @@ pub struct Entry {
     #[serde(default)]
     pub long_description: String,
     pub publisher: String,
+    /// The maker's credit shown in the details, such as "by stratum", when it differs from the
+    /// publisher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byline: Option<String>,
     /// Reserved for per-publisher keys. Format 1 trusts the catalog key alone and does not check
     /// this; when present it must be shaped like a [`key_id`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -334,6 +338,12 @@ impl Entry {
             "long_description",
         )?;
         ok(text(&self.publisher, 1, 80, false), "publisher")?;
+        ok(
+            self.byline
+                .as_deref()
+                .is_none_or(|byline| text(byline, 1, 60, false)),
+            "byline",
+        )?;
         ok(
             self.publisher_key_id
                 .as_deref()
@@ -725,6 +735,7 @@ mod tests {
             short_description: "A sample add-on".into(),
             long_description: String::new(),
             publisher: "Toolboks".into(),
+            byline: None,
             publisher_key_id: None,
             category: "system".into(),
             icon: "box".into(),

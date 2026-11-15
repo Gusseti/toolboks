@@ -39,3 +39,22 @@ tests or administrative actions as part of routine preview validation.
 
 Development can stay entirely local until the preview is ready for review. Follow the
 repository's staging/main release policy when publishing is explicitly requested.
+
+## Checking the add-on browser in the real window
+
+Preview builds can read a signed local test catalog and step through the add-on screens,
+saving a screenshot of each. Release builds do not have this code.
+
+```powershell
+cargo build --features preview
+cargo run --features preview --example marketplace_fixture -- C:\Temp\cat1 target\debug\hello-addon.exe 1.0.0
+cargo run --features preview --example marketplace_fixture -- C:\Temp\cat2 target\debug\hello-addon.exe 1.1.0
+$env:TOOLBOKS_TEST_CATALOG = "C:\Temp\cat1"
+$env:TOOLBOKS_DATA_DIR = "C:\Temp\fresh-data"   # must not exist yet
+target\debug\toolboks.exe --marketplace-check C:\Temp\shots C:\Temp\cat2 1
+```
+
+The run picks two tools on the first-run screen, reviews and installs them together, opens
+them, then covers the browser, an update, both removal choices and a failed download. The
+packages are harmless SDK samples with the tools' names, not the real tools.
+`docs/reviews/86/` holds the last set and the comparison with the landing page.

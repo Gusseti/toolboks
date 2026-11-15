@@ -9,7 +9,11 @@ use crate::tools;
 use crate::tray::{self, Tray};
 use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
+mod marketplace;
+#[cfg(feature = "preview")]
+pub mod marketplace_check;
 mod shell;
+pub(crate) mod store;
 mod tutorial;
 use crate::addons::{self, Registry, SystemAddon};
 use shell::Screen;
@@ -30,6 +34,10 @@ enum UpdateState {
 }
 
 pub struct App {
+    market: crate::marketplace::Marketplace,
+    supervisor: Option<crate::supervisor::Supervisor>,
+    views: std::collections::BTreeMap<String, crate::addon_view::AddonView>,
+    services: crate::addon_services::Services,
     base: SystemAddon,
     native: crate::native::NativeHost,
     registry: Registry,
@@ -41,6 +49,7 @@ pub struct App {
     install_path: String,
     show_install: bool,
     pending_package: Option<toolboks_addon_sdk::Package>,
+    pending_declarative: Option<String>,
     detail: Option<String>,
     /// The add-on selected in the Home list (by id). Memory only.
     home_selected: Option<String>,
@@ -125,6 +134,14 @@ impl App {
         let keep_in_tray = registry.config.keep_in_tray;
         let mut selected = (0, 0);
         let mut screen = Screen::Home;
+        // Until the built-in tools move out (#94) the sidebar is never empty, so the picker
+        // only opens by itself on a host that has no tools at all.
+        if !registry.config.first_run_complete
+            && registry.builtins.is_empty()
+            && registry.packages.is_empty()
+        {
+            screen = Screen::Pick;
+        }
         if let Some((tool, page)) = parse_open(&args) {
             match open_target(&registry, tool) {
                 Ok(()) => {
@@ -155,7 +172,12 @@ impl App {
                 }
             }
         }
+        let market = crate::marketplace::Marketplace::restore(&registry.root);
         Self {
+            market,
+            supervisor: None,
+            views: Default::default(),
+            services: Default::default(),
             native,
             base: SystemAddon {
                 selected,
@@ -169,6 +191,7 @@ impl App {
             install_path: String::new(),
             show_install: false,
             pending_package: None,
+            pending_declarative: None,
             detail: None,
             home_selected: None,
             remove_pending: None,

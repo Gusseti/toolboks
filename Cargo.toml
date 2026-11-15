@@ -25,7 +25,8 @@ toolboks-catalog = { path = "shared/toolboks-catalog" }
 serde = { version = "1", features = ["derive"] }
 # glow (OpenGL) instead of the default wgpu renderer: far smaller and lighter on RAM.
 eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "links"] }
-egui_extras = { version = "0.37", default-features = false }
+egui_extras = { version = "0.37", default-features = false, features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 serde_json = "1.0.154"
 cpal = "0.15.3"
 sha2 = "0.11.1"

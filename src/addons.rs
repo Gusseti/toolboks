@@ -125,6 +125,7 @@ impl SystemAddon {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub first_run_complete: bool,
     pub keep_in_tray: bool,
     pub sidebar_collapsed: bool,
     pub disabled: Vec<String>,
@@ -241,7 +242,9 @@ impl Registry {
         self.builtins.iter().position(|m| m.id == id)
     }
     pub fn verified(&self, id: &str) -> bool {
-        self.builtin_index(id).is_some() || OFFICIAL_ADDONS.contains(&id)
+        self.builtin_index(id).is_some()
+            || OFFICIAL_ADDONS.contains(&id)
+            || crate::installer::installed_entry(&self.root, id).is_some_and(|entry| entry.verified)
     }
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> Result<(), String> {
         let before = self.config.clone();
@@ -291,6 +294,7 @@ impl Registry {
             .sort_by_key(|a| (!trusted_native(a), a.manifest.title.to_lowercase()));
         Ok(())
     }
+    #[cfg(test)]
     pub fn uninstall(&mut self, id: &str) -> Result<(), String> {
         self.remove(id, false)
     }

@@ -1,11 +1,12 @@
 use super::*;
 use crate::ui::{BORDER, HOST_ACCENT as ACCENT, MUTED, PANEL_BG, SIDEBAR_BG, TEXT, WINDOW_BG};
 use egui::{Color32, RichText, Vec2};
-use toolboks_addon_sdk::{Manifest, Metric, Package, Widget};
+use toolboks_addon_sdk::{Manifest, Metric, Widget};
 
 #[derive(Clone, PartialEq)]
 pub(super) enum Screen {
     Home,
+    Pick,
     Browser,
     Settings,
     /// A built-in tool, by its position in `tools::all()`.
@@ -14,14 +15,14 @@ pub(super) enum Screen {
 }
 
 /// Body text (12 px) in the muted token.
-fn muted(ui: &mut egui::Ui, s: impl Into<String>) {
+pub(super) fn muted(ui: &mut egui::Ui, s: impl Into<String>) {
     ui.label(RichText::new(s.into()).size(look::TEXT_BODY).color(MUTED));
 }
 /// A control label (12 px, full-strength text).
 fn body(ui: &mut egui::Ui, s: &str) {
     ui.label(RichText::new(s).size(look::TEXT_BODY).color(TEXT));
 }
-fn caption(ui: &mut egui::Ui, s: impl Into<String>) {
+pub(super) fn caption(ui: &mut egui::Ui, s: impl Into<String>) {
     ui.label(
         RichText::new(s.into())
             .size(look::TEXT_CAPTION)
@@ -29,7 +30,7 @@ fn caption(ui: &mut egui::Ui, s: impl Into<String>) {
     );
 }
 /// A section heading: 14 px, strong.
-fn section(ui: &mut egui::Ui, s: &str) {
+pub(super) fn section(ui: &mut egui::Ui, s: &str) {
     ui.label(
         RichText::new(s)
             .size(look::TEXT_SECTION)
@@ -340,7 +341,7 @@ fn focus_ring(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response) {
 
 /// One row of the sidebar: an icon centred in the 36 px rail column and, when `show_label`, the
 /// name next to it. `label` is always the accessible name.
-fn nav_row(
+pub(super) fn nav_row(
     ui: &mut egui::Ui,
     label: &str,
     icon: &str,
@@ -395,7 +396,7 @@ fn nav(ui: &mut egui::Ui, label: &str, icon: &str, selected: bool, expanded: boo
 }
 
 /// A page nested under the active tool in the expanded sidebar; selected = lighter fill.
-fn page_row(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
+pub(super) fn page_row(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), PAGE_ROW_H),
         egui::Sense::click(),
@@ -451,6 +452,7 @@ impl Crumb {
 
 impl App {
     pub(super) fn shell_ui(&mut self, ui: &mut egui::Ui) {
+        self.poll_marketplace(ui.ctx());
         self.prepare_tutorial(ui.ctx());
         if self.tour.is_some() {
             ui.disable();
@@ -465,7 +467,7 @@ impl App {
         if let Some(path) = dropped.first() {
             self.review_package(path);
         }
-        let expanded = self.sidebar_expanded;
+        let expanded = self.sidebar_expanded && ui.ctx().content_rect().width() >= 760.0;
         egui::Panel::left("host-sidebar")
             .resizable(false)
             .exact_size(if expanded { SIDEBAR_W } else { RAIL_W })
@@ -554,9 +556,9 @@ impl App {
                         for (id, title, icon, provider, pages) in installed {
                             let on = self.screen == Screen::External(id.clone());
                             if nav(ui, &title, &icon, on, expanded) {
-                                self.screen = Screen::External(id.clone());
-                                self.addon_page = 0;
+                                self.open_addon(&id);
                             }
+                            self.market_sidebar_status(ui, &id, expanded);
                             if on && expanded && pages.len() > 1 {
                                 let page = provider
                                     .as_deref()
@@ -572,11 +574,19 @@ impl App {
                                 }
                             }
                         }
+                        toolboks_addon_sdk::tutorial::region(ui, "browser-sidebar", |ui| {
+                            self.market_sidebar(ui, expanded)
+                        });
                     });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    let browser_on = self.screen == Screen::Browser;
-                    if nav(ui, "Add-ons", "grid", browser_on, expanded) {
+                    if expanded && page_row(ui, "Pick your tools", self.screen == Screen::Pick) {
+                        self.screen = Screen::Pick;
+                    }
+                    let browser_on = matches!(self.screen, Screen::Browser | Screen::Pick);
+                    if toolboks_addon_sdk::tutorial::region(ui, "browser-sidebar", |ui| {
+                        nav(ui, "Add-ons", "grid", browser_on, expanded)
+                    }) {
                         self.screen = Screen::Browser;
                     }
                     let settings_on = self.screen == Screen::Settings;
@@ -589,6 +599,7 @@ impl App {
         // The header: breadcrumb at the left, page controls at the right.
         let crumb = match self.screen.clone() {
             Screen::Home => Crumb::plain("Home"),
+            Screen::Pick => Crumb::plain("Add-ons / Pick your tools"),
             Screen::Browser => Crumb::plain("Add-ons"),
             Screen::Settings => Crumb::plain("Settings"),
             Screen::Tool(i) => {
@@ -620,10 +631,20 @@ impl App {
                             .collect(),
                         None => p.pages.iter().map(|page| page.title.clone()).collect(),
                     })
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| {
+                        crate::installer::installed_entry(&self.registry.root, &id)
+                            .map(|entry| entry.pages)
+                            .unwrap_or_default()
+                    });
                 let page = provider.map_or(self.addon_page, |p| self.native.page_index(p));
                 Crumb {
-                    root: package.map_or_else(|| id.clone(), |p| p.manifest.title.clone()),
+                    root: package.map_or_else(
+                        || {
+                            crate::installer::installed_entry(&self.registry.root, &id)
+                                .map_or_else(|| id.clone(), |entry| entry.title)
+                        },
+                        |p| p.manifest.title.clone(),
+                    ),
                     byline: package.and_then(|p| p.manifest.byline.clone()),
                     leaf: pages.get(page).filter(|_| pages.len() > 1).cloned(),
                     pages,
@@ -667,6 +688,13 @@ impl App {
                         verified_mark(ui);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if matches!(self.screen, Screen::Browser | Screen::Pick) {
+                            if ui.ctx().content_rect().width() < 850.0 {
+                                ui.menu_button("Add-on actions", |ui| self.market_header(ui));
+                            } else {
+                                self.market_header(ui);
+                            }
+                        }
                         if let Some(id) = &crumb.help {
                             if ui.button("Help").clicked() {
                                 self.help = Some(id.clone());
@@ -708,6 +736,14 @@ impl App {
                         self.native.navigate(provider, &page.to_string());
                     } else {
                         self.addon_page = page;
+                        if let Some(supervisor) = &self.supervisor {
+                            supervisor.send(
+                                id,
+                                &toolboks_addon_proto::HostMessage::Navigate {
+                                    page: page.to_string(),
+                                },
+                            );
+                        }
                     }
                 }
                 _ => {}
@@ -715,11 +751,18 @@ impl App {
         }
 
         self.sync_workspaces();
-        let items = status_items(
+        let mut items = status_items(
             self.base
                 .active
                 .and_then(|i| self.base.tools[i].as_ref())
                 .map(|t| t.status()),
+        );
+        items.extend(
+            self.services
+                .status_items(|id| self.registry.enabled(id))
+                .into_iter()
+                .take(3)
+                .map(|item| item.text),
         );
         egui::Panel::bottom("host-status")
             .exact_size(STATUS_H)
@@ -766,17 +809,19 @@ impl App {
                 }
                 match self.screen.clone() {
                     Screen::Home => self.home(ui),
-                    Screen::Browser => self.browser(ui),
+                    Screen::Pick => self.pick_tools(ui),
+                    Screen::Browser => self.marketplace_ui(ui),
                     Screen::Settings => self.settings(ui),
                     Screen::Tool(i) => self.tool_workspace(ui, i),
                     Screen::External(id) => self.external_workspace(ui, &id),
                 }
             });
+        self.market_remove(ui.ctx());
         self.dialogs(ui.ctx());
         self.update_prompt(ui.ctx());
         self.tutorial_ui(ui.ctx());
     }
-    fn title(ui: &mut egui::Ui, title: &str, description: &str) {
+    pub(super) fn title(ui: &mut egui::Ui, title: &str, description: &str) {
         ui.label(
             RichText::new(title)
                 .size(look::TEXT_TITLE)
@@ -798,6 +843,7 @@ impl App {
                 enabled: self.tool_enabled(i),
             });
         }
+        // Still shipped inside the app until they move to the catalog (#88 to #94).
         for id in addons::OFFICIAL_ADDONS {
             if let Some(package) = addons::official_package(id) {
                 list.push(Entry {
@@ -814,7 +860,7 @@ impl App {
             }
             list.push(Entry {
                 m: p.manifest.clone(),
-                verified: false,
+                verified: self.registry.verified(&p.manifest.id),
                 installed: true,
                 enabled: self.registry.enabled(&p.manifest.id),
             });
@@ -822,6 +868,17 @@ impl App {
         list
     }
     fn home(&mut self, ui: &mut egui::Ui) {
+        if self.registry.packages.is_empty()
+            && crate::installer::installed(&self.registry.root).is_empty()
+        {
+            ui.horizontal(|ui| {
+                muted(ui, "Pick the tools you want to add to your sidebar.");
+                if ui.button("Pick your tools").clicked() {
+                    self.screen = Screen::Pick;
+                }
+            });
+            ui.add_space(look::GAP);
+        }
         let entries = self.entries();
         let total_tools = self.registry.builtins.len();
         let on_tools = (0..total_tools).filter(|&i| self.tool_enabled(i)).count();
@@ -945,7 +1002,12 @@ impl App {
     /// The primary action of an add-on: install it, turn it on, or open it.
     fn run_action(&mut self, e: &Entry) {
         if !e.installed {
-            self.pending_package = addons::official_package(&e.m.id);
+            if let Some(package) = addons::official_package(&e.m.id) {
+                self.pending_package = Some(package);
+                return;
+            }
+            self.screen = Screen::Browser;
+            self.market.focused = Some(e.m.id.clone());
             return;
         }
         if !e.enabled && !self.set_addon_enabled(&e.m.id, true) {
@@ -993,13 +1055,12 @@ impl App {
             });
         });
     }
-    fn open_addon(&mut self, id: &str) {
+    pub(super) fn open_addon(&mut self, id: &str) {
         if let Some(tool) = self.registry.builtin_index(id) {
             self.open_tool(tool);
             return;
         }
-        self.screen = Screen::External(id.into());
-        self.addon_page = 0;
+        self.open_market_addon(id);
     }
     fn tool_enabled(&self, tool: usize) -> bool {
         self.registry
@@ -1038,7 +1099,7 @@ impl App {
         }
         true
     }
-    fn browser(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn browser(&mut self, ui: &mut egui::Ui) {
         Self::title(
             ui,
             "Add-ons",
@@ -1078,8 +1139,10 @@ impl App {
                 });
                 ui.add_space(look::GAP);
                 if ui.button("Try the example package").clicked() {
-                    match Package::parse(addons::SDK_EXAMPLE.as_bytes(), env!("CARGO_PKG_VERSION"))
-                    {
+                    match toolboks_addon_sdk::Package::parse(
+                        addons::SDK_EXAMPLE.as_bytes(),
+                        env!("CARGO_PKG_VERSION"),
+                    ) {
                         Ok(p) => self.pending_package = Some(p),
                         Err(e) => self.message = Some(e),
                     }
@@ -1148,6 +1211,9 @@ impl App {
         }
         if !self.registry.enabled(id) {
             self.screen = Screen::Home;
+            return;
+        }
+        if self.remote_workspace(ui, id) {
             return;
         }
         let Some(package) = self
@@ -1319,6 +1385,14 @@ impl App {
                     }
                 });
         });
+        if self.pending_declarative.as_deref() == Some(id) {
+            self.pending_declarative = None;
+            if let Err(error) = crate::installer::started(&self.registry.root, id) {
+                self.message = Some(format!(
+                    "The add-on opened, but its version could not be confirmed: {error}"
+                ));
+            }
+        }
     }
     fn settings(&mut self, ui: &mut egui::Ui) {
         Self::title(
@@ -1397,7 +1471,7 @@ impl App {
                 }
             });
     }
-    fn persist(&mut self) {
+    pub(super) fn persist(&mut self) {
         if let Err(e) = self.registry.save() {
             self.message = Some(format!("Could not save preferences: {e}"));
         }
@@ -1590,55 +1664,8 @@ impl App {
             }
             return;
         }
-        if let Some(id) = self.remove_pending.clone() {
-            let name = self
-                .registry
-                .packages
-                .iter()
-                .find(|p| p.manifest.id == id)
-                .map(|p| p.manifest.title.as_str())
-                .unwrap_or(&id)
-                .to_owned();
-            let response = egui::Modal::new(egui::Id::unique("remove-addon"))
-                .frame(panel())
-                .show(ctx, |ui| {
-                    ui.set_width(modal_width(ctx, 420.0));
-                    ui.label(
-                        RichText::new(format!("Remove {name}?"))
-                            .size(look::TEXT_TITLE)
-                            .strong()
-                            .color(TEXT),
-                    );
-                    ui.add_space(look::GAP);
-                    muted(
-                        ui,
-                        "The add-on and its saved preferences will be removed from this PC.",
-                    );
-                    ui.add_space(look::SPACE_L);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(RichText::new("Remove add-on").color(look::RED))
-                            .clicked()
-                        {
-                            match self.registry.uninstall(&id) {
-                                Ok(()) => {
-                                    if self.screen == Screen::External(id.clone()) {
-                                        self.screen = Screen::Home;
-                                    }
-                                    self.message = Some("Add-on removed.".into());
-                                }
-                                Err(e) => self.message = Some(e),
-                            }
-                            self.remove_pending = None;
-                        }
-                        if ui.button("Keep add-on").clicked() {
-                            self.remove_pending = None;
-                        }
-                    });
-                });
-            if response.should_close() {
-                self.remove_pending = None;
-            }
+        if let Some(id) = self.remove_pending.take() {
+            self.market.remove = Some((id, false));
         }
     }
 }

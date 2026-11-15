@@ -29,6 +29,9 @@ impl App {
             .and_then(|p| p.manifest.native_provider.clone())
     }
     fn tour_steps(&mut self, owner: &str) -> (Vec<TutorialStep>, String) {
+        if owner == "toolboks.addon-browser" {
+            return (catalog::for_browser(), "browser".into());
+        }
         if let Some(tool) = self.registry.builtin_index(owner) {
             let page = if self.base.selected.0 == tool {
                 self.base.selected.1
@@ -81,7 +84,7 @@ impl App {
         }
         (steps, page)
     }
-    fn start_tutorial(&mut self, owner: String, current_only: bool) {
+    pub(super) fn start_tutorial(&mut self, owner: String, current_only: bool) {
         let (mut steps, location) = self.tour_steps(&owner);
         if current_only {
             steps.retain(|s| chapter(&s.page) == chapter(&location));
@@ -126,6 +129,12 @@ impl App {
         };
         let step = &run.steps[run.index];
         if !run.applied {
+            if run.owner == "toolboks.addon-browser" {
+                self.screen = Screen::Browser;
+                self.market.details = false;
+                self.market.review = None;
+                self.show_install = false;
+            }
             if let Some(t) = run.tool {
                 let mut parts = step.page.split('/');
                 if let Some(p) = parts.next().and_then(|s| s.parse::<usize>().ok()) {
