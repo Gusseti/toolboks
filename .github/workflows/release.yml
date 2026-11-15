@@ -52,6 +52,10 @@ jobs:
       - name: Verify formatting, lint, and tests
         if: steps.ver.outputs.publish == 'true'
         shell: pwsh
+        env:
+          # The runner is an administrator; debug and test builds may then be started elevated.
+          # A release build ignores this switch and always refuses, so the shipped app is unchanged.
+          TOOLBOKS_TEST_ALLOW_ELEVATED: "1"
         run: |
           cargo fmt --all --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

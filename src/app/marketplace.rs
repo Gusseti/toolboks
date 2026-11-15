@@ -1,4 +1,4 @@
-use super::shell::{muted, Screen};
+use super::shell::{muted, Screen, Tag};
 use super::store;
 use super::*;
 use crate::catalog::Entry;
@@ -42,7 +42,13 @@ impl App {
     pub(super) fn poll_marketplace(&mut self, ctx: &egui::Context) {
         if !self.market.checked {
             self.market.refresh(self.registry.root.clone(), ctx);
+        } else if !self.hidden && self.market.refresh_due(std::time::Instant::now()) {
+            // Fetch the list again every few minutes while the app is open, so a new release is
+            // noticed without pressing Refresh. Nothing on screen changes while it runs.
+            self.market.refresh_quietly(self.registry.root.clone(), ctx);
         }
+        // Wake up now and then so the timer above also runs in a window nobody is touching.
+        ctx.request_repaint_after(Duration::from_secs(30));
         let running = crate::installer::installed(&self.registry.root)
             .into_iter()
             .filter(|entry| {
@@ -838,7 +844,7 @@ impl App {
                 super::shell::sidebar_icon(&entry.id, &entry.icon),
                 self.screen == Screen::External(entry.id.clone()),
                 expanded,
-                self.registry.config.new_addons.contains(&entry.id),
+                self.addon_tag(&entry.id),
             );
             if response
                 .on_hover_text(format!("{} - {status}", entry.title))
@@ -854,7 +860,11 @@ impl App {
             }
             // A tag only for something worth saying: a download, a failure or an update. An
             // installed add-on in the sidebar is installed, so that is never repeated.
-            if expanded && self.market_status(&entry.id).is_some() {
+            if expanded
+                && self
+                    .market_status(&entry.id)
+                    .is_some_and(|status| status != "Update available")
+            {
                 let pill = ui.horizontal(|ui| {
                     ui.add_space(44.0);
                     store::status_pill(ui, &status)
@@ -884,7 +894,9 @@ impl App {
     }
 
     pub(super) fn market_sidebar_status(&mut self, ui: &mut egui::Ui, id: &str, expanded: bool) {
-        let status = self.market_status(id);
+        let status = self
+            .market_status(id)
+            .filter(|status| status != "Update available");
         if let Some(status) = status {
             if expanded {
                 let pill = ui.horizontal(|ui| {
@@ -912,6 +924,17 @@ impl App {
                     self.market.details = true;
                 }
             }
+        }
+    }
+
+    /// What the sidebar row of an add-on says at its right end: an update first, else "New".
+    pub(super) fn addon_tag(&self, id: &str) -> Tag {
+        if self.market_status(id).as_deref() == Some("Update available") {
+            Tag::Update
+        } else if self.registry.config.new_addons.iter().any(|n| n == id) {
+            Tag::New
+        } else {
+            Tag::None
         }
     }
 
