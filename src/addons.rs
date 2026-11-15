@@ -97,15 +97,20 @@ impl Registry {
         };
         let config = r.root.join("config.json");
         let existing_install = config.exists() || r.root.join("addons").is_dir();
+        let mut config_readable = true;
         if config.exists() {
-            match fs::read(&config)
-                .map_err(|e| e.to_string())
-                .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
-            {
+            match fs::read(&config).map_err(|e| e.to_string()).and_then(|b| {
+                // Some editors add a byte-order mark; it is not part of the JSON.
+                let json = b.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&b);
+                serde_json::from_slice(json).map_err(|e| e.to_string())
+            }) {
                 Ok(c) => r.config = c,
-                Err(e) => r.errors.push(format!(
-                    "Configuration could not be read. Defaults are in use: {e}"
-                )),
+                Err(e) => {
+                    config_readable = false;
+                    r.errors.push(format!(
+                        "Configuration could not be read. Defaults are in use: {e}"
+                    ));
+                }
             }
         }
         // The old combined entry no longer exists; forget anything saved for it.
@@ -159,14 +164,22 @@ impl Registry {
             Err(e) => r.errors.push(format!("Add-ons could not be read: {e}")),
         }
         r.packages.sort_by_key(|p| p.manifest.title.to_lowercase());
-        r.plan_restore(existing_install, former_installed);
+        r.plan_restore(existing_install, config_readable, former_installed);
         r
     }
     /// Works out, once, which tools the user had before the update and does not have yet. A new
     /// install has nothing to restore. Nothing is lost if the catalog cannot be reached now: the
     /// list stays in the configuration until the tools are installed or skipped.
-    fn plan_restore(&mut self, existing_install: bool, former_installed: Vec<String>) {
-        if self.config.platform_migrated {
+    ///
+    /// A configuration that could not be read is left exactly as it is: nothing is decided or
+    /// saved from the defaults that stand in for it, so the user's file is never overwritten here.
+    fn plan_restore(
+        &mut self,
+        existing_install: bool,
+        config_readable: bool,
+        former_installed: Vec<String>,
+    ) {
+        if !config_readable || self.config.platform_migrated {
             return;
         }
         self.config.platform_migrated = true;
@@ -425,6 +438,38 @@ mod tests {
             .restore_pending
             .contains(&"toolboks.macro-manager".to_string()));
         assert!(!root.join("addons/toolboks.aural.tbaddon").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_config_is_never_overwritten_by_the_update_step() {
+        let root = temp("unreadable");
+        fs::create_dir_all(&root).unwrap();
+        let broken = b"{ this is not json";
+        fs::write(root.join("config.json"), broken).unwrap();
+        let r = Registry::load(root.clone());
+        assert_eq!(r.errors.len(), 1);
+        assert!(!r.config.platform_migrated);
+        assert!(r.config.restore_pending.is_empty());
+        assert_eq!(fs::read(root.join("config.json")).unwrap(), broken);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_config_saved_with_a_byte_order_mark_is_read() {
+        let root = temp("bom");
+        fs::create_dir_all(&root).unwrap();
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes
+            .extend_from_slice(br#"{"first_run_complete":true,"disabled":["toolboks.debloater"]}"#);
+        fs::write(root.join("config.json"), bytes).unwrap();
+        let r = Registry::load(root.clone());
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(!r.enabled("toolboks.debloater"));
+        assert!(!r
+            .config
+            .restore_pending
+            .contains(&"toolboks.debloater".to_string()));
         fs::remove_dir_all(root).unwrap();
     }
 }
