@@ -75,7 +75,10 @@ and the exact Audio Gainer, Macro Manager and System Profiles packages. Disk Man
 moved to `toolboks-addons`: it is an executable installed through the catalog, whose
 entry supplies verification, page names, capabilities and background behavior.
 
-API 2 adds the optional `byline` and `native_provider` manifest fields. `native-ui`
+API 2 adds the optional `byline` and `native_provider` manifest fields. The optional `data_note`
+manifest field is one plain line (at most 160 characters) about data the add-on keeps on this PC;
+the app shows it in the install review and the details. Apps older than the release that adds it
+refuse a package that has it, so a package that sets it needs that `min_toolboks_version`. `native-ui`
 exposes the `NativeAddon` Rust trait; `runtime::run_addon` runs it in a separate process.
 Local activation packages must match a provider still compiled into the host; they cannot
 start executables. Catalog installation uses the existing installer and supervisor.

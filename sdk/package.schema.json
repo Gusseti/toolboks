@@ -133,6 +133,16 @@
           "minLength": 1,
           "maxLength": 60
         },
+        "data_note": {
+          "description": "One plain-language line about data the add-on keeps on this PC, shown in the install review and the details. 1 to 160 characters, no line breaks or other control characters, no whitespace at either end.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^\\S([^\\u0000-\\u001f\\u007f-\\u009f]*\\S)?$"
+        },
         "native_provider": {
           "type": [
             "string",

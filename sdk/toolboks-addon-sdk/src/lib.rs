@@ -66,6 +66,10 @@ pub struct Manifest {
     pub screenshots: Vec<String>,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
+    /// One plain-language line about data the add-on keeps on this PC, shown in the install
+    /// review and the details. See [`valid_data_note`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_note: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +203,16 @@ fn text(s: &str, max: usize) -> bool {
         && s.len() <= max
         && !s.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
 }
+/// The longest data note, in characters.
+pub const MAX_DATA_NOTE_CHARS: usize = 160;
+/// A data note is one line of plain text: 1 to [`MAX_DATA_NOTE_CHARS`] characters, no control
+/// characters (so no line breaks or tabs) and no whitespace at either end.
+pub fn valid_data_note(s: &str) -> bool {
+    !s.is_empty()
+        && s.trim() == s
+        && s.chars().count() <= MAX_DATA_NOTE_CHARS
+        && !s.chars().any(char::is_control)
+}
 fn key(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 80
@@ -305,6 +319,11 @@ impl Package {
         }
         if m.byline.as_ref().is_some_and(|s| !text(s, 60)) {
             return Err("Invalid add-on byline.".into());
+        }
+        if m.data_note.as_deref().is_some_and(|s| !valid_data_note(s)) {
+            return Err(format!(
+                "The data note must be one line of plain text, 1 to {MAX_DATA_NOTE_CHARS} characters, with no spaces at either end."
+            ));
         }
         let mut ids = HashSet::new();
         let mut keys = HashSet::new();
@@ -531,6 +550,56 @@ mod tests {
         assert!(!valid_id("C:/escape"));
         assert_eq!(version("1.2.3"), Some((1, 2, 3)));
         assert!(version("01.2.3").is_none());
+    }
+    #[test]
+    fn data_note_is_optional_and_checked() {
+        let parse = |note: Option<serde_json::Value>| {
+            let mut v = example();
+            if let Some(note) = note {
+                v["manifest"]["data_note"] = note;
+            }
+            Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2")
+        };
+        // Absent: every existing manifest keeps parsing, and it is not written back out.
+        let package = parse(None).unwrap();
+        assert_eq!(package.manifest.data_note, None);
+        assert!(!serde_json::to_string(&package)
+            .unwrap()
+            .contains("data_note"));
+        // An explicit null is the same as absent.
+        assert_eq!(
+            parse(Some(serde_json::Value::Null))
+                .unwrap()
+                .manifest
+                .data_note,
+            None
+        );
+        let note = "Keeps your last scan of each drive on this PC (file and folder names).";
+        assert_eq!(
+            parse(Some(serde_json::json!(note)))
+                .unwrap()
+                .manifest
+                .data_note
+                .as_deref(),
+            Some(note)
+        );
+        // The limit counts characters, not bytes.
+        assert!(parse(Some(serde_json::json!("a".repeat(160)))).is_ok());
+        assert!(parse(Some(serde_json::json!("\u{e5}".repeat(160)))).is_ok());
+        for bad in [
+            "a".repeat(161),
+            "\u{e5}".repeat(161),
+            String::new(),
+            "   ".into(),
+            " Keeps scans.".into(),
+            "Keeps scans. ".into(),
+            "Keeps\nscans.".into(),
+            "Keeps\tscans.".into(),
+            "Keeps\u{7}scans.".into(),
+            "Keeps\u{85}scans.".into(),
+        ] {
+            assert!(parse(Some(serde_json::json!(bad))).is_err(), "{bad:?}");
+        }
     }
     #[test]
     fn tutorial_targets_are_validated_without_executable_actions() {

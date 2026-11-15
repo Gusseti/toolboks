@@ -38,6 +38,7 @@ pub(super) fn manifest_of(entry: &crate::catalog::Entry) -> Manifest {
         license: None,
         screenshots: entry.screenshots.clone(),
         capabilities: Vec::new(),
+        data_note: entry.data_note.clone(),
     }
 }
 
@@ -1679,6 +1680,14 @@ impl App {
                             .max_height((ctx.content_rect().height() - 260.0).clamp(120.0, 380.0))
                             .show(ui, |ui| {
                                 ui.label(&m.long_description);
+                                if let Some(note) =
+                                    crate::marketplace::shown_data_note(m.data_note.as_deref())
+                                {
+                                    ui.add_space(look::SPACE_M);
+                                    muted(ui, "Data on this PC");
+                                    ui.add_space(look::SPACE_XS);
+                                    ui.label(note);
+                                }
                                 ui.add_space(look::SPACE_M);
                                 egui::Grid::new("addon-metadata")
                                     .spacing([look::SPACE_L, look::SPACE_XS])

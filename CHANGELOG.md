@@ -5,6 +5,7 @@
 ### Added
 
 - **Updates are shown on Home.** When an add-on has a newer version, the top of Home says "Update available: Audio Gainer" (or "2 updates available: ...") with an **Update** button that opens the normal access review. The add-on's row says "Update" instead of "On", and its card shows the new version with an **Update** button.
+- **The install review says what data an add-on keeps on your PC.** An add-on can declare one short plain line about it (for example "Keeps your last scan of each drive on this PC (file and folder names)."). It is shown under what the add-on can do when you review an install, and in its details. It comes from the reviewed add-on list, at most 160 characters.
 
 ## [0.13.2] - 2026-11-15
 

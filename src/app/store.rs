@@ -740,28 +740,33 @@ pub(super) fn trust_card(ui: &mut egui::Ui, verified: bool) {
     });
 }
 
-/// What an add-on can access, one line each with a check.
+/// What an add-on can access, one line each with a check, then the data it keeps on this PC
+/// when it says so. The text comes from [`market::access_text`].
 pub(super) fn access_lines(ui: &mut egui::Ui, entry: &Entry) {
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
-        if entry.capabilities.is_empty() {
-            ui.label(text("No extra host access requested.", 14.0, 400, MUTED));
-        }
-        for capability in &entry.capabilities {
-            ui.horizontal_top(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-                icon(ui.painter(), rect, "check", ACCENT_TEXT);
-                ui.add(egui::Label::new(text(market::access(capability), 14.0, 400, MUTED)).wrap());
-            });
-            ui.add_space(10.0);
-        }
-        if entry.kind == crate::catalog::Kind::Native {
-            ui.label(text(
-                "Runs a program on your PC, not in a security sandbox.",
-                13.0,
-                400,
-                MUTED,
-            ));
+        for line in market::access_text(entry) {
+            match &line {
+                market::AccessLine::Can(_) | market::AccessLine::Data(_) => {
+                    let glyph = if matches!(line, market::AccessLine::Data(_)) {
+                        "drive"
+                    } else {
+                        "check"
+                    };
+                    ui.horizontal_top(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                        icon(ui.painter(), rect, glyph, ACCENT_TEXT);
+                        ui.add(egui::Label::new(text(line.text(), 14.0, 400, MUTED)).wrap());
+                    });
+                    ui.add_space(10.0);
+                }
+                market::AccessLine::Nothing => {
+                    ui.label(text(line.text(), 14.0, 400, MUTED));
+                }
+                market::AccessLine::Native => {
+                    ui.label(text(line.text(), 13.0, 400, MUTED));
+                }
+            }
         }
     });
 }
