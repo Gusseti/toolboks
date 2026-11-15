@@ -237,8 +237,9 @@ fake add-on exe (`examples/fake_addon.rs`).
   that it stays stopped with a plain reason until the user restarts it (`restart`, which starts the
   limit fresh). `report` gives a short plain-text report (state, exit code, the last 50 log lines
   the add-on sent) and `copy_report` puts it on the clipboard. Nothing is written to disk or sent.
-- **Refusals are final.** A wrong file, a missing file, a protocol mismatch, a wrong token or a
-  declined administrator prompt stop the add-on without a retry.
+- **Refusals are final.** A wrong file, a missing file, a protocol mismatch or a wrong token
+  stops the add-on without a retry. A declined administrator prompt cancels only the helper;
+  its original drawing process keeps running.
 - **Administrator actions.** The drawing process stays unelevated. An add-on with an elevation
   capability sends `HostRequest::AdminOperation`; the supervisor starts a separate instance of
   its checked executable with `--toolboks-admin-helper` through UAC. A saved catalog
@@ -261,7 +262,7 @@ come with the first real add-on page (#88).
 ## Administrator helper boundary (version 3)
 
 `AdminRequest { id: u64, operation: String, json: String }` carries an add-on-defined action
-selector (1?80 ASCII letters, digits, `_` or `-`) and at most 32 KiB of untrusted parameters.
+selector (1 to 80 ASCII letters, digits, `_` or `-`) and at most 32 KiB of untrusted parameters.
 The host treats them as opaque data. No request field carries approval or preview text.
 The add-on must choose an allowed operation, parse a strict parameter type and construct the
 plain-language preview from independently checked state inside the helper.
@@ -294,9 +295,10 @@ single-instance guard and normal app initialization. No tool is moved out of the
 The host launcher and message handling contain no add-on operation names or execution logic.
 
 Regression tests cover forwarded clicks/keys and forged results, Cancel, missing rights or
-capabilities, host disconnect, wrong connection roles, v2 refusal, and a real native window's
-process ownership. The preview `admin_dialog` example exercises the exact native dialog without
-UAC or writes. A real UAC consent/decline and privileged drive operation still need a manual
+capabilities, host disconnect, wrong connection roles and v2 refusal. The native-window PID
+ownership test is ignored by default because it opens a real window; run it only in an
+owner-approved GUI session. The preview `admin_dialog` example can exercise the exact native
+dialog without UAC or writes. GUI verification and the screenshot are pending, not run. A real UAC consent/decline and privileged drive operation still need a manual
 Windows check; the automated tests do not prove that integration.
 
 ## Host services

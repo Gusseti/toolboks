@@ -25,7 +25,7 @@
 - **Installer:** records the SHA-256 of a native add-on's exe at install time and keeps the previous version's hash for a rollback.
 - **Add-on SDK runtime:** `run_addon` accepts `--token` (or `TOOLBOKS_ADDON_TOKEN`) and presents it to the host before the handshake.
 - **Host services for add-ons (#87; tray and add-on tour controls are not wired yet):** an out-of-process add-on can show status bar items, register tray entries, describe a guided tour with highlighted anchors, declare its pages for `--open "Title/Page"` links, be marked as a background add-on that starts at launch, and have its preferences saved in `config.json`. Status items and tray entries disappear when the add-on stops or is turned off. A tour forwards no input to the add-on, so it cannot run an action.
-- **Add-on administrator actions (#132):** each action uses a separate helper with its own native Confirm/Cancel dialog. The interface stays unelevated; host input cannot approve a change. Disk Manager uses this path; its drive report returns on completion rather than streaming phase progress.
+- **SDK administrator actions (#132):** each action uses a separate helper with its own native Confirm/Cancel dialog. The interface stays unelevated; host input cannot approve a change. Disk Manager uses this path; its drive report returns on completion rather than streaming phase progress.
 - **Protocol 3 migration (#132):** rebuild native add-ons and update their catalog protocol version; none have been published. Legacy whole-interface elevation requests are refused; open add-ons from an unelevated host. System Profiles must adopt helpers in #92.
 - **Catalog entries:** optional `pages` and `background` fields. The installer keeps the catalog entry beside each installed version, so they are known offline.
 - **Add-on threat model (#95):** `docs/ADDON-THREAT-MODEL.md` lists the threats to the add-on platform, what covers each, what is accepted, and seven findings to settle before the first public add-on release.
@@ -40,11 +40,11 @@
 - **Add-on launch hardening (#95, F2/F3):** every privileged native launch reads the saved catalog entry and uses its hash and granted elevation capability instead of writable install records. A missing saved catalog requires a refresh; rollback versions absent from the catalog cannot elevate. MSVC builds load implicit DLL dependencies from System32 only, and installed version folders with extra files or redirected paths are refused.
 - **Hidden add-ons (#95, F7):** non-background add-ons exit when their page is left, including cancellation during launch. Reopening waits for an exiting process and starts a new one. Background add-ons retain their process.
 
-- **Download address check:** the check that only GitHub may serve an update or an add-on now reads the host correctly. An address such as `https://evil.example?x=.github.com` was accepted before; addresses with user info or a port are refused too. No known way to reach the flaw existed, since addresses come from a signed catalog or from GitHub's own answers.
+- **Release-download address check:** GitHub-only release download paths reject deceptive hosts such as `https://evil.example?x=.github.com`, user info and custom ports.
 
 ## Release blockers
 
-- **Administrator helper integration (#132/F4):** manually validate real UAC consent/decline and a privileged operation before any administrator add-on ships.
+- **Administrator helper integration (#132/F4):** native dialog, real UAC and privileged-operation checks await an owner-approved GUI session before administrator add-ons ship.
 - **Accepted signing risks (#95):** host-release and code signing (F5/F6) have no work planned under the owner's 2026-11-15 decision. See `docs/ADDON-THREAT-MODEL.md`.
 
 ## Not verified

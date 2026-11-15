@@ -186,6 +186,7 @@ fn show(description: &str, cancelled: &AtomicBool) -> Result<(bool, u32), String
 
 #[cfg(test)]
 #[test]
+#[ignore = "opens a native window; requires an owner-approved GUI test session"]
 fn dialog_window_is_created_by_this_process_and_cancellation_closes_it() {
     // This creates the actual native window and verifies its Windows process id. It needs no
     // UAC prompt and performs no write. A cancelled connection closes through the real timer.

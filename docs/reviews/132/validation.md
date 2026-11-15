@@ -10,29 +10,29 @@ Windows, 2026-11-15. Branch `issue-132-admin-confirm`, PR base `staging`.
   a pending operation. Input cannot serve as the initial helper request either.
 - Missing elevation/capability, invalid selectors and oversized parameters fail closed.
 - The drawing runtime rejects helper-operation messages.
-- A real Windows dialog is created by the SDK test; `GetWindowThreadProcessId` equals the
-  calling process. A cancelled connection closes that actual native dialog through its timer.
-  This window-ownership check does not invoke UAC or prove the elevated launch integration.
-- The supervisor test refuses an helper without a saved catalog before UAC while retaining the original
+- The native PID ownership test exists but is ignored by default: it opens a real Windows
+  dialog. It must be scheduled with the owner and was not run in the final headless checks.
+- The supervisor test refuses a helper without a saved catalog before UAC while retaining the original
   drawing process's PID and unelevated status. Existing catalog/hash launch checks remain.
 - Catalog checks accept v3 and hide v2; the hello executable refuses a v2 handshake with the
   frozen plain-language update message.
 
-## Native preview and screenshot limitation
+## Dialog GUI check and screenshot: pending, not run
 
-Built `cargo build --locked --features preview --example admin_dialog` and started that
-executable with the isolated `TOOLBOKS_DATA_DIR`:
-`C:/Users/fredh/.t3/scratch/2026-11-14-i-need-to-be-able-d4df7aba/work-132/preview-dialog-data`.
-The Windows window inventory returned the executable's actual window titled
-**Confirm administrator change**. This example opens the same SDK dialog and never performs
-an administrator action, even if Confirm is selected.
+The owner explicitly deferred all GUI launches, screenshots, Computer Use and browser
+work to avoid focus changes. The orchestrator will schedule GUI validation when the owner approves a
+good time. No GUI work is part of the final checks; the native-window test is opt-in.
 
-Computer Use rejected app access with **"Computer Use was not approved to use admin_dialog"**.
-No screenshot, visual inspection, or interactive Confirm/Cancel check could be obtained.
-The owner explicitly approved documenting the screenshot limitation and proceeding. This is
-an OS-native `DialogBoxIndirectParamW` window, so egui's `ViewportCommand::Screenshot` does
-not capture it. The preview process was stopped after the access refusal; no button was
-claimed as exercised. No PNG is attached or reconstructed from source.
+Before that instruction, the preview example was built and an unelevated native preview was
+opened with an isolated `TOOLBOKS_DATA_DIR` (`work-132/preview-dialog-data`). Computer Use
+refused app access, so there was no visual inspection, screenshot or interactive button check.
+The preview process was stopped. This native `DialogBoxIndirectParamW` window cannot be
+captured through egui's screenshot command. No PNG is attached or reconstructed from source.
+
+Pending GUI checks: native helper/window PID ownership, appearance and keyboard focus,
+Confirm and Cancel, and a dialog screenshot. The native ownership test can be run with
+`--ignored` only after the owner authorizes GUI work. The preview example uses the same SDK
+dialog and never performs a system change, even if Confirm is selected.
 
 ## Manual checks still required before publication
 
