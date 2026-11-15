@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-11-15
+
+### Fixed
+
+- **"Refresh list" now shows a new release straight away.** GitHub keeps the plain file the add-on list comes from in its cache for up to 5 minutes, so an add-on released a moment ago was missing after a refresh. Toolboks now asks GitHub's API first, which is at most a minute behind, and uses the plain file only if that fails.
+
 ## [0.13.1] - 2026-11-15
 
 ### Added
