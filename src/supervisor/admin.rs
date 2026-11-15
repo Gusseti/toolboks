@@ -19,42 +19,6 @@ impl AdminJob {
             launch(&shared, &spec, true, cancel)
         })
     }
-    /// Built-in providers are compiled into the trusted host image. Dispatch remains in the
-    /// provider registry; no installed record or add-on-supplied executable can take this path.
-    pub(crate) fn builtin(
-        ctx: egui::Context,
-        provider: String,
-        capabilities: Vec<String>,
-        request: AdminRequest,
-    ) -> Self {
-        Self::start(ctx, request, move |cancel| {
-            let exe = std::env::current_exe().map_err(|e| LaunchError::Failed(e.to_string()))?;
-            let pipes = pipe::PipePair::create().map_err(|e| LaunchError::Failed(e.to_string()))?;
-            let args = [
-                toolboks_addon_sdk::admin::HELPER_ARG,
-                "--builtin-provider",
-                &provider,
-                "--pipe-in",
-                &pipes.to_addon_path,
-                "--pipe-out",
-                &pipes.from_addon_path,
-                "--token",
-                &pipes.token,
-            ];
-            let process = process::spawn_elevated(&exe, &args).map_err(|e| match e {
-                ElevateError::Declined => LaunchError::Stop(StopReason::Declined),
-                ElevateError::Failed(why) => LaunchError::Failed(why),
-            })?;
-            finish_launch(
-                pipes,
-                process,
-                &provider,
-                Duration::from_secs(10),
-                cancel,
-                capabilities,
-            )
-        })
-    }
     fn start(
         ctx: egui::Context,
         request: AdminRequest,

@@ -9,42 +9,16 @@ pub(super) struct Run {
     index: usize,
     applied: bool,
     reveal_frames: u8,
-    original_base: (usize, usize),
     original_page: usize,
-    /// Position of the built-in tool this tour belongs to, if it is not a package.
-    pub(super) tool: Option<usize>,
-    locations: Vec<String>,
-    provider: Option<String>,
 }
 /// The page a step belongs to: the first part of its route (`page` or `page/section`).
 fn chapter(route: &str) -> String {
     route.split('/').next().unwrap_or("").into()
 }
 impl App {
-    fn tour_provider(&self, owner: &str) -> Option<String> {
-        self.registry
-            .packages
-            .iter()
-            .find(|p| p.manifest.id == owner)
-            .and_then(|p| p.manifest.native_provider.clone())
-    }
     fn tour_steps(&mut self, owner: &str) -> (Vec<TutorialStep>, String) {
         if owner == "toolboks.addon-browser" {
             return (catalog::for_browser(), "browser".into());
-        }
-        if let Some(tool) = self.registry.builtin_index(owner) {
-            let page = if self.base.selected.0 == tool {
-                self.base.selected.1
-            } else {
-                0
-            };
-            return (catalog::for_tool(tool), page.to_string());
-        }
-        if let Some(provider) = self.tour_provider(owner) {
-            return (
-                self.native.tutorial_steps(&provider),
-                self.native.tutorial_location(&provider),
-            );
         }
         let Some(p) = self
             .registry
@@ -93,33 +67,13 @@ impl App {
             self.message = Some("This add-on has no walkthrough for this page yet.".into());
             return;
         }
-        let provider = self.tour_provider(&owner);
-        let tool = self.registry.builtin_index(&owner);
-        let locations = if let Some(p) = &provider {
-            vec![self.native.tutorial_location(p)]
-        } else if let Some(t) = tool {
-            self.base.tools[t]
-                .as_ref()
-                .map(|tool| tool.tutorial_location())
-                .into_iter()
-                .collect()
-        } else {
-            Vec::new()
-        };
-        if let Some(p) = &provider {
-            self.native.tutorial_start(p);
-        }
         self.tour = Some(Run {
             owner,
             steps,
             index: 0,
             applied: false,
             reveal_frames: 3,
-            original_base: self.base.selected,
             original_page: self.addon_page,
-            tool,
-            locations,
-            provider,
         });
     }
     pub(super) fn prepare_tutorial(&mut self, ctx: &egui::Context) {
@@ -135,17 +89,7 @@ impl App {
                 self.market.review = None;
                 self.show_install = false;
             }
-            if let Some(t) = run.tool {
-                let mut parts = step.page.split('/');
-                if let Some(p) = parts.next().and_then(|s| s.parse::<usize>().ok()) {
-                    self.base.selected = (t, p);
-                    if let Some(tool) = &mut self.base.tools[t] {
-                        tool.tutorial_navigate(parts.next().unwrap_or(""));
-                    }
-                }
-            } else if let Some(provider) = &run.provider {
-                self.native.tutorial_navigate(provider, &step.page);
-            } else if let Some(package) = self
+            if let Some(package) = self
                 .registry
                 .packages
                 .iter()
@@ -162,18 +106,7 @@ impl App {
     }
     fn finish_tutorial(&mut self, ctx: &egui::Context) {
         if let Some(run) = self.tour.take() {
-            self.base.selected = run.original_base;
             self.addon_page = run.original_page;
-            if let Some(provider) = run.provider {
-                if let Some(location) = run.locations.first() {
-                    self.native.tutorial_navigate(&provider, location);
-                }
-                self.native.tutorial_finish(&provider);
-            } else if let (Some(t), Some(location)) = (run.tool, run.locations.first()) {
-                if let Some(tool) = &mut self.base.tools[t] {
-                    tool.tutorial_navigate(location);
-                }
-            }
         }
         anchors::prepare(ctx, None, false);
         ctx.request_repaint();
@@ -324,58 +257,9 @@ mod tests {
         assert_eq!(chapter("overview/options"), "overview");
     }
     #[test]
-    fn every_builtin_tool_has_its_own_tour_covering_every_page() {
-        for (t, (name, pages)) in tools::WORKSPACES.iter().enumerate() {
-            let steps = catalog::for_tool(t);
-            assert!(!steps.is_empty(), "{name} has a tour");
-            for p in 0..pages.len() {
-                assert!(
-                    steps.iter().any(|s| chapter(&s.page) == p.to_string()),
-                    "{name} page {p}"
-                );
-            }
-        }
-        assert!(catalog::for_tool(tools::COUNT).is_empty());
-    }
-    #[test]
-    fn tool_steps_resolve_real_layout_anchors() {
-        let ctx = egui::Context::default();
-        let mut tools = tools::all();
-        for (t, tool) in tools.iter_mut().enumerate() {
-            for step in catalog::for_tool(t) {
-                let parts: Vec<_> = step.page.split('/').collect();
-                let p: usize = parts[0].parse().unwrap();
-                tool.tutorial_navigate(parts.get(1).copied().unwrap_or(""));
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-                loop {
-                    tool.tick(&ctx);
-                    let mut output = ctx.run_ui(
-                        egui::RawInput {
-                            screen_rect: Some(egui::Rect::from_min_size(
-                                egui::Pos2::ZERO,
-                                Vec2::new(1500.0, 1000.0),
-                            )),
-                            ..Default::default()
-                        },
-                        |ui| {
-                            anchors::prepare(ui.ctx(), Some(&step.target), true);
-                            ui.disable();
-                            tool.ui(ui, p);
-                        },
-                    );
-                    output.textures_delta.clear();
-                    if anchors::anchor(&ctx).is_some() || std::time::Instant::now() >= deadline {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                assert!(
-                    anchors::anchor(&ctx).is_some(),
-                    "{}: missing {}",
-                    step.title,
-                    step.target
-                );
-            }
-        }
+    fn the_add_on_browser_has_its_own_tour() {
+        let steps = catalog::for_browser();
+        assert!(!steps.is_empty());
+        assert!(steps.iter().all(|s| s.page == "browser"));
     }
 }

@@ -149,6 +149,27 @@ impl App {
         self.screen = Screen::Home;
     }
 
+    /// Drops the tools that are installed now from the list of tools to restore. Returns true
+    /// while some are still waiting.
+    pub(super) fn restore_pending(&mut self) -> bool {
+        let installed: Vec<String> = self
+            .registry
+            .config
+            .restore_pending
+            .iter()
+            .filter(|id| self.installed_version(id).is_some())
+            .cloned()
+            .collect();
+        if !installed.is_empty() {
+            self.registry
+                .config
+                .restore_pending
+                .retain(|id| !installed.contains(id));
+            self.persist();
+        }
+        !self.registry.config.restore_pending.is_empty()
+    }
+
     fn catalog_notice(&mut self, ui: &mut egui::Ui) {
         #[cfg(feature = "preview")]
         if std::env::var_os("TOOLBOKS_TEST_CATALOG").is_some() {
@@ -180,17 +201,26 @@ impl App {
             self.install_review(ui);
             return;
         }
+        let restoring = self.restore_pending();
         let width = ui.available_width().min(760.0);
         ui.horizontal_top(|ui| {
             ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
             ui.vertical(|ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
-                store::page_title(
-                    ui,
-                    "Pick your tools",
-                    "Add the tools you need. You can add or remove them later.",
-                );
+                if restoring {
+                    store::page_title(
+                        ui,
+                        "Restore your tools",
+                        "Toolboks now downloads each tool on its own. The tools you had are ticked below; install them to get them back with your settings.",
+                    );
+                } else {
+                    store::page_title(
+                        ui,
+                        "Pick your tools",
+                        "Add the tools you need. You can add or remove them later.",
+                    );
+                }
                 self.catalog_notice(ui);
                 let mut entries: Vec<_> = self
                     .market
@@ -202,7 +232,11 @@ impl App {
                 entries.sort_by_key(market::pick_rank);
                 store::paragraph(
                     ui,
-                    "From the Toolboks team. No tools selected by default.",
+                    if restoring {
+                        "From the Toolboks team. Your earlier tools are ticked."
+                    } else {
+                        "From the Toolboks team. No tools selected by default."
+                    },
                     13.0,
                 );
                 ui.add_space(12.0);
@@ -251,7 +285,18 @@ impl App {
                     {
                         self.market.review = Some(selected);
                     }
-                    if store::button(ui, "Skip", store::Look::Secondary).clicked() {
+                    if restoring {
+                        // Not now keeps the list, so the offer is made again at the next start.
+                        if store::button(ui, "Not now", store::Look::Secondary).clicked() {
+                            self.finish_picker();
+                        }
+                        if store::button(ui, "Forget these tools", store::Look::Secondary)
+                            .clicked()
+                        {
+                            self.registry.config.restore_pending.clear();
+                            self.finish_picker();
+                        }
+                    } else if store::button(ui, "Skip", store::Look::Secondary).clicked() {
                         self.finish_picker();
                     }
                     if store::button(ui, "Browse all add-ons", store::Look::Secondary).clicked() {
