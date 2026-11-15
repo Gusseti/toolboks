@@ -35,4 +35,4 @@ Text and box positions were measured in both images. These match to the pixel: s
 
 ## Other screens
 
-The first-run picker, details page, install review, removal dialog and sidebar states use the host style in `DESIGN.md`. They were not restyled to the landing-page look in this change.
+The first-run picker, details page, install review, removal dialog and sidebar states use the browser's rows, pills, buttons and type (#115). Their screenshots are in `docs/reviews/115/`.

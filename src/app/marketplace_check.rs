@@ -34,7 +34,8 @@ impl Check {
     }
 
     fn capture(&mut self, _ctx: &egui::Context, name: &str) {
-        self.pending = Some((name.into(), 4));
+        // A dialog fades in over about a second; wait for it to finish.
+        self.pending = Some((name.into(), if name.contains("remove") { 90 } else { 4 }));
         self.saved.store(false, Ordering::Relaxed);
         self.stage += 1;
         self.frames = 0;
