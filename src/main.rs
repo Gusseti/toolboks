@@ -87,7 +87,7 @@ fn main() -> eframe::Result {
                     .split(',')
                     .map(str::to_owned)
                     .collect();
-                assert!(std::env::var_os("TOOLBOKS_TEST_CATALOG").is_some());
+                // No test catalog is needed: without one the check uses the real public list.
                 assert!(std::env::var_os("TOOLBOKS_DATA_DIR").is_some());
                 std::fs::create_dir_all(&output).expect("create screenshot folder");
                 return Ok(Box::new(app::restore_check::Check::new(output, expected)));
