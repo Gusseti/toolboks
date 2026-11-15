@@ -105,6 +105,40 @@ pub fn run_addon<A: NativeAddon>(addon: A, addon_id: &str) -> Result<(), Protoco
     }
 }
 
+/// True when the drawing runtime must refuse to start: an add-on never draws as administrator.
+///
+/// A build machine that runs its tests as administrator (GitHub's Windows runners do) can set
+/// `TOOLBOKS_TEST_ALLOW_ELEVATED=1`. That switch exists only in builds with debug assertions,
+/// that is test and debug builds; a release build compiles it out and always refuses.
+fn refuses_elevated() -> bool {
+    refusal(
+        crate::admin::elevated(),
+        std::env::var_os("TOOLBOKS_TEST_ALLOW_ELEVATED").is_some_and(|v| v == "1"),
+        cfg!(debug_assertions),
+    )
+}
+
+/// The rule itself: refuse when elevated, unless the test switch is set in a debug build.
+fn refusal(elevated: bool, switch_set: bool, debug_build: bool) -> bool {
+    elevated && !(debug_build && switch_set)
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::refusal;
+
+    #[test]
+    fn administrator_is_refused_unless_a_debug_build_has_the_switch() {
+        assert!(!refusal(false, false, true));
+        assert!(!refusal(false, true, false));
+        assert!(refusal(true, false, true));
+        assert!(refusal(true, false, false));
+        // The switch works only in a debug build; a release build always refuses.
+        assert!(!refusal(true, true, true));
+        assert!(refusal(true, true, false));
+    }
+}
+
 /// Entry point for privileged add-ons. Branches to the small helper before constructing
 /// any UI state. `prepare` must only validate and preview; the SDK alone opens the dialog.
 pub fn run_addon_with_admin<A: NativeAddon>(
@@ -115,7 +149,7 @@ pub fn run_addon_with_admin<A: NativeAddon>(
     if crate::admin::is_helper() {
         crate::admin::run_helper(addon_id, prepare)
     } else {
-        if crate::admin::elevated() {
+        if refuses_elevated() {
             return Err(ProtocolError::Unexpected(
                 "drawing runtime cannot run with administrator rights",
             ));
@@ -206,7 +240,7 @@ where
     W: Write,
     A: NativeAddon,
 {
-    if crate::admin::elevated() {
+    if refuses_elevated() {
         return Err(ProtocolError::Unexpected(
             "drawing runtime cannot run with administrator rights",
         ));
