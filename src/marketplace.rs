@@ -30,6 +30,13 @@ pub enum InstallStatus {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn both_list_addresses_are_trusted_github_hosts() {
+        assert!(crate::update::is_trusted_url(catalog::URL));
+        assert!(crate::update::is_trusted_url(catalog::FRESH_URL));
+        assert!(catalog::FRESH_URL.ends_with("/catalog/index.json"));
+    }
+
+    #[test]
     fn the_list_is_fetched_again_every_five_minutes() {
         let start = std::time::Instant::now();
         let every = REFRESH_EVERY;
@@ -419,16 +426,15 @@ pub fn pick_rank(entry: &Entry) -> usize {
 }
 
 fn fetched(url: &str, limit: usize) -> Result<Vec<u8>, String> {
+    fetched_as(url, "application/octet-stream", limit)
+}
+fn fetched_as(url: &str, accept: &str, limit: usize) -> Result<Vec<u8>, String> {
     if !crate::update::is_trusted_url(url) {
         return Err("The download address is not trusted.".into());
     }
-    let response = winhttp::get(
-        url,
-        "application/octet-stream",
-        limit,
-        Duration::from_secs(30),
-    )
-    .map_err(|_| "Could not reach the add-on list. Your installed tools still work.".to_string())?;
+    let response = winhttp::get(url, accept, limit, Duration::from_secs(30)).map_err(|_| {
+        "Could not reach the add-on list. Your installed tools still work.".to_string()
+    })?;
     if !crate::update::is_trusted_url(&response.final_url) {
         return Err("The download moved to an untrusted address.".into());
     }
@@ -440,6 +446,17 @@ fn load_catalog(root: &Path) -> Result<Index, String> {
         let bytes = std::fs::read(folder.join("index.json")).map_err(|error| error.to_string())?;
         return catalog::accept(root, &bytes)
             .map_err(|error| format!("Could not read the test add-on list: {error}"));
+    }
+    // The API first: it is fresh within a minute, the plain file address can be five minutes behind.
+    if let Some(index) = fetched_as(
+        catalog::FRESH_URL,
+        "application/vnd.github.raw",
+        toolboks_catalog::MAX_INDEX_BYTES,
+    )
+    .ok()
+    .and_then(|bytes| catalog::accept(root, &bytes).ok())
+    {
+        return Ok(index);
     }
     let bytes = fetched(catalog::URL, toolboks_catalog::MAX_INDEX_BYTES)?;
     catalog::accept(root, &bytes)
