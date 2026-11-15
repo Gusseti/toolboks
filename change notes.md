@@ -2,6 +2,7 @@
 
 ## Added
 
+- **Catalog keys (#116):** the app now trusts the real public catalog keys, made offline by the owner (main key id `d00f89ba25ebfb34`, recovery key id `cb3d106e82f520a2`) instead of the all-zero placeholders. The app accepts an add-on list only when it is signed by the main key; a list is still needed.
 - **Add-on supervisor (#80, not reachable from the app yet):** the host can start, watch and stop add-on processes. Each launch uses two named pipes that only the current Windows user can open, plus a random token the add-on must present. The exe is checked before every start; privileged starts use a valid signed catalog. All add-on processes end when Toolboks ends, also after a crash of Toolboks. An add-on that crashes is restarted at most 3 times per minute, then stays stopped with a plain reason, a restart action and a report that can be copied. Administrator rights are per add-on: only the add-on that asks is restarted through the UAC prompt.
 - **Installer:** records the SHA-256 of a native add-on's exe at install time and keeps the previous version's hash for a rollback.
 - **Add-on SDK runtime:** `run_addon` accepts `--token` (or `TOOLBOKS_ADDON_TOKEN`) and presents it to the host before the handshake.

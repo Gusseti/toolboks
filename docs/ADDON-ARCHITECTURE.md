@@ -33,6 +33,8 @@ Every add-on follows the design system in [DESIGN.md](../DESIGN.md) and passes t
 | Repository and release workflow for first-party add-ons | #83 | Not built |
 | The tools as add-on exes | #88 to #93 | Not built; they are still compiled into the app (see "Today") |
 
+Where each tool goes and how the move works: [ADDON-MOVE.md](ADDON-MOVE.md).
+
 Details: [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md) (protocol, connection, supervisor, host
 services), [catalog-signing.md](catalog-signing.md) (catalog format and the owner's runbook),
 [ADDON-THREAT-MODEL.md](ADDON-THREAT-MODEL.md) (what can go wrong and what is still open).
