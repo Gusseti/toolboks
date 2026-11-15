@@ -9,9 +9,36 @@ pub(super) enum Screen {
     Pick,
     Browser,
     Settings,
-    /// A built-in tool, by its position in `tools::all()`.
-    Tool(usize),
     External(String),
+}
+
+/// The manifest shown for an add-on installed from the catalog, built from its catalog entry.
+pub(super) fn manifest_of(entry: &crate::catalog::Entry) -> Manifest {
+    Manifest {
+        id: entry.id.clone(),
+        title: entry.title.clone(),
+        byline: entry.byline.clone(),
+        native_provider: None,
+        description: entry.short_description.clone(),
+        long_description: if entry.long_description.is_empty() {
+            entry.short_description.clone()
+        } else {
+            entry.long_description.clone()
+        },
+        version: entry.version.clone(),
+        author: entry.publisher.clone(),
+        publisher: entry.publisher.clone(),
+        category: entry.category.clone(),
+        icon: entry.icon.clone(),
+        accent: entry.accent.clone(),
+        api_version: 2,
+        min_toolboks_version: entry.min_toolboks_version.clone(),
+        website: None,
+        support_url: None,
+        license: None,
+        screenshots: entry.screenshots.clone(),
+        capabilities: Vec::new(),
+    }
 }
 
 /// Body text (12 px) in the muted token.
@@ -498,33 +525,18 @@ impl App {
                 }
                 ui.add_space(look::GAP);
 
-                let tools: Vec<_> = (0..self.registry.builtins.len())
-                    .filter(|&i| self.tool_enabled(i))
-                    .map(|i| {
-                        let m = &self.registry.builtins[i];
-                        (i, m.title.clone(), m.icon.clone())
-                    })
-                    .collect();
                 let installed: Vec<_> = self
                     .registry
                     .packages
                     .iter()
                     .filter(|p| self.registry.enabled(&p.manifest.id))
                     .map(|p| {
-                        let provider = p.manifest.native_provider.clone();
-                        let pages: Vec<String> = if let Some(provider) = &provider {
-                            crate::native::NativeHost::pages(provider)
-                                .iter()
-                                .map(|p| p.to_string())
-                                .collect()
-                        } else {
-                            p.pages.iter().map(|page| page.title.clone()).collect()
-                        };
+                        let pages: Vec<String> =
+                            p.pages.iter().map(|page| page.title.clone()).collect();
                         (
                             p.manifest.id.clone(),
                             p.manifest.title.clone(),
                             p.manifest.icon.clone(),
-                            provider,
                             pages,
                         )
                     })
@@ -537,39 +549,16 @@ impl App {
                         if nav(ui, "Home", "home", self.screen == Screen::Home, expanded) {
                             self.screen = Screen::Home;
                         }
-                        for (i, title, icon) in tools {
-                            let on = self.screen == Screen::Tool(i);
-                            if nav(ui, &title, &icon, on, expanded) {
-                                self.open_tool(i);
-                            }
-                            if on && expanded {
-                                let pages = tools::WORKSPACES[i].1;
-                                if pages.len() > 1 {
-                                    for (p, name) in pages.iter().enumerate() {
-                                        if page_row(ui, name, self.base.selected.1 == p) {
-                                            self.base.selected.1 = p;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        for (id, title, icon, provider, pages) in installed {
+                        for (id, title, icon, pages) in installed {
                             let on = self.screen == Screen::External(id.clone());
                             if nav(ui, &title, &icon, on, expanded) {
                                 self.open_addon(&id);
                             }
                             self.market_sidebar_status(ui, &id, expanded);
                             if on && expanded && pages.len() > 1 {
-                                let page = provider
-                                    .as_deref()
-                                    .map_or(self.addon_page, |p| self.native.page_index(p));
                                 for (p, name) in pages.iter().enumerate() {
-                                    if page_row(ui, name, page == p) {
-                                        if let Some(provider) = &provider {
-                                            self.native.navigate(provider, &p.to_string());
-                                        } else {
-                                            self.addon_page = p;
-                                        }
+                                    if page_row(ui, name, self.addon_page == p) {
+                                        self.addon_page = p;
                                     }
                                 }
                             }
@@ -602,41 +591,16 @@ impl App {
             Screen::Pick => Crumb::plain("Add-ons / Pick your tools"),
             Screen::Browser => Crumb::plain("Add-ons"),
             Screen::Settings => Crumb::plain("Settings"),
-            Screen::Tool(i) => {
-                let m = &self.registry.builtins[i];
-                let pages: Vec<String> = tools::WORKSPACES[i]
-                    .1
-                    .iter()
-                    .map(|p| p.to_string())
-                    .collect();
-                let page = self.base.selected.1;
-                Crumb {
-                    root: m.title.clone(),
-                    byline: None,
-                    leaf: pages.get(page).filter(|_| pages.len() > 1).cloned(),
-                    pages,
-                    page,
-                    help: Some(m.id.clone()),
-                    verified: true,
-                }
-            }
             Screen::External(id) => {
                 let package = self.registry.packages.iter().find(|p| p.manifest.id == id);
-                let provider = package.and_then(|p| p.manifest.native_provider.as_deref());
                 let pages: Vec<String> = package
-                    .map(|p| match provider {
-                        Some(provider) => crate::native::NativeHost::pages(provider)
-                            .iter()
-                            .map(|page| page.to_string())
-                            .collect(),
-                        None => p.pages.iter().map(|page| page.title.clone()).collect(),
-                    })
+                    .map(|p| p.pages.iter().map(|page| page.title.clone()).collect())
                     .unwrap_or_else(|| {
                         crate::installer::installed_entry(&self.registry.root, &id)
                             .map(|entry| entry.pages)
                             .unwrap_or_default()
                     });
-                let page = provider.map_or(self.addon_page, |p| self.native.page_index(p));
+                let page = self.addon_page;
                 Crumb {
                     root: package.map_or_else(
                         || {
@@ -723,40 +687,20 @@ impl App {
                 });
             });
         if let Some(page) = chosen_page {
-            match self.screen {
-                Screen::Tool(_) => self.base.selected.1 = page,
-                Screen::External(ref id) => {
-                    let provider = self
-                        .registry
-                        .packages
-                        .iter()
-                        .find(|p| &p.manifest.id == id)
-                        .and_then(|p| p.manifest.native_provider.as_deref());
-                    if let Some(provider) = provider {
-                        self.native.navigate(provider, &page.to_string());
-                    } else {
-                        self.addon_page = page;
-                        if let Some(supervisor) = &self.supervisor {
-                            supervisor.send(
-                                id,
-                                &toolboks_addon_proto::HostMessage::Navigate {
-                                    page: page.to_string(),
-                                },
-                            );
-                        }
-                    }
+            if let Screen::External(ref id) = self.screen {
+                self.addon_page = page;
+                if let Some(supervisor) = &self.supervisor {
+                    supervisor.send(
+                        id,
+                        &toolboks_addon_proto::HostMessage::Navigate {
+                            page: page.to_string(),
+                        },
+                    );
                 }
-                _ => {}
             }
         }
 
-        self.sync_workspaces();
-        let mut items = status_items(
-            self.base
-                .active
-                .and_then(|i| self.base.tools[i].as_ref())
-                .map(|t| t.status()),
-        );
+        let mut items: Vec<String> = Vec::new();
         items.extend(
             self.services
                 .status_items(|id| self.registry.enabled(id))
@@ -812,7 +756,6 @@ impl App {
                     Screen::Pick => self.pick_tools(ui),
                     Screen::Browser => self.marketplace_ui(ui),
                     Screen::Settings => self.settings(ui),
-                    Screen::Tool(i) => self.tool_workspace(ui, i),
                     Screen::External(id) => self.external_workspace(ui, &id),
                 }
             });
@@ -835,29 +778,7 @@ impl App {
     /// installed, with its state.
     fn entries(&self) -> Vec<Entry> {
         let mut list = Vec::new();
-        for (i, m) in self.registry.builtins.iter().enumerate() {
-            list.push(Entry {
-                m: m.clone(),
-                verified: true,
-                installed: true,
-                enabled: self.tool_enabled(i),
-            });
-        }
-        // Still shipped inside the app until they move to the catalog (#88 to #94).
-        for id in addons::OFFICIAL_ADDONS {
-            if let Some(package) = addons::official_package(id) {
-                list.push(Entry {
-                    enabled: self.registry.enabled(id),
-                    installed: self.registry.packages.iter().any(|p| p.manifest.id == id),
-                    verified: true,
-                    m: package.manifest,
-                });
-            }
-        }
         for p in &self.registry.packages {
-            if addons::OFFICIAL_ADDONS.contains(&p.manifest.id.as_str()) {
-                continue;
-            }
             list.push(Entry {
                 m: p.manifest.clone(),
                 verified: self.registry.verified(&p.manifest.id),
@@ -865,9 +786,41 @@ impl App {
                 enabled: self.registry.enabled(&p.manifest.id),
             });
         }
+        // Add-ons installed from the catalog (their own program, drawn inside Toolboks).
+        for entry in crate::installer::installed(&self.registry.root) {
+            if list.iter().any(|e| e.m.id == entry.id) {
+                continue;
+            }
+            list.push(Entry {
+                verified: entry.verified,
+                installed: true,
+                enabled: self.registry.enabled(&entry.id),
+                m: manifest_of(&entry),
+            });
+        }
+        list.sort_by_key(|e| e.m.title.to_lowercase());
         list
     }
     fn home(&mut self, ui: &mut egui::Ui) {
+        if self.restore_pending() {
+            panel().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new("Some of the tools you had before are not installed yet.")
+                            .color(TEXT),
+                    );
+                    if ui.button("Restore your tools").clicked() {
+                        let ids = self.registry.config.restore_pending.clone();
+                        for id in &ids {
+                            self.market.select(id, true);
+                        }
+                        self.screen = Screen::Pick;
+                    }
+                });
+            });
+            ui.add_space(look::GAP);
+        }
         if self.registry.packages.is_empty()
             && crate::installer::installed(&self.registry.root).is_empty()
         {
@@ -880,16 +833,14 @@ impl App {
             ui.add_space(look::GAP);
         }
         let entries = self.entries();
-        let total_tools = self.registry.builtins.len();
-        let on_tools = (0..total_tools).filter(|&i| self.tool_enabled(i)).count();
-        let added = self.registry.packages.len();
+        let added = entries.len();
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 Self::title(
                     ui,
                     "Your toolkit",
                     &format!(
-                        "{on_tools} of {total_tools} built-in tools are on. {added} {} installed.",
+                        "{added} {} installed.",
                         if added == 1 { "add-on" } else { "add-ons" }
                     ),
                 );
@@ -1002,10 +953,6 @@ impl App {
     /// The primary action of an add-on: install it, turn it on, or open it.
     fn run_action(&mut self, e: &Entry) {
         if !e.installed {
-            if let Some(package) = addons::official_package(&e.m.id) {
-                self.pending_package = Some(package);
-                return;
-            }
             self.screen = Screen::Browser;
             self.market.focused = Some(e.m.id.clone());
             return;
@@ -1056,46 +1003,17 @@ impl App {
         });
     }
     pub(super) fn open_addon(&mut self, id: &str) {
-        if let Some(tool) = self.registry.builtin_index(id) {
-            self.open_tool(tool);
-            return;
-        }
         self.open_market_addon(id);
     }
-    fn tool_enabled(&self, tool: usize) -> bool {
-        self.registry
-            .builtins
-            .get(tool)
-            .is_some_and(|m| self.registry.enabled(&m.id))
-    }
-    fn open_tool(&mut self, tool: usize) {
-        if !self.tool_enabled(tool) {
-            self.screen = Screen::Home;
-            return;
-        }
-        if self.base.selected.0 != tool {
-            self.base.selected = (tool, 0);
-        }
-        self.screen = Screen::Tool(tool);
-    }
     /// Turns an add-on on or off and saves it. Returns false (with a message) if it could not
-    /// be saved. Turning a built-in tool off releases its session.
+    /// be saved.
     fn set_addon_enabled(&mut self, id: &str, enabled: bool) -> bool {
         if let Err(e) = self.registry.set_enabled(id, enabled) {
             self.message = Some(e);
             return false;
         }
-        if let (Some(tool), false) = (self.registry.builtin_index(id), enabled) {
-            self.base.tools[tool] = None;
-            if self.screen == Screen::Tool(tool) {
-                self.screen = Screen::Home;
-            }
-            if self.tour.as_ref().is_some_and(|run| run.tool == Some(tool)) {
-                self.tour = None;
-            }
-            if self.help.as_deref() == Some(id) {
-                self.help = None;
-            }
+        if !enabled && self.help.as_deref() == Some(id) {
+            self.help = None;
         }
         true
     }
@@ -1192,19 +1110,6 @@ impl App {
             });
     }
 
-    fn tool_workspace(&mut self, ui: &mut egui::Ui, tool: usize) {
-        if !self.tool_enabled(tool) {
-            self.screen = Screen::Home;
-            return;
-        }
-        if self.base.selected.0 != tool {
-            self.base.selected = (tool, 0);
-        }
-        let page = self.base.selected.1;
-        if let Some(workspace) = &mut self.base.tools[tool] {
-            workspace.ui(ui, page);
-        }
-    }
     fn external_workspace(&mut self, ui: &mut egui::Ui, id: &str) {
         if self.hidden {
             return;
@@ -1227,40 +1132,6 @@ impl App {
             return;
         };
         let color = accent(&package.manifest);
-        if let Some(provider) = &package.manifest.native_provider {
-            let preferences = self
-                .registry
-                .config
-                .preferences
-                .entry(id.into())
-                .or_default();
-            if self
-                .native
-                .ui(provider, ui, &package.manifest.capabilities, preferences)
-            {
-                self.preferences_dirty = Some(std::time::Instant::now());
-                ui.request_repaint_after(Duration::from_millis(600));
-            }
-            if let Some(request) = self.native.take_host_request(provider) {
-                match request {
-                    toolboks_addon_sdk::HostRequest::ReviewUpdate => {
-                        self.pending_package = addons::official_package(id)
-                    }
-                    toolboks_addon_sdk::HostRequest::AdminOperation(request) => {
-                        self.native.request_admin(
-                            provider,
-                            request,
-                            &package.manifest.capabilities,
-                            ui.ctx(),
-                        );
-                    }
-                    toolboks_addon_sdk::HostRequest::RestartElevated { .. } => {
-                        self.message = Some("This add-on needs an update to use an administrator helper. Its interface cannot restart as administrator.".into());
-                    }
-                }
-            }
-            return;
-        }
         let page = self.addon_page.min(package.pages.len() - 1);
         self.addon_page = page;
         ui.scope(|ui| {
@@ -1493,19 +1364,9 @@ impl App {
                     ui.add_space(look::GAP);
                     ui.label(&p.manifest.description);
                     ui.add_space(look::GAP);
-                    if addons::trusted_native(&p) {
-                        badge(ui, "Toolboks verified", ACCENT_TEXT, true);
-                    } else {
-                        badge(ui, "Local package, not verified", look::AMBER, false);
-                    }
+                    badge(ui, "Local package, not verified", look::AMBER, false);
                     ui.add_space(look::GAP);
-                    muted(ui, if p.manifest.id == addons::MACRO_ID {
-                        "Recording captures keyboard and mouse input only while you record. Playback sends real input to your desktop. Escape stops recording or playback. Macros and settings are saved locally."
-                    } else if p.manifest.native_provider.is_some() {
-                        "Folder scans read metadata. Reports are saved only when you choose. This update also adds administrator-only fragmentation analysis, HDD defrag and SSD TRIM; optimization modifies storage metadata only when you request it."
-                    } else {
-                        "This package uses Toolboks-rendered pages. It cannot run native code, open windows, or change system settings."
-                    });
+                    muted(ui, "This package uses Toolboks-rendered pages. It cannot run native code, open windows, or change system settings.");
                     ui.add_space(look::SPACE_M);
                     section(ui, "It asks to");
                     for c in &p.manifest.capabilities {
@@ -1551,17 +1412,16 @@ impl App {
             return;
         }
         if let Some(id) = self.detail.clone() {
-            let manifest = if let Some(tool) = self.registry.builtin_index(&id) {
-                Some(self.registry.builtins[tool].clone())
-            } else if let Some(package) = addons::official_package(&id) {
-                Some(package.manifest)
-            } else {
-                self.registry
-                    .packages
-                    .iter()
-                    .find(|p| p.manifest.id == id)
-                    .map(|p| p.manifest.clone())
-            };
+            let manifest = self
+                .registry
+                .packages
+                .iter()
+                .find(|p| p.manifest.id == id)
+                .map(|p| p.manifest.clone())
+                .or_else(|| {
+                    crate::installer::installed_entry(&self.registry.root, &id)
+                        .map(|entry| manifest_of(&entry))
+                });
             if let Some(m) = manifest {
                 let response = egui::Modal::new(egui::Id::unique("addon-detail"))
                     .frame(panel())
@@ -1617,27 +1477,21 @@ impl App {
                                 }
                             });
                         ui.add_space(look::SPACE_M);
-                        let builtin = self.registry.builtin_index(&id).is_some();
-                        let package = self.registry.packages.iter().any(|p| p.manifest.id == id);
-                        if builtin || package {
+                        let installed = self.registry.packages.iter().any(|p| p.manifest.id == id)
+                            || crate::installer::installed_entry(&self.registry.root, &id)
+                                .is_some();
+                        if installed {
                             let mut enabled = self.registry.enabled(&id);
                             if switch_row(ui, "Show in sidebar", &mut enabled) {
                                 self.set_addon_enabled(&id, enabled);
                             }
                             ui.add_space(look::GAP);
-                            if package {
-                                if ui
-                                    .button(RichText::new("Remove add-on").color(look::RED))
-                                    .clicked()
-                                {
-                                    self.detail = None;
-                                    self.remove_pending = Some(id.clone());
-                                }
-                            } else {
-                                caption(
-                                    ui,
-                                    "Included with Toolboks and updated with the app. Turn it off to stop it running in the background.",
-                                );
+                            if ui
+                                .button(RichText::new("Remove add-on").color(look::RED))
+                                .clicked()
+                            {
+                                self.detail = None;
+                                self.remove_pending = Some(id.clone());
                             }
                         } else {
                             muted(ui, "Not installed yet. Install it from the add-ons page.");

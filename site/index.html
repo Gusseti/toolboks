@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Toolboks: one calm window for every PC tool</title>
+<meta name="description" content="Toolboks is a home for Windows system tools. Install verified tools like Memory Cleaner, Resource Monitor and Disk Manager from the add-on browser, all in one window.">
+<meta name="theme-color" content="#070809">
+<link rel="canonical" href="https://gusseti.github.io/toolboks/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Toolboks: one calm window for every PC tool">
+<meta property="og:description" content="A home for Windows system tools. Verified tools from the Toolboks team, and room for thousands more.">
+<meta property="og:url" content="https://gusseti.github.io/toolboks/">
+<meta property="og:image" content="https://gusseti.github.io/toolboks/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+<script src="main.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-2.9 7.9-7 10-4.1-2.1-7-5.4-7-10V6z"/><path d="M12 8v4M12 15.5v.01"/></symbol>
+  <symbol id="i-drive" viewBox="0 0 24 24"><path d="M5 13l2.2-7h9.6L19 13"/><rect x="3.5" y="13" width="17" height="6" rx="2"/><path d="M16.5 16h.01"/></symbol>
+  <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M6 4l12 7-5.5 1.5L10 18z"/><path d="M13 13l4 5"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><path d="M16.75 14v5.5M14 16.75h5.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-verified" viewBox="0 0 24 24"><path d="M12 3l2.3 1.7 2.8-.2.9 2.7 2.3 1.6-.9 2.7.9 2.7-2.3 1.6-.9 2.7-2.8-.2L12 21l-2.3-1.7-2.8.2-.9-2.7L3.7 15.2l.9-2.7-.9-2.7 2.3-1.6.9-2.7 2.8.2z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 13l3.5-4"/><circle cx="12" cy="13.5" r="1.3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-mark" viewBox="0 0 24 24"><path d="M4 10h16v9H4zM9 10V7h6v3M4 14h16"/></symbol>
+</svg>
+
+<nav class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="mark"><svg><use href="#i-mark"/></svg></span>Toolboks</a>
+    <div class="nav-links">
+      <a href="#tools">Our tools</a>
+      <a href="#browser">Add-on browser</a>
+      <a href="#addons">Developers</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">Source</a>
+    </div>
+    <a class="btn small primary" href="#download"><svg class="ic" style="width:16px;height:16px"><use href="#i-down"/></svg>Download</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="trace" id="trace" aria-label="Live CPU usage trace, demo data. Move the pointer over it to read a value.">
+    <canvas id="traceCanvas"></canvas>
+    <div class="trace-tip" id="traceTip"></div>
+  </div>
+  <div class="trace-bar" aria-hidden="true"><div class="wrap">
+    <span><b class="num" id="traceNow">44%</b> CPU usage</span><span><b>Last minute</b></span><span>Demo data. Hover the line.</span>
+  </div></div>
+
+  <div class="wrap">
+    <div class="hero-copy">
+      <h1 class="rise">One calm window for <em>every PC&nbsp;tool.</em></h1>
+      <p class="lede rise d1">Toolboks is <strong>a home for Windows system tools</strong>. Pick the ones you need from the add-on browser and they all open in the same window, look the same and follow the same rules. Tools from the Toolboks team carry the verified mark.</p>
+      <div class="cta-row rise d2">
+        <a class="btn primary" href="#download"><svg class="ic"><use href="#i-down"/></svg>Download for Windows</a>
+        <a class="btn" href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">View the source</a>
+        <span class="cta-meta"><span class="num">toolboks.exe</span> · v<span class="num">0.12.6</span> · one file, no installer</span>
+      </div>
+    </div>
+
+    <div class="stage rise d3">
+      <div class="win" id="win" role="img" aria-label="The Toolboks window showing Resource Monitor with live CPU, memory, GPU, disk and network graphs. Demo data.">
+        <div class="win-title"><span class="mark"><svg><use href="#i-mark"/></svg></span>Toolboks<span class="win-ctl"><span>&#8211;</span><span>&#9633;</span><span>&#215;</span></span></div>
+        <div class="win-body">
+          <div class="win-side">
+            <div class="it"><svg class="ic"><use href="#i-home"/></svg><span>Home</span></div>
+            <div class="it"><svg class="ic"><use href="#i-chip"/></svg><span>Memory Cleaner</span></div>
+            <div class="it on"><svg class="ic"><use href="#i-pulse"/></svg><span>Resource Monitor</span></div>
+            <div class="sub on">Overview</div>
+            <div class="sub">Details</div>
+            <div class="sub">Processes</div>
+            <div class="it"><svg class="ic"><use href="#i-sliders"/></svg><span>Debloater</span></div>
+            <div class="it"><svg class="ic"><use href="#i-shield"/></svg><span>Event Watch</span></div>
+            <div class="it"><svg class="ic"><use href="#i-drive"/></svg><span>Disk Manager</span></div>
+            <div class="it"><svg class="ic"><use href="#i-grid"/></svg><span>Add-ons</span></div>
+          </div>
+          <div class="win-list" id="winList"></div>
+          <div class="win-main">
+            <header><b>CPU</b><span>8 cores, 8 threads</span>
+              <span class="pills"><i class="on">1 min</i><i>5 min</i><i>1 h</i><i>24 h</i></span></header>
+            <div class="gcard"><canvas id="cpuBig"></canvas></div>
+            <div class="cores" id="cores"></div>
+          </div>
+        </div>
+        <div class="win-status"><span>RAM <b class="num" id="stRam">60%</b></span><span>CPU <b class="num" id="stCpu">44%</b></span><span>GPU <b class="num" id="stGpu">13%</b></span><span>v0.12.6</span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<section class="block" id="tools">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Eight of ours. Room for thousands.</h2>
+      <p>Every tool in Toolboks is an add-on, including the ones we make, and the platform is built to hold as many as people build. These first eight come from the Toolboks team and carry the verified mark.</p>
+    </div>
+
+    <div class="tour">
+      <nav class="rail" id="rail" aria-label="Toolboks verified tools">
+        <span class="rail-head"><svg class="ic"><use href="#i-verified"/></svg>Toolboks verified</span>
+        <a href="#t-memory" class="on"><svg class="ic"><use href="#i-chip"/></svg>Memory Cleaner</a>
+        <a href="#t-monitor"><svg class="ic"><use href="#i-pulse"/></svg>Resource Monitor</a>
+        <a href="#t-debloat"><svg class="ic"><use href="#i-sliders"/></svg>Debloater</a>
+        <a href="#t-profiles"><svg class="ic"><use href="#i-gauge"/></svg>System Profiles</a>
+        <a href="#t-events"><svg class="ic"><use href="#i-shield"/></svg>Event Watch</a>
+        <a href="#t-disk"><svg class="ic"><use href="#i-drive"/></svg>Disk Manager</a>
+        <a href="#t-macro"><svg class="ic"><use href="#i-cursor"/></svg>Macro Manager</a>
+        <a href="#t-audio"><svg class="ic"><use href="#i-mic"/></svg>Audio Gainer</a>
+        <hr>
+        <a href="#browser"><svg class="ic"><use href="#i-grid"/></svg>Find more</a>
+      </nav>
+
+      <div class="panels">
+        <!-- Memory -->
+        <article class="panel" id="t-memory">
+          <div class="pcopy">
+            <h3>Memory Cleaner <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>One button asks running apps to hand back memory they aren't using. It closes nothing, deletes nothing and needs no admin rights. Afterwards it shows the measured drop, not a flattering sum.</p>
+            <ul><li>See where your memory goes, grouped by app</li><li>Clean automatically above a level you choose</li><li>Process list and protection on the Advanced page</li></ul>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="verdict">
+                <span class="dot" id="memDot"></span>
+                <div><b id="memVerdict">Memory is getting full</b><small id="memSub">78% in use. Games may stutter when it fills up.</small></div>
+                <button class="btn small primary" id="memBtn" type="button">Optimize memory</button>
+              </div>
+              <div class="membar" id="memBar" aria-label="Where your memory goes">
+                <i style="width:24%;background:var(--accent)"></i><i style="width:17%;background:var(--mem)"></i><i style="width:13%;background:var(--net)"></i><i style="width:11%;background:var(--gpu)"></i><i style="width:13%;background:#4a4d57"></i>
+              </div>
+              <div class="memkey">
+                <span style="--c:var(--accent)">Chrome 7.6 GB</span><span style="--c:var(--mem)">Game 5.4 GB</span><span style="--c:var(--net)">Discord 4.1 GB</span><span style="--c:var(--gpu)">Windows 3.5 GB</span><span style="--c:#4a4d57">Other</span>
+              </div>
+              <p class="mem-result" id="memResult">Last run: never on this PC.</p>
+            </div>
+            <p class="demo-note">Try it. Demo numbers on a 32 GB PC.</p>
+          </div>
+        </article>
+
+        <!-- Monitor -->
+        <article class="panel" id="t-monitor">
+          <div class="pcopy">
+            <h3>Resource Monitor <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>CPU, GPU, memory, disk and network on live graphs that fill the card. Hover any line for the exact value and how long ago it was. Per-core, per-drive and per-adapter detail is one page further.</p>
+            <ul><li>Ranges from one minute to 24 hours</li><li>Estimates such as GPU power are labelled</li><li>Top processes next to the graphs</li></ul>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="rgrid">
+                <div class="gcard rcard"><div class="lbl"><b>CPU</b><span id="rv0" style="color:var(--accent-text)">44%</span></div><canvas data-series="0"></canvas><div class="foot">4.8 GHz</div></div>
+                <div class="gcard rcard"><div class="lbl"><b>Memory</b><span id="rv1" style="color:var(--mem)">60%</span></div><canvas data-series="1"></canvas><div class="foot">19.0 of 31.9 GB</div></div>
+                <div class="gcard rcard"><div class="lbl"><b>GPU</b><span id="rv2" style="color:var(--gpu)">13%</span></div><canvas data-series="2"></canvas><div class="foot">57 °C</div></div>
+                <div class="gcard rcard"><div class="lbl"><b>Disk</b><span id="rv3" style="color:var(--disk)">4.6 MB/s</span></div><canvas data-series="3"></canvas><div class="foot">Write 4.4 MB/s</div></div>
+              </div>
+            </div>
+            <p class="demo-note">Demo data, updating every second.</p>
+          </div>
+        </article>
+
+        <!-- Debloater -->
+        <article class="panel" id="t-debloat">
+          <div class="pcopy">
+            <h3>Debloater <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Pick what you want gone and read what each change does before anything happens. Toolboks applies only what you ticked, and every change can be undone from the same list.</p>
+            <ul><li>Preview, confirm, apply, undo</li><li>Plain description for every item</li><li>Nothing runs in the background afterwards</li></ul>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="dlist" id="dlist">
+                <label class="drow"><input type="checkbox" id="d1" checked><span><b>Start menu suggestions</b><small>Stops app ads in Start. Reversible.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" id="d2" checked><span><b>Background web search</b><small>Search stays on this PC. Reversible.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" id="d3"><span><b>Preinstalled games</b><small>Removes 3 apps. Reinstall from the Store.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" id="d4"><span><b>Tips and notifications</b><small>Fewer pop-ups. Reversible.</small></span><span class="st">Ready</span></label>
+              </div>
+              <div class="dfoot"><p id="dmsg">2 changes selected. Nothing has changed yet.</p>
+                <button class="btn small" id="dUndo" type="button" disabled>Undo</button>
+                <button class="btn small primary" id="dApply" type="button">Apply 2 changes</button></div>
+            </div>
+            <p class="demo-note">Example items. The real list comes from the app.</p>
+          </div>
+        </article>
+
+        <!-- Events -->
+        <article class="panel" id="t-profiles">
+          <div class="pcopy">
+            <h3>System Profiles <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Set Windows up for gaming in one pass. Review each change in the Gaming profile, keep the ones you want, and follow guided steps for Windows and NVIDIA settings. Toolboks makes a restore point and a registry backup first, and can put back everything it changed.</p>
+            <ul><li>Choose each change before it's applied</li><li>Restore point and registry backup first</li><li>Activity log of every change made</li></ul>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="prof-head"><span class="aic"><svg class="ic"><use href="#i-gauge"/></svg></span><div><b>Gaming profile</b><small id="profSub">4 of 5 changes selected</small></div></div>
+              <div class="dlist" id="plist">
+                <label class="drow"><input type="checkbox" checked><span><b>Turn on Game Mode</b><small>Windows setting. Restorable.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" checked><span><b>Pause background apps while gaming</b><small>Windows setting. Restorable.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" checked><span><b>Use the high performance power plan</b><small>Uses more power on laptops. Restorable.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox" checked><span><b>Hardware-accelerated GPU scheduling</b><small>Needs a restart. Restorable.</small></span><span class="st">Ready</span></label>
+                <label class="drow"><input type="checkbox"><span><b>NVIDIA settings</b><small>Guided steps. You change these yourself.</small></span><span class="st">Guided</span></label>
+              </div>
+              <ol class="plog" id="plog"></ol>
+              <div class="dfoot"><p id="pmsg">Nothing has changed yet.</p>
+                <button class="btn small" id="pRestore" type="button" disabled>Restore</button>
+                <button class="btn small primary" id="pApply" type="button">Apply profile</button></div>
+            </div>
+            <p class="demo-note">Example profile. The real changes come from the app.</p>
+          </div>
+        </article>
+
+        <article class="panel" id="t-events">
+          <div class="pcopy">
+            <h3>Event Watch <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Windows logs a lot and explains little. Event Watch lists what happened, says what it means in one line, and keeps the raw record one click away in the inspector.</p>
+            <ul><li>Filter by level, source and time</li><li>Plain summary above the raw event</li><li>Watch new events arrive live</li></ul>
+          </div>
+          <div>
+            <div class="demo" style="padding:10px 12px;overflow-x:auto">
+              <table class="etable" id="etable">
+                <thead><tr><th>Time</th><th>Level</th><th>What happened</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <p class="demo-note">Example events.</p>
+          </div>
+        </article>
+
+        <!-- Disk -->
+        <article class="panel" id="t-disk">
+          <div class="pcopy">
+            <h3>Disk Manager<span class="by">by stratum</span> <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>A background scan draws your drive as a space map, so the biggest folders are the biggest blocks. Fragmentation reports and Windows drive optimization sit on the same page.</p>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="tree" aria-label="Space map of drive C, example">
+                <div class="a">Games<small>412 GB</small></div>
+                <div class="b">Videos<small>138 GB</small></div>
+                <div class="c">Photos<small>71 GB</small></div>
+                <div class="d">Windows<small>96 GB</small></div>
+                <div class="e">Apps<small>54 GB</small></div>
+                <div class="f">Downloads<small>32 GB</small></div>
+                <div class="g">Other<small>18 GB</small></div>
+              </div>
+              <div class="disk-meta"><span>Drive C · <b class="num">821</b> of <b class="num">931 GB</b> used</span><span>Scanned in the background</span></div>
+            </div>
+            <p class="demo-note">Example drive.</p>
+          </div>
+        </article>
+
+        <!-- Macro -->
+        <article class="panel" id="t-macro">
+          <div class="pcopy">
+            <h3>Macro Manager <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Record keystrokes and mouse movement, edit every step and drag the path points, then play it back once, for a set time or until you stop it. Esc always stops it. Macros stay on your PC.</p>
+          </div>
+          <div>
+            <div class="demo" id="macroDemo">
+              <div class="mac">
+                <div class="steps">
+                  <div><b>Key Ctrl+S</b><span class="num">0 ms</span></div>
+                  <div class="on"><b>Mouse movement</b><span class="num">640 ms</span></div>
+                  <div><b>Left click</b><span class="num">40 ms</span></div>
+                  <div><b>Scroll down</b><span class="num">120 ms</span></div>
+                </div>
+                <div class="canvas-area">
+                  <svg viewBox="0 0 320 200" preserveAspectRatio="none" aria-hidden="true">
+                    <path class="mpath" d="M30 160 C 80 150, 90 60, 150 70 S 230 150, 290 40"/>
+                    <circle cx="30" cy="160" r="5" fill="var(--fg)"/><circle cx="290" cy="40" r="5" fill="var(--accent)"/>
+                    <circle cx="150" cy="70" r="4" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+                  </svg>
+                </div>
+                <div class="playrow"><button class="btn small primary" type="button" tabindex="-1">Play macro</button><div class="track"><i></i></div><span class="num" style="color:var(--muted);font-size:12px">1.2 s</span></div>
+              </div>
+            </div>
+            <p class="demo-note">Example macro.</p>
+          </div>
+        </article>
+
+        <!-- Audio -->
+        <article class="panel" id="t-audio">
+          <div class="pcopy">
+            <h3>Audio Gainer <span class="vbadge"><svg class="ic" aria-hidden="true"><use href="#i-verified"/></svg>Verified</span></h3>
+            <p>Boost a quiet microphone, listen to yourself and route it to other apps. Toolboks remembers the gain and routing for each microphone and switches back when your favourite one reconnects.</p>
+          </div>
+          <div>
+            <div class="demo">
+              <div class="meter" id="meter" aria-hidden="true"></div>
+              <div class="sliders">
+                <div class="sl"><label for="gain">Gain</label><input type="range" id="gain" min="0" max="24" value="9"><output class="num" id="gainOut" for="gain">+9 dB</output></div>
+                <div class="sl"><label for="listen">Listening volume</label><input type="range" id="listen" min="0" max="100" value="35"><output class="num" id="listenOut" for="listen">35%</output></div>
+              </div>
+              <div class="switch-row"><span>Remember settings for this microphone</span><span class="sw" aria-hidden="true"></span></div>
+            </div>
+            <p class="demo-note">Demo meter.</p>
+          </div>
+        </article>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="browser">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Every tool you'll ever need, in one browser.</h2>
+      <p>Anyone can build a tool for Toolboks, so the add-on browser keeps growing. Search it, filter by category, see exactly what each tool is allowed to touch, and install in one click. Verified tools are listed first, and no add-on can give itself the mark.</p>
+    </div>
+  </div>
+  <div class="wall" aria-hidden="true">
+    <div class="wrow"><div class="wtrack" data-row="0"></div></div>
+    <div class="wrow rev"><div class="wtrack" data-row="1"></div></div>
+    <div class="wrow"><div class="wtrack" data-row="2"></div></div>
+  </div>
+  <div class="wrap">
+    <p class="demo-note" style="margin-top:4px">Example tool ideas, not real listings.</p>
+
+    <div class="store" id="store">
+      <div class="store-bar">
+        <label class="search" for="storeQ"><svg class="ic"><use href="#i-search"/></svg><input id="storeQ" type="search" placeholder="Search add-ons" autocomplete="off"></label>
+        <div class="cats" id="cats" role="group" aria-label="Category">
+          <button type="button" class="on" data-cat="all">All</button><button type="button" data-cat="System">System</button><button type="button" data-cat="Storage">Storage</button><button type="button" data-cat="Audio">Audio</button><button type="button" data-cat="Automation">Automation</button><button type="button" data-cat="Developer tools">Developer tools</button>
+        </div>
+      </div>
+      <div class="store-body">
+        <ul class="alist" id="alist"></ul>
+        <aside class="adetail" id="adetail" aria-live="polite"></aside>
+      </div>
+    </div>
+    <p class="demo-note">Example listing. Click a row to see what it asks for, then install it.</p>
+  </div>
+</section>
+
+<section class="block" id="honest">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>It tells you what it can't do.</h2>
+      <p>System tools love big numbers. Toolboks would rather be right. These rules are part of the platform, so every add-on follows them, ours and everyone else's.</p>
+    </div>
+    <div class="truths">
+      <div class="truth">
+        <div><h3>Measured is measured.</h3><p>A value Windows reports is shown as it is. A value Toolboks works out says "estimate", in the graph and in the tooltip.</p></div>
+        <div class="statbar"><span><b class="num">19.0 GB</b> in use</span><span><b class="num">44%</b> CPU</span><span><b class="num">41 W</b> CPU power<em>estimate</em></span></div>
+      </div>
+      <div class="truth">
+        <div><h3>Limits are said out loud.</h3><p>If something can't be read on your PC, a quiet line says so, instead of a made-up number or an empty gauge.</p></div>
+        <div class="banner" id="banner"><span>CPU temperature is not shown on this PC.</span><button type="button" aria-label="Dismiss" id="bannerX"><svg class="ic" style="width:16px;height:16px"><use href="#i-x"/></svg></button></div>
+      </div>
+      <div class="truth">
+        <div><h3>Nothing changes behind your back.</h3><p>Anything that touches your system shows what will happen, asks once, and keeps a way back.</p></div>
+        <div class="flow"><span>Preview</span><svg class="ic"><use href="#i-arrow"/></svg><span>Confirm</span><svg class="ic"><use href="#i-arrow"/></svg><span>Apply</span><svg class="ic"><use href="#i-arrow"/></svg><span class="last">Undo</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="addons">
+  <div class="wrap dev">
+    <div>
+      <div class="sec-head">
+        <h2>Build a tool. Toolboks gives it a home.</h2>
+        <p>An add-on is one <span class="num" style="font-size:.95em">.tbaddon</span> file. Write pages of headings, notes, live metrics and switches, and Toolboks draws them in its own style, next to every other tool. You never pick a font or a colour, and the window, sidebar and settings are already done.</p>
+      </div>
+      <div class="caps">
+        <div><code>host_metrics</code><span>Read memory use and uptime</span></div>
+        <div><code>local_preferences</code><span>Keep the add-on's own settings</span></div>
+        <div><code>filesystem_read</code><span>Native providers, with approval</span></div>
+      </div>
+      <div class="cta-row" style="margin-top:28px"><a class="btn" href="https://github.com/Gusseti/toolboks/tree/main/sdk" target="_blank" rel="noopener">Read the SDK guide<svg class="ic" style="width:16px;height:16px"><use href="#i-arrow"/></svg></a></div>
+    </div>
+    <div class="code">
+      <header><svg class="ic" style="width:16px;height:16px"><use href="#i-file"/></svg><b>hello-system.tbaddon</b><span style="margin-left:auto">SDK 0.4 preview</span></header>
+<pre><span class="p">{</span>
+  <span class="k">"manifest"</span>: <span class="p">{</span>
+    <span class="k">"id"</span>: <span class="s">"com.example.hello-system"</span>,
+    <span class="k">"title"</span>: <span class="s">"Hello System"</span>,
+    <span class="k">"icon"</span>: <span class="s">"leaf"</span>,
+    <span class="k">"accent"</span>: <span class="s">"#8B5CF6"</span>,
+    <span class="k">"capabilities"</span>: [<span class="s">"host_metrics"</span>, <span class="s">"local_preferences"</span>]
+  <span class="p">}</span>,
+  <span class="k">"pages"</span>: [<span class="p">{</span> <span class="k">"id"</span>: <span class="s">"overview"</span>, <span class="k">"widgets"</span>: [
+    <span class="p">{</span> <span class="k">"kind"</span>: <span class="s">"heading"</span>, <span class="k">"text"</span>: <span class="s">"Your system at a glance"</span> <span class="p">}</span>,
+    <span class="p">{</span> <span class="k">"kind"</span>: <span class="s">"metric"</span>, <span class="k">"label"</span>: <span class="s">"Memory in use"</span>,
+      <span class="k">"binding"</span>: <span class="s">"memory_percent"</span> <span class="p">}</span>
+  ]<span class="p">}</span>]
+<span class="p">}</span></pre>
+      <div class="drop"><svg class="ic"><use href="#i-down"/></svg><span><b>Drop the file on the window</b> to review its access and install it.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="close" id="download">
+  <div class="wrap">
+    <h2>One file.<br><span class="exe">toolboks.exe</span></h2>
+    <div class="close-grid">
+      <div>
+        <div class="cta-row" style="margin-top:0">
+          <a class="btn primary" href="https://github.com/Gusseti/toolboks/releases/latest" target="_blank" rel="noopener"><svg class="ic"><use href="#i-down"/></svg>Download v0.12.6</a>
+          <a class="btn" href="https://github.com/Gusseti/toolboks/blob/main/CHANGELOG.md" target="_blank" rel="noopener">What's new</a>
+        </div>
+        <p class="warn">Releases aren't code-signed yet, so Windows SmartScreen may warn you the first time. Choose More info, then Run anyway. The checksum is published next to every release.</p>
+      </div>
+      <dl class="facts">
+        <div><dt>Runs on</dt><dd>Windows 11</dd></div>
+        <div><dt>Install</dt><dd>None. Download and run.</dd></div>
+        <div><dt>Tools</dt><dd>Pick them in the add-on browser on first launch</dd></div>
+        <div><dt>Updates</dt><dd>Checked once at launch, verified with SHA-256, swapped in place</dd></div>
+        <div><dt>Admin rights</dt><dd>Only asked for when a task needs them</dd></div>
+        <div><dt>Licence</dt><dd>MIT, open source</dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer><div class="wrap">
+  <span class="brand"><span class="mark"><svg><use href="#i-mark"/></svg></span>Toolboks</span>
+  <a href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Gusseti/toolboks/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+  <a href="https://github.com/Gusseti/toolboks/tree/main/sdk" target="_blank" rel="noopener">Add-on SDK</a>
+  <a href="privacy.html">Privacy</a>
+  <span style="margin-left:auto">MIT licence</span>
+</div></footer>
+</body>
+</html>
