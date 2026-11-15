@@ -33,13 +33,13 @@ follow the tool.
 | Tool | ID (unchanged) | Code in the host today | Folder in the add-ons repo | Issue |
 |---|---|---|---|---|
 | Disk Manager | `toolboks.disk-manager` | Removed by the pilot | `addons/disk-manager/` | [#88](https://github.com/Gusseti/toolboks/issues/88) (code moved; publication and #132 rebuild pending) |
-| Resource Monitor | `toolboks.resource-monitor` | `src/tools/resources/` | `addons/resource-monitor/` | [#89](https://github.com/Gusseti/toolboks/issues/89) |
-| Memory Cleaner | `toolboks.memory-cleaner` | `src/tools/memory/` | `addons/memory-cleaner/` | [#90](https://github.com/Gusseti/toolboks/issues/90) |
+| Resource Monitor | `toolboks.resource-monitor` | `src/tools/resources/` (copy also in the add-ons repo; host copy goes with #94) | `addons/resource-monitor/` | [#89](https://github.com/Gusseti/toolboks/issues/89) (code moved and window-checked; publication pending) |
+| Memory Cleaner | `toolboks.memory-cleaner` | `src/tools/memory/` (copy also in the add-ons repo; host copy goes with #94) | `addons/memory-cleaner/` | [#90](https://github.com/Gusseti/toolboks/issues/90) (code moved and window-checked; purge uses the helper; publication pending) |
 | Event Watch | `toolboks.event-watch` | `src/tools/events/` (copy also in the add-ons repo; the host copy goes with #94) | `addons/event-watch/` | [#91](https://github.com/Gusseti/toolboks/issues/91) (code moved; publication pending) |
-| Debloater | `toolboks.debloater` | `src/tools/debloat/` | `addons/debloater/` | [#92](https://github.com/Gusseti/toolboks/issues/92) |
-| System Profiles | `toolboks.system-profiles` | `src/native/profiles/` | `addons/system-profiles/` | [#92](https://github.com/Gusseti/toolboks/issues/92) |
-| Audio Gainer (Aural) | `toolboks.aural` | `src/native/aural/` | `addons/aural/` | [#93](https://github.com/Gusseti/toolboks/issues/93) |
-| Macro Manager | `toolboks.macro-manager` | `src/native/macros/` | `addons/macro-manager/` | [#93](https://github.com/Gusseti/toolboks/issues/93) |
+| Debloater | `toolboks.debloater` | `src/tools/debloat/` (copy also in the add-ons repo; host copy goes with #94) | `addons/debloater/` | [#92](https://github.com/Gusseti/toolboks/issues/92) (moved without administrator changes; those are #142) |
+| System Profiles | `toolboks.system-profiles` | `src/native/profiles/` (copy also in the add-ons repo; host copy goes with #94) | `addons/system-profiles/` | [#92](https://github.com/Gusseti/toolboks/issues/92) (review only; applying and restoring are #142) |
+| Audio Gainer (Aural) | `toolboks.aural` | `src/native/aural/` (copy also in the add-ons repo; host copy goes with #94) | `addons/aural/` | [#93](https://github.com/Gusseti/toolboks/issues/93) (code moved and window-checked; publication pending) |
+| Macro Manager | `toolboks.macro-manager` | `src/native/macros/` (copy also in the add-ons repo; host copy goes with #94) | `addons/macro-manager/` | [#93](https://github.com/Gusseti/toolboks/issues/93) (code moved and window-checked; recording behavior needs a real-input check; publication pending) |
 
 ### What stays in the host
 
@@ -131,6 +131,16 @@ What each tool needs beyond the common steps:
 | Event Watch | Checked: no page needs administrator rights. Event logs are read per channel, and a channel the user cannot read is reported in the page header as before. Crash dump headers are read as files (`filesystem_read`). It changes nothing and has no saved settings. |
 | Debloater, System Profiles | They change Windows. Undo information must survive an update or removal of the add-on. Use the per-change helper boundary decided in [#118](https://github.com/Gusseti/toolboks/issues/118) and implemented in #132; real UAC validation is still required. |
 | Audio Gainer, Macro Manager | Global input recording and live audio must work from a background process. The install review must name these rights plainly. |
+
+## Status, 2026-11-15
+
+All eight tools are in the add-ons repo and each was installed from a test catalog and opened in
+a real window with the preview app's `--addon-check <id> <folder>`. Found that way: an add-on
+process has no fonts of its own, so each add-on applies the Toolboks look when it first draws,
+and the shared font set-up loads Consolas for fixed-width text. Still open: every change that
+needs administrator rights in Debloater and System Profiles (#142), real UAC tests, the first
+releases and catalog entries, and the migration (#94). Until #142 is done, removing the built-in
+Debloater and System Profiles would take features away from users.
 
 ## Order
 
