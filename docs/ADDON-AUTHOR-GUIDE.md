@@ -11,7 +11,7 @@ There are two kinds of add-on:
 - **Native**: a separate exe that draws its own page with [egui](https://docs.rs/egui) and is
   shown inside the Toolboks window. This guide is about native add-ons.
 
-Toolboks installs native add-on executables through the signed catalog and starts them through
+Toolboks installs native add-on executables through the catalog and starts them through
 the supervisor. The test host below is useful for local drawing checks without publishing.
 Disk Manager is the pilot in `toolboks-addons/addons/disk-manager`; it retains protocol 2 until
 it is repinned and rebuilt after #132's protocol 3 elevated helper merges to staging.
@@ -148,7 +148,7 @@ things:
 The full format is in [catalog.md](catalog.md). The catalog is a plain list and is not signed.
 
 The first-party repository, release workflow (#83) and catalog browser (#86) are available.
-Disk Manager's first release and signed catalog entry still require the owner/orchestrator;
+Disk Manager's first release and catalog entry still require the owner/orchestrator;
 drive-changing optimization remains gated on #132. Only first-party add-ons are published for
 now; publishing by others needs its own plan (see
 [ADDON-THREAT-MODEL.md](ADDON-THREAT-MODEL.md)).

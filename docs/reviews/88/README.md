@@ -18,7 +18,7 @@ compiled in. No production catalog, tag or release is changed by this pilot.
 ## Elevation and #132
 
 The executable stays on protocol 2 and host dependency pin
-`5f7c39b04dc367379be0eb9396cfb7362af2ffa3`. Nothing here changes protocol or supervisor.
+`86c749cbd3a27de920329b512ea8a3f33baca74b`. Nothing here changes protocol or supervisor.
 After #132 merges to staging, repin all add-ons host dependencies and rebuild for protocol 3
 before publication, including the protocol integration tests and Windows helper wiring.
 
@@ -83,9 +83,9 @@ manual keyboard/scaling and UAC checks remain outside this automated run.
   itself emit preferences. The app currently does not periodically ask through that service.
   Check hidden preference changes before moving automatic/background tools. Disk Manager
   keeps completed report results in memory until the page saves them or the host asks.
-- The protocol 2 dependency pin predates catalog byline support and the unsigned envelope.
-  The required #132 repin must update release/catalog tooling to the new host types as well
-  as rebuilding executables, and carry the manifest's `by stratum` into catalog entries.
+- The protocol 2 pin now includes the unsigned envelope and catalog byline support.
+  Upgrade all host dependencies together when repinning for #132, regenerate the lockfile,
+  and recheck the catalog generator as well as every executable.
 - Stdio timings exclude download, named-pipe authentication and host rendering. Do not use
   them alone as evidence for the one-second visible-page budget or total app RAM.
 

@@ -8,13 +8,13 @@ project and executable have not been modified.
 
 Disk Manager is built in the [add-ons repository](https://github.com/fredhakon/toolboks-addons/tree/main/addons/disk-manager)
 as `disk-manager.exe`; the host no longer includes its code or activation package.
-After the owner publishes it in the signed catalog, use Add-on browser, choose Disk Manager,
+After the owner publishes it in the catalog, use Add-on browser, choose Disk Manager,
 review its access, and install it. The `.tbaddon` in the source repository describes the
 executable; installing that file alone does not install or activate a native provider.
 
 The pilot remains on protocol 2. Before publication, repin the add-ons repository's host
 dependencies and rebuild Disk Manager after #132 merges to staging. The first release and
-catalog signature belong to the owner/orchestrator. No catalog publication is part of this move.
+catalog review belong to the owner/orchestrator. No catalog publication is part of this move.
 
 Choose a drive, browse to a folder, or paste a folder path, then Analyze space. Scanning is read-only,
 runs on a worker thread. Stop scan keeps partial results while Disk Manager is open.

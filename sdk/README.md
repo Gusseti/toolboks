@@ -72,7 +72,7 @@ helpers and the tokens only, with no palette, font, radius or icon style of thei
 Publisher names in local manifests are descriptive, not authenticated identities.
 They never grant a checkmark. Embedded first-party records still cover the four built-in tools
 and the exact Audio Gainer, Macro Manager and System Profiles packages. Disk Manager has
-moved to `toolboks-addons`: it is an executable installed through the signed catalog, whose
+moved to `toolboks-addons`: it is an executable installed through the catalog, whose
 entry supplies verification, page names, capabilities and background behavior.
 
 API 2 adds the optional `byline` and `native_provider` manifest fields. `native-ui`
