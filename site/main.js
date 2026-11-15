@@ -321,3 +321,20 @@
 
   document.getElementById('bannerX').addEventListener('click', () => { document.getElementById('banner').style.opacity = .4; });
 })();
+
+// The version shown on the page is the newest GitHub release. The text in the HTML is the fallback
+// when the lookup fails (offline, blocked, rate limited), so the page never shows an empty version.
+(() => {
+  try {
+    fetch('https://api.github.com/repos/Gusseti/toolboks/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((release) => {
+        const version = release && String(release.tag_name || '').replace(/^v/, '');
+        if (!version || !/^\d+\.\d+\.\d+$/.test(version)) return;
+        document.querySelectorAll('[data-version]').forEach((el) => { el.textContent = version; });
+      })
+      .catch(() => {});
+  } catch (e) { /* the fallback text stays */ }
+})();

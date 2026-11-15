@@ -1,17 +1,21 @@
 name: Deploy landing page
 
 # Publishes site/ to GitHub Pages (https://gusseti.github.io/toolboks/).
-# Needs Settings > Pages > Source set to "GitHub Actions".
+#
+# Settings > Pages > Source should be "GitHub Actions". While it is still "Deploy from a branch",
+# GitHub rebuilds a plain page from README.md after EVERY push to main ("pages build and
+# deployment") and replaces this site; whichever deploy finishes last stays live. So this
+# workflow runs on every push to main, waits for GitHub's own README build of that commit to
+# finish, and only then publishes the landing page, so the landing page is always the last one.
+# Once the source is "GitHub Actions" the README build no longer runs and the wait ends at once.
 
 on:
   push:
     branches: [main]
-    paths:
-      - "site/**"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
   pages: write
   id-token: write
@@ -27,6 +31,19 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Wait for GitHub's own README build of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          none=0
+          for i in $(seq 1 36); do
+            state=$(gh run list --repo "$GITHUB_REPOSITORY" --limit 30 --json name,status,headSha               -q "[.[] | select(.name == \"pages build and deployment\" and .headSha == \"$SHA\")] | map(.status) | if length == 0 then \"none\" elif all(. == \"completed\") then \"done\" else \"running\" end")
+            echo "README build of $SHA: $state"
+            [ "$state" = "done" ] && break
+            if [ "$state" = "none" ]; then none=$((none + 1)); [ "$none" -ge 6 ] && break; fi
+            sleep 10
+          done
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
