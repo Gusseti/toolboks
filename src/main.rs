@@ -103,8 +103,11 @@ fn main() -> eframe::Result {
                     std::path::PathBuf::from(args.get(index + 2).expect("screenshot folder"));
                 assert!(std::env::var_os("TOOLBOKS_TEST_CATALOG").is_some());
                 assert!(std::env::var_os("TOOLBOKS_DATA_DIR").is_some());
+                // A fresh folder by default. `TOOLBOKS_CHECK_REUSE=1` keeps an earlier run's
+                // install and data, for checks that continue where the last one stopped.
                 assert!(
-                    !addons::data_root().exists(),
+                    std::env::var_os("TOOLBOKS_CHECK_REUSE").is_some()
+                        || !addons::data_root().exists(),
                     "Use a fresh isolated data folder"
                 );
                 std::fs::create_dir_all(&output).expect("create screenshot folder");

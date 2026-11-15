@@ -15,6 +15,8 @@ use toolboks_addon_proto::HostMessage;
 
 /// How long each page is shown before it is captured, so slow first readings can finish.
 const PAGE_WAIT: Duration = Duration::from_secs(5);
+/// How often a screenshot is saved while waiting for a person to answer a prompt.
+const HOLD_SHOT_EVERY: Duration = Duration::from_secs(10);
 
 pub struct Check {
     app: App,
@@ -29,6 +31,21 @@ pub struct Check {
     opened: Option<std::time::Instant>,
     first_frame_ms: Option<f64>,
     page_started: std::time::Instant,
+    /// `TOOLBOKS_CHECK_CLICK=x,y`: one click at this point after the first page is shown, for
+    /// checks that need a button pressed (for example one that raises a UAC prompt). The check
+    /// then waits `TOOLBOKS_CHECK_HOLD` seconds, saving a screenshot every few seconds, so a
+    /// person can answer the prompts.
+    click_at: Option<egui::Pos2>,
+    hold: Duration,
+    click: Option<(egui::Pos2, bool)>,
+    hold_started: std::time::Instant,
+    shots: usize,
+    /// `TOOLBOKS_CHECK_SCROLL=points`: scroll the page down by this much before the click.
+    scroll: Option<f32>,
+    scroll_now: Option<f32>,
+    /// `TOOLBOKS_CHECK_SCROLL_UP=1`: a few seconds after the click, scroll back to the top so the
+    /// screenshots show what the page reported.
+    scroll_up: bool,
 }
 
 impl Check {
@@ -37,6 +54,19 @@ impl Check {
         app.screen = Screen::Browser;
         app.sidebar_expanded = true;
         app.persist();
+        let click_at = std::env::var("TOOLBOKS_CHECK_CLICK")
+            .ok()
+            .and_then(|value| {
+                let (x, y) = value.split_once(',')?;
+                Some(egui::pos2(x.trim().parse().ok()?, y.trim().parse().ok()?))
+            });
+        let scroll = std::env::var("TOOLBOKS_CHECK_SCROLL")
+            .ok()
+            .and_then(|value| value.parse::<f32>().ok());
+        let hold = std::env::var("TOOLBOKS_CHECK_HOLD")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map_or(Duration::ZERO, Duration::from_secs);
         Self {
             app,
             id,
@@ -50,6 +80,14 @@ impl Check {
             opened: None,
             first_frame_ms: None,
             page_started: std::time::Instant::now(),
+            click_at,
+            hold,
+            click: None,
+            hold_started: std::time::Instant::now(),
+            shots: 0,
+            scroll,
+            scroll_now: None,
+            scroll_up: std::env::var_os("TOOLBOKS_CHECK_SCROLL_UP").is_some(),
         }
     }
     fn capture(&mut self, name: &str) {
@@ -76,6 +114,34 @@ impl Check {
 }
 
 impl eframe::App for Check {
+    fn raw_input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
+        if let Some(points) = self.scroll_now.take() {
+            input.focused = true;
+            input
+                .events
+                .push(egui::Event::PointerMoved(egui::pos2(800.0, 500.0)));
+            input.events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -points),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        if let Some((pos, pressed)) = self.click.take() {
+            input.focused = true;
+            input.events.push(egui::Event::PointerMoved(pos));
+            input.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            if pressed {
+                self.click = Some((pos, false));
+            }
+        }
+    }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.app.ui(ui, frame);
         if let Some(opened) = self.opened {
@@ -90,7 +156,7 @@ impl eframe::App for Check {
         let ctx = ui.ctx();
         ctx.request_repaint_after(Duration::from_millis(100));
         assert!(
-            self.started.elapsed() < Duration::from_secs(180),
+            self.started.elapsed() < Duration::from_secs(180) + self.hold,
             "{} check timed out at stage {}",
             self.id,
             self.stage
@@ -129,6 +195,13 @@ impl eframe::App for Check {
         }
         let pages = self.entry().map(|e| e.pages.clone()).unwrap_or_default();
         match self.stage {
+            0 if self.entry().is_some()
+                && crate::installer::native_exe(&self.app.registry.root, &self.id).is_some() =>
+            {
+                // Installed by an earlier run in this data folder.
+                self.stage = 4;
+                self.frames = 0;
+            }
             0 if self.entry().is_some() => {
                 let id = self.id.clone();
                 self.app.market.focused = Some(id);
@@ -165,6 +238,39 @@ impl eframe::App for Check {
             }) && self.page_started.elapsed() > PAGE_WAIT =>
             {
                 self.capture("04-open-page-1");
+            }
+            6 if self.click_at.is_some() || self.scroll.is_some() => {
+                self.scroll_now = self.scroll;
+                self.page_started = std::time::Instant::now();
+                self.stage = 19;
+                self.frames = 0;
+            }
+            19 if self.page_started.elapsed() > Duration::from_secs(2) => {
+                // The page has scrolled; a screenshot shows where the buttons ended up.
+                self.stage = 19;
+                self.capture("04b-scrolled");
+                self.stage = 20;
+            }
+            20 => {
+                self.click = self.click_at.map(|pos| (pos, true));
+                self.hold_started = std::time::Instant::now();
+                self.page_started = std::time::Instant::now();
+                self.stage = 21;
+            }
+            21 if self.scroll_up && self.hold_started.elapsed() > Duration::from_secs(6) => {
+                self.scroll_up = false;
+                self.scroll_now = Some(-3000.0);
+            }
+            21 if self.hold_started.elapsed() > self.hold => {
+                self.stage = 8;
+                self.frames = 0;
+            }
+            21 if self.page_started.elapsed() > HOLD_SHOT_EVERY => {
+                self.shots += 1;
+                let name = format!("click-{:02}", self.shots);
+                self.page_started = std::time::Instant::now();
+                self.stage = 20; // `capture` adds one, landing back on 21.
+                self.capture(&name);
             }
             6 => {
                 // Next page, or finish after the last one.
