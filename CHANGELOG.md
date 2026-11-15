@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-11-15
+
+### Added
+
+- **Privacy policy:** a new page on the Toolboks website states that Toolboks does not collect data and lists every time the app connects to the internet.
+
+### Changed
+
+- No changes to the app or its tools in this release.
+
 ## [0.12.5] - 2026-11-14
 
 ### Added

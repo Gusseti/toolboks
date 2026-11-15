@@ -1,0 +1,36 @@
+name: Release check
+
+# Runs on every pull request into main. It fails when the version in Cargo.toml
+# already has a published release, so a merge into main always ships a new version.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  version-is-new:
+    name: version-is-new
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Fail when this version is already released
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=$(grep -m1 -E '^version[[:space:]]*=' Cargo.toml | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+          if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Cargo.toml version '$version' is not a stable x.y.z version"
+            exit 1
+          fi
+          tag="v$version"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::error::Release $tag already exists. Bump the version in Cargo.toml (and the built-in add-on manifests), then push again."
+            exit 1
+          fi
+          echo "Version $version has no release yet. OK."
