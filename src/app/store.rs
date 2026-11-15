@@ -223,12 +223,14 @@ fn icon(painter: &egui::Painter, rect: Rect, name: &str, color: Color32) {
     }
 }
 
-fn row(
+/// One add-on row. With `check` it also shows a checkbox at the right, for the first-run picker.
+pub(super) fn row(
     ui: &mut egui::Ui,
     entry: &Entry,
     selected: bool,
     state: &str,
     installed: bool,
+    check: Option<bool>,
 ) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_HEIGHT), Sense::click());
@@ -254,30 +256,35 @@ fn row(
             );
         }
         let tile = Rect::from_min_size(rect.min + Vec2::new(12.0, 17.0), Vec2::splat(40.0));
-        painter.rect_filled(tile, 10, PANEL_BG);
-        painter.rect_stroke(
-            tile,
-            10,
-            Stroke::new(
-                1.0,
-                if selected {
-                    Color32::from_rgb(0x33, 0x36, 0x3e)
-                } else {
-                    BORDER
-                },
-            ),
-            egui::StrokeKind::Inside,
-        );
-        icon(
-            painter,
-            Rect::from_center_size(tile.center(), Vec2::splat(20.0)),
-            &entry.icon,
-            TEXT,
-        );
+        paint_tile(painter, tile, &entry.icon, selected);
+        let right = rect.right() - 12.0 - if check.is_some() { 30.0 } else { 0.0 };
+        if let Some(on) = check {
+            let boxed = Rect::from_center_size(
+                egui::pos2(rect.right() - 12.0 - 9.0, rect.center().y),
+                Vec2::splat(18.0),
+            );
+            painter.rect_filled(boxed, 5, if on { PRIMARY } else { PANEL_BG });
+            painter.rect_stroke(
+                boxed,
+                5,
+                Stroke::new(
+                    1.0,
+                    if on {
+                        PRIMARY
+                    } else {
+                        Color32::from_rgb(0x4a, 0x4d, 0x57)
+                    },
+                ),
+                egui::StrokeKind::Inside,
+            );
+            if on {
+                icon(painter, boxed.shrink(2.0), "check", Color32::WHITE);
+            }
+        }
         let state_color = if installed { look::GREEN } else { MUTED };
         let state_text = painter.layout_no_wrap(state.into(), font(13.0, 400), state_color);
         let state_width = state_text.size().x + if installed { 21.0 } else { 0.0 };
-        let state_left = rect.right() - 12.0 - state_width;
+        let state_left = right - state_width;
         let left = rect.left() + 66.0;
         let text_rect = Rect::from_min_max(
             egui::pos2(left, rect.top()),
@@ -342,7 +349,7 @@ fn row(
         }
         painter.galley(
             egui::pos2(
-                rect.right() - 12.0 - state_text.size().x,
+                right - state_text.size().x,
                 rect.center().y - state_text.size().y / 2.0 - 1.0,
             ),
             state_text,
@@ -351,9 +358,13 @@ fn row(
     }
     response.widget_info(|| {
         egui::WidgetInfo::selected(
-            egui::Role::Button,
+            if check.is_some() {
+                egui::Role::CheckBox
+            } else {
+                egui::Role::Button
+            },
             true,
-            selected,
+            check.unwrap_or(selected),
             format!("{}, {}", entry.title, state),
         )
     });
@@ -422,7 +433,7 @@ impl App {
                                     for entry in entries {
                                         let installed=self.installed_version(&entry.id).is_some();
                                         let status=self.market_status(&entry.id).unwrap_or_else(||if installed {"Installed".into()}else{entry.category.clone()});
-                                        if row(ui,entry,self.market.focused.as_ref()==Some(&entry.id),&status,installed&&status=="Installed").clicked(){self.market.focused=Some(entry.id.clone());}
+                                        if row(ui,entry,self.market.focused.as_ref()==Some(&entry.id),&status,installed&&status=="Installed",None).clicked(){self.market.focused=Some(entry.id.clone());}
                                     }
                                     if entries.is_empty(){ui.label(text("No add-ons match. Clear the search or choose another category.",13.0,400,MUTED));}
                                     ui.add_space(6.0);
@@ -460,53 +471,11 @@ impl App {
                 .wrap(),
         );
         ui.add_space(4.0);
-        ui.label(text(
-            match &entry.byline {
-                Some(byline) => {
-                    format!(
-                        "{byline} \u{b7} {} \u{b7} {}",
-                        entry.publisher, entry.category
-                    )
-                }
-                None => format!("{} \u{b7} {}", entry.publisher, entry.category),
-            },
-            13.0,
-            400,
-            MUTED,
-        ));
+        ui.label(text(meta_line(entry), 13.0, 400, MUTED));
         ui.add_space(16.0);
         ui.label(text(&entry.short_description, 14.0, 400, MUTED));
         ui.add_space(16.0);
-        egui::Frame::new()
-            .fill(PANEL_BG)
-            .stroke(Stroke::new(1.0, BORDER))
-            .corner_radius(8)
-            .inner_margin(Margin::symmetric(12, 10))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal_top(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
-                    icon(
-                        ui.painter(),
-                        rect,
-                        if entry.verified { "verified" } else { "grid" },
-                        if entry.verified { ACCENT_TEXT } else { MUTED },
-                    );
-                    ui.add(
-                        egui::Label::new(text(
-                            if entry.verified {
-                                "Toolboks verified. Built and checked by the Toolboks team."
-                            } else {
-                                "Community add-on. Not checked by the Toolboks team."
-                            },
-                            13.0,
-                            400,
-                            MUTED,
-                        ))
-                        .wrap(),
-                    );
-                });
-            });
+        trust_card(ui, entry.verified);
         ui.add_space(14.0);
         let line = ui
             .allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover())
@@ -515,25 +484,7 @@ impl App {
         ui.add_space(14.0);
         ui.label(text("It can", 13.0, 600, TEXT));
         ui.add_space(10.0);
-        if entry.capabilities.is_empty() {
-            ui.label(text("No extra host access requested.", 14.0, 400, MUTED));
-        }
-        for capability in &entry.capabilities {
-            ui.horizontal_top(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
-                icon(ui.painter(), rect, "check", ACCENT_TEXT);
-                ui.add(egui::Label::new(text(market::access(capability), 14.0, 400, MUTED)).wrap());
-            });
-            ui.add_space(10.0);
-        }
-        if entry.kind == crate::catalog::Kind::Native {
-            ui.label(text(
-                "Runs a program on your PC, not in a security sandbox.",
-                13.0,
-                400,
-                MUTED,
-            ));
-        }
+        access_lines(ui, entry);
         let installed = self.installed_version(&entry.id);
         let update = market::update_available(installed.as_deref(), entry);
         let busy = self
@@ -584,5 +535,244 @@ impl App {
                 }
             });
         });
+    }
+}
+
+/// How a button looks: the one main action, a plain one, or one that removes something.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Look {
+    Primary,
+    Secondary,
+    Danger,
+}
+
+/// A button in the landing page's style.
+pub(super) fn button(ui: &mut egui::Ui, label: &str, kind: Look) -> egui::Response {
+    ui.scope(|ui| {
+        let (size, weight, padding, radius) = match kind {
+            Look::Primary => (16.0, 600, Vec2::new(21.0, 15.0), 8),
+            _ => (14.0, 400, Vec2::new(14.0, 9.0), 6),
+        };
+        ui.spacing_mut().button_padding = padding;
+        let color = match kind {
+            Look::Primary => Color32::WHITE,
+            Look::Secondary => TEXT,
+            Look::Danger => look::RED,
+        };
+        let button = egui::Button::new(text(label, size, weight, color).line_height(Some(size)))
+            .corner_radius(radius)
+            .min_size(Vec2::ZERO);
+        let button = if kind == Look::Primary {
+            button.fill(PRIMARY).stroke(Stroke::new(1.0, PRIMARY))
+        } else {
+            button
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::new(1.0, Color32::from_rgb(0x33, 0x36, 0x3e)))
+        };
+        ui.add(button)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+    })
+    .inner
+}
+
+/// A page title, 22 px bold, with a sentence under it.
+pub(super) fn page_title(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.add(egui::Label::new(text(title, 22.0, 700, TEXT).extra_letter_spacing(-0.44)).wrap());
+    if !subtitle.is_empty() {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(text(subtitle, 14.0, 400, MUTED)).wrap());
+    }
+    ui.add_space(16.0);
+}
+
+/// A line of text in the strong colour and weight, such as an add-on's name in a list.
+pub(super) fn strong(ui: &mut egui::Ui, value: &str, size: f32) {
+    ui.label(text(value, size, 600, TEXT));
+}
+
+/// A section heading: 13 px semibold.
+pub(super) fn heading(ui: &mut egui::Ui, label: &str) {
+    ui.label(text(label, 13.0, 600, TEXT));
+}
+
+/// Body text in the muted colour, wrapped. 14 px for reading, 13 px for notes.
+pub(super) fn paragraph(ui: &mut egui::Ui, value: &str, size: f32) {
+    ui.add(egui::Label::new(text(value, size, 400, MUTED)).wrap());
+}
+
+/// A one pixel divider across the available width.
+pub(super) fn rule(ui: &mut egui::Ui) {
+    let line = ui
+        .allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover())
+        .0;
+    ui.painter().rect_filled(line, 0, DIVIDER);
+}
+
+/// The rounded frame the browser sits in.
+pub(super) fn card<R>(ui: &mut egui::Ui, margin: i8, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(WINDOW_BG)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(12)
+        .inner_margin(margin)
+        .show(ui, add)
+        .inner
+}
+
+fn paint_tile(painter: &egui::Painter, tile: Rect, name: &str, selected: bool) {
+    painter.rect_filled(tile, 10, PANEL_BG);
+    painter.rect_stroke(
+        tile,
+        10,
+        Stroke::new(
+            1.0,
+            if selected {
+                Color32::from_rgb(0x33, 0x36, 0x3e)
+            } else {
+                BORDER
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    icon(
+        painter,
+        Rect::from_center_size(tile.center(), Vec2::splat(20.0)),
+        name,
+        TEXT,
+    );
+}
+
+/// The 40 px icon tile of an add-on.
+pub(super) fn tile(ui: &mut egui::Ui, name: &str) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
+    paint_tile(ui.painter(), rect, name, false);
+}
+
+/// The purple "Verified" pill.
+pub(super) fn verified_pill(ui: &mut egui::Ui) {
+    let (badge, _) = ui.allocate_exact_size(Vec2::new(69.0, 17.2), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(
+        badge,
+        99,
+        Color32::from_rgba_unmultiplied(0x8b, 0x5c, 0xf6, 0x33),
+    );
+    icon(
+        painter,
+        Rect::from_min_size(badge.min + Vec2::new(4.0, 2.0), Vec2::splat(13.0)),
+        "verified",
+        ACCENT_TEXT,
+    );
+    painter.text(
+        badge.min + Vec2::new(22.0, 8.6),
+        egui::Align2::LEFT_CENTER,
+        "Verified",
+        font(11.0, 500),
+        ACCENT_TEXT,
+    );
+}
+
+/// A small state pill for the sidebar: an update, a download or a failure.
+pub(super) fn status_pill(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let color = if label.starts_with("Could not") {
+        look::RED
+    } else if label.starts_with("Update") {
+        ACCENT_TEXT
+    } else {
+        MUTED
+    };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font(11.0, 500), color);
+    let width = (galley.size().x + 16.0).min(ui.available_width().max(40.0));
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 19.0), Sense::click());
+    ui.painter().rect_filled(
+        rect,
+        99,
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 0x26),
+    );
+    let clipped = ui
+        .painter()
+        .with_clip_rect(rect.shrink2(Vec2::new(4.0, 0.0)));
+    clipped.galley(
+        egui::pos2(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The "Toolboks verified" card.
+pub(super) fn trust_card(ui: &mut egui::Ui, verified: bool) {
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
+        egui::Frame::new()
+            .fill(PANEL_BG)
+            .stroke(Stroke::new(1.0, BORDER))
+            .corner_radius(8)
+            .inner_margin(Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_top(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
+                    icon(
+                        ui.painter(),
+                        rect,
+                        if verified { "verified" } else { "grid" },
+                        if verified { ACCENT_TEXT } else { MUTED },
+                    );
+                    ui.add(
+                        egui::Label::new(text(
+                            if verified {
+                                "Toolboks verified. Built and checked by the Toolboks team."
+                            } else {
+                                "Community add-on. Not checked by the Toolboks team."
+                            },
+                            13.0,
+                            400,
+                            MUTED,
+                        ))
+                        .wrap(),
+                    );
+                });
+            });
+    });
+}
+
+/// What an add-on can access, one line each with a check.
+pub(super) fn access_lines(ui: &mut egui::Ui, entry: &Entry) {
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
+        if entry.capabilities.is_empty() {
+            ui.label(text("No extra host access requested.", 14.0, 400, MUTED));
+        }
+        for capability in &entry.capabilities {
+            ui.horizontal_top(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                icon(ui.painter(), rect, "check", ACCENT_TEXT);
+                ui.add(egui::Label::new(text(market::access(capability), 14.0, 400, MUTED)).wrap());
+            });
+            ui.add_space(10.0);
+        }
+        if entry.kind == crate::catalog::Kind::Native {
+            ui.label(text(
+                "Runs a program on your PC, not in a security sandbox.",
+                13.0,
+                400,
+                MUTED,
+            ));
+        }
+    });
+}
+
+/// The grey line under a title: byline, publisher and category.
+pub(super) fn meta_line(entry: &Entry) -> String {
+    match &entry.byline {
+        Some(byline) => format!(
+            "{byline} \u{b7} {} \u{b7} {}",
+            entry.publisher, entry.category
+        ),
+        None => format!("{} \u{b7} {}", entry.publisher, entry.category),
     }
 }

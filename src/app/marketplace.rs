@@ -1,7 +1,9 @@
-use super::shell::{caption, muted, panel, primary, section, Screen};
+use super::shell::{muted, Screen};
+use super::store;
 use super::*;
 use crate::catalog::Entry;
 use crate::marketplace::{self as market, InstallStatus};
+use crate::ui::{MUTED, TEXT};
 use egui::Vec2;
 use toolboks_addon_sdk::tutorial as anchors;
 
@@ -150,9 +152,10 @@ impl App {
     fn catalog_notice(&mut self, ui: &mut egui::Ui) {
         #[cfg(feature = "preview")]
         if std::env::var_os("TOOLBOKS_TEST_CATALOG").is_some() {
-            caption(
+            store::paragraph(
                 ui,
                 "Local test catalog. These are SDK samples, not published tools.",
+                13.0,
             );
         }
         if self.market.loading {
@@ -177,12 +180,13 @@ impl App {
             self.install_review(ui);
             return;
         }
-        let width = ui.available_width().min(720.0);
+        let width = ui.available_width().min(760.0);
         ui.horizontal_top(|ui| {
             ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
             ui.vertical(|ui| {
                 ui.set_width(width);
-                Self::title(
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
+                store::page_title(
                     ui,
                     "Pick your tools",
                     "Add the tools you need. You can add or remove them later.",
@@ -196,88 +200,99 @@ impl App {
                     .cloned()
                     .collect();
                 entries.sort_by_key(market::pick_rank);
-                caption(ui, "From the Toolboks team. No tools selected by default.");
-                anchors::region(ui, "browser-list", |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("tool-picker")
-                        .max_height((ui.available_height() - 130.0).max(60.0))
-                        .show(ui, |ui| {
-                            for entry in entries {
-                                let installed = self.installed_version(&entry.id).is_some();
-                                let busy = self
-                                    .market
-                                    .jobs
-                                    .get(&entry.id)
-                                    .is_some_and(|job| job.status.busy());
-                                ui.separator();
-                                ui.horizontal_top(|ui| {
-                                    let mut selected = self.market.selected.contains(&entry.id);
-                                    let response = ui
-                                        .add_enabled(
-                                            !installed && !busy && market::can_install(&entry),
-                                            egui::Checkbox::new(&mut selected, ""),
-                                        )
-                                        .on_hover_text(format!("Select {}", entry.title));
-                                    response.widget_info(|| {
-                                        egui::WidgetInfo::selected(
-                                            egui::Role::CheckBox,
-                                            !installed && !busy,
-                                            selected,
-                                            &entry.title,
-                                        )
-                                    });
-                                    if response.changed() {
-                                        self.market.select(&entry.id, selected);
-                                    }
-                                    ui.vertical(|ui| {
-                                        ui.set_width((width - 145.0).max(130.0));
-                                        ui.strong(&entry.title);
-                                        muted(ui, &entry.short_description);
-                                        if let Some(job) = self.market.jobs.get(&entry.id) {
-                                            caption(ui, job.status.label());
-                                        }
-                                    });
-                                    ui.vertical(|ui| {
-                                        caption(ui, market::size(entry.size));
-                                        if installed && ui.button("Open").clicked() {
-                                            self.open_market_addon(&entry.id);
-                                        }
-                                    });
-                                });
-                            }
-                            self.job_list(ui);
-                        });
-                });
-                ui.separator();
-                let selected = self.market.selected_entries();
-                caption(
+                store::paragraph(
                     ui,
-                    format!(
-                        "{} selected - {} download",
+                    "From the Toolboks team. No tools selected by default.",
+                    13.0,
+                );
+                ui.add_space(12.0);
+                let list_height = (ui.available_height() - 150.0).max(120.0);
+                anchors::region(ui, "browser-list", |ui| {
+                    store::card(ui, 8, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("tool-picker")
+                            .max_height(list_height)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                for entry in &entries {
+                                    self.pick_row(ui, entry);
+                                }
+                                self.job_list(ui);
+                            });
+                    });
+                });
+                ui.add_space(16.0);
+                let selected = self.market.selected_entries();
+                store::paragraph(
+                    ui,
+                    &format!(
+                        "{} selected \u{b7} {} download",
                         selected.len(),
                         market::size(selected.iter().map(|entry| entry.size).sum())
                     ),
+                    13.0,
                 );
-                muted(ui, "Review what they ask to access before installing.");
+                store::paragraph(
+                    ui,
+                    "Review what they ask to access before installing.",
+                    13.0,
+                );
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Skip").clicked() {
-                        self.finish_picker();
-                    }
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let enabled = !selected.is_empty() && !self.market.loading;
                     if ui
-                        .add_enabled_ui(!selected.is_empty() && !self.market.loading, |ui| {
-                            primary(ui, "Install selected")
+                        .add_enabled_ui(enabled, |ui| {
+                            store::button(ui, "Install selected", store::Look::Primary)
                         })
                         .inner
                         .clicked()
                     {
                         self.market.review = Some(selected);
                     }
-                    if ui.button("Browse all add-ons").clicked() {
+                    if store::button(ui, "Skip", store::Look::Secondary).clicked() {
+                        self.finish_picker();
+                    }
+                    if store::button(ui, "Browse all add-ons", store::Look::Secondary).clicked() {
                         self.screen = Screen::Browser;
                     }
                 });
             });
         });
+    }
+
+    /// One row of the first-run picker: click it to tick or untick the add-on.
+    fn pick_row(&mut self, ui: &mut egui::Ui, entry: &Entry) {
+        let installed = self.installed_version(&entry.id).is_some();
+        let job = self
+            .market
+            .jobs
+            .get(&entry.id)
+            .map(|job| job.status.clone());
+        let busy = job.as_ref().is_some_and(InstallStatus::busy);
+        let selectable = !installed && !busy && market::can_install(entry);
+        let on = self.market.selected.contains(&entry.id);
+        let state = match &job {
+            Some(status) if !installed => status.label(),
+            _ if installed => "Installed".to_owned(),
+            _ => market::size(entry.size),
+        };
+        let response = store::row(
+            ui,
+            entry,
+            on,
+            &state,
+            installed && job.is_none(),
+            selectable.then_some(on),
+        );
+        if response.clicked() {
+            if installed {
+                self.open_market_addon(&entry.id);
+            } else if selectable {
+                self.market.select(&entry.id, !on);
+            }
+        }
     }
 
     pub(super) fn marketplace_ui(&mut self, ui: &mut egui::Ui) {
@@ -286,20 +301,22 @@ impl App {
             return;
         }
         if self.show_install {
-            if ui.button("Back to add-ons").clicked() {
+            if store::button(ui, "Back to add-ons", store::Look::Secondary).clicked() {
                 self.show_install = false;
             }
+            ui.add_space(12.0);
             self.browser(ui);
             return;
         }
         if self.market.details {
-            if ui.button("Back to add-ons").clicked() {
+            if store::button(ui, "Back to add-ons", store::Look::Secondary).clicked() {
                 self.market.details = false;
             }
+            ui.add_space(12.0);
             if let Some(entry) = self.focused_entry() {
                 egui::ScrollArea::vertical()
                     .id_salt("addon-full-detail")
-                    .show(ui, |ui| self.catalog_detail(ui, &entry, true));
+                    .show(ui, |ui| self.catalog_detail(ui, &entry));
             }
             return;
         }
@@ -344,20 +361,100 @@ impl App {
             .or_else(|| self.market.jobs.get(id).map(|job| job.entry.clone()))
     }
 
-    fn catalog_detail(&mut self, ui: &mut egui::Ui, entry: &Entry, full: bool) {
-        Self::title(ui, &entry.title, &entry.short_description);
-        caption(
-            ui,
-            format!(
-                "Published by {}{}",
-                entry.publisher,
-                if entry.verified {
-                    " - Toolboks verified"
-                } else {
-                    ""
+    fn catalog_detail(&mut self, ui: &mut egui::Ui, entry: &Entry) {
+        let width = ui.available_width().min(720.0);
+        ui.horizontal_top(|ui| {
+            ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+            ui.vertical(|ui| {
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
+                store::page_title(ui, &entry.title, "");
+                ui.add_space(-12.0);
+                ui.label(
+                    egui::RichText::new(store::meta_line(entry))
+                        .size(13.0)
+                        .color(MUTED),
+                );
+                ui.add_space(16.0);
+                store::paragraph(ui, &entry.short_description, 14.0);
+                ui.add_space(16.0);
+                store::trust_card(ui, entry.verified);
+                ui.add_space(16.0);
+                self.detail_actions(ui, entry);
+                // A download in progress, a failure with Try again, or a finished install.
+                if self.market.jobs.contains_key(&entry.id) {
+                    ui.add_space(12.0);
+                    self.job_actions(ui, &entry.id);
                 }
-            ),
-        );
+                ui.add_space(16.0);
+                store::rule(ui);
+                ui.add_space(14.0);
+                for url in entry.screenshots.iter().take(8) {
+                    self.market.image(url, ui.ctx());
+                    match self.market.images.get(url) {
+                        Some(Ok(bytes)) => {
+                            ui.add(
+                                egui::Image::from_bytes(format!("bytes://{url}"), bytes.clone())
+                                    .fit_to_exact_size(Vec2::new(ui.available_width(), 220.0))
+                                    .maintain_aspect_ratio(true)
+                                    .corner_radius(8),
+                            );
+                        }
+                        Some(Err(_)) => {
+                            store::paragraph(ui, "This screenshot could not be loaded.", 13.0)
+                        }
+                        None => store::paragraph(ui, "Loading screenshot...", 13.0),
+                    }
+                    ui.add_space(10.0);
+                }
+                if entry.screenshots.is_empty() {
+                    store::paragraph(ui, "No screenshots supplied by the publisher.", 13.0);
+                    ui.add_space(10.0);
+                }
+                store::paragraph(
+                    ui,
+                    if entry.long_description.is_empty() {
+                        &entry.short_description
+                    } else {
+                        &entry.long_description
+                    },
+                    14.0,
+                );
+                ui.add_space(16.0);
+                store::rule(ui);
+                ui.add_space(14.0);
+                store::heading(ui, "It can");
+                ui.add_space(10.0);
+                store::access_lines(ui, entry);
+                ui.add_space(6.0);
+                store::heading(ui, "Works with");
+                ui.add_space(6.0);
+                store::paragraph(
+                    ui,
+                    &format!(
+                        "Toolboks {} or newer. This build supports its add-on connection.",
+                        entry.min_toolboks_version
+                    ),
+                    14.0,
+                );
+                ui.add_space(16.0);
+                store::heading(ui, "What's new");
+                ui.add_space(6.0);
+                store::paragraph(
+                    ui,
+                    if entry.release_notes.is_empty() {
+                        "No release notes supplied."
+                    } else {
+                        &entry.release_notes
+                    },
+                    14.0,
+                );
+            });
+        });
+    }
+
+    /// The Install, Update, Open and Remove buttons with the version and size under them.
+    fn detail_actions(&mut self, ui: &mut egui::Ui, entry: &Entry) {
         let installed = self.installed_version(&entry.id);
         let update = market::update_available(installed.as_deref(), entry);
         let accepted = self
@@ -372,176 +469,187 @@ impl App {
             .is_some_and(|job| job.status.busy());
         anchors::region(ui, "browser-review", |ui| {
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(10.0, 8.0);
                 if installed.is_none() || update {
+                    let enabled =
+                        accepted && market::can_install(entry) && !busy && !self.market.loading;
+                    let label = if update { "Update" } else { "Install" };
                     if ui
-                        .add_enabled_ui(
-                            accepted && market::can_install(entry) && !busy && !self.market.loading,
-                            |ui| primary(ui, if update { "Update" } else { "Install" }),
-                        )
+                        .add_enabled_ui(enabled, |ui| {
+                            store::button(ui, label, store::Look::Primary)
+                        })
                         .inner
                         .clicked()
                     {
                         self.market.review = Some(vec![entry.clone()]);
                     }
-                } else if primary(ui, "Open").clicked() {
+                } else if store::button(ui, "Open", store::Look::Primary).clicked() {
                     self.open_market_addon(&entry.id);
                 }
                 if installed.is_some() {
-                    if update && ui.button("Open installed version").clicked() {
+                    if update
+                        && store::button(ui, "Open installed version", store::Look::Secondary)
+                            .clicked()
+                    {
                         self.open_market_addon(&entry.id);
                     }
-                    if ui.add_enabled(!busy, egui::Button::new("Remove")).clicked() {
+                    if ui
+                        .add_enabled_ui(!busy, |ui| {
+                            store::button(ui, "Remove", store::Look::Danger)
+                        })
+                        .inner
+                        .clicked()
+                    {
                         self.market.remove = Some((entry.id.clone(), false));
                     }
                 }
-                if !full && ui.button("View details").clicked() {
-                    self.market.details = true;
-                }
             });
         });
+        ui.add_space(10.0);
         if let Some(version) = installed {
-            caption(
+            store::paragraph(
                 ui,
-                format!(
+                &format!(
                     "Installed version {version}{}",
-                    if update { " - Update available" } else { "" }
+                    if update {
+                        " \u{b7} Update available"
+                    } else {
+                        ""
+                    }
                 ),
+                13.0,
             );
         }
-        caption(
+        store::paragraph(
             ui,
-            format!(
-                "{} download - Version {}",
+            &format!(
+                "{} download \u{b7} Version {}",
                 market::size(entry.size),
                 entry.version
             ),
+            13.0,
         );
-        caption(
+        store::paragraph(
             ui,
             "You will review its access before installing. Removing it can undo an install.",
+            13.0,
         );
-        ui.add_space(12.0);
-        if entry.screenshots.is_empty() {
-            muted(ui, "No screenshots supplied by the publisher.");
-        }
-        for url in entry.screenshots.iter().take(if full { 8 } else { 1 }) {
-            self.market.image(url, ui.ctx());
-            match self.market.images.get(url) {
-                Some(Ok(bytes)) => {
-                    ui.add(
-                        egui::Image::from_bytes(format!("bytes://{url}"), bytes.clone())
-                            .fit_to_exact_size(Vec2::new(ui.available_width(), 200.0))
-                            .maintain_aspect_ratio(true),
-                    );
-                }
-                Some(Err(_)) => muted(ui, "This screenshot could not be loaded."),
-                None => muted(ui, "Loading screenshot..."),
-            }
-        }
-        ui.add_space(12.0);
-        muted(
-            ui,
-            if entry.long_description.is_empty() {
-                &entry.short_description
-            } else {
-                &entry.long_description
-            },
-        );
-        ui.add_space(12.0);
-        section(ui, "What it asks to access");
-        if entry.capabilities.is_empty() {
-            muted(ui, "No extra host access requested.");
-        }
-        for capability in &entry.capabilities {
-            muted(ui, market::access(capability));
-        }
-        if entry.kind == crate::catalog::Kind::Native {
-            muted(
-                ui,
-                "This add-on runs a program on your PC. Its access list is not a security sandbox.",
-            );
-        }
-        ui.add_space(12.0);
-        section(ui, "Works with");
-        muted(
-            ui,
-            format!(
-                "Toolboks {} or newer. This build supports its add-on connection.",
-                entry.min_toolboks_version
-            ),
-        );
-        ui.add_space(12.0);
-        section(ui, "What's new");
-        muted(
-            ui,
-            if entry.release_notes.is_empty() {
-                "No release notes supplied."
-            } else {
-                &entry.release_notes
-            },
-        );
-        self.job_actions(ui, &entry.id);
     }
 
     fn install_review(&mut self, ui: &mut egui::Ui) {
         let entries = self.market.review.clone().unwrap_or_default();
-        Self::title(
-            ui,
-            "Review installation",
-            "Only the add-ons below will be installed. Nothing has been downloaded yet.",
-        );
-        egui::ScrollArea::vertical().id_salt("grouped-install-review").max_height((ui.available_height() - 95.0).max(100.0)).show(ui, |ui| {
-            for entry in &entries {
-                ui.separator();
-                section(ui, &entry.title);
-                caption(ui, format!("{} - Version {} - Published by {}", market::size(entry.size), entry.version, entry.publisher));
-                for capability in &entry.capabilities { muted(ui, market::access(capability)); }
-                if entry.capabilities.is_empty() { muted(ui, "No extra host access requested."); }
-                if entry.kind == crate::catalog::Kind::Native { muted(ui, "Runs a program on your PC, not in a security sandbox. Open tools will close for the update."); }
-            }
-        });
-        ui.separator();
-        caption(
-            ui,
-            format!(
-                "{} add-ons - {} total download",
-                entries.len(),
-                market::size(entries.iter().map(|entry| entry.size).sum())
-            ),
-        );
-        muted(ui, "You can remove an add-on later. Its saved data is kept unless you choose to delete it.");
-        ui.horizontal(|ui| {
-            if primary(
-                ui,
-                if entries.len() == 1 {
-                    "Install add-on"
-                } else {
-                    "Install these add-ons"
-                },
-            )
-            .clicked()
-            {
-                for entry in &entries {
-                    if let Some(supervisor) = &mut self.supervisor {
-                        supervisor.stop(&entry.id, std::time::Instant::now());
+        let width = ui.available_width().min(760.0);
+        ui.horizontal_top(|ui| {
+            ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+            ui.vertical(|ui| {
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
+                store::page_title(
+                    ui,
+                    "Review installation",
+                    "Only the add-ons below will be installed. Nothing has been downloaded yet.",
+                );
+                let list_height = (ui.available_height() - 190.0).max(120.0);
+                store::card(ui, 16, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("grouped-install-review")
+                        .max_height(list_height)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for (index, entry) in entries.iter().enumerate() {
+                                if index > 0 {
+                                    ui.add_space(16.0);
+                                    store::rule(ui);
+                                    ui.add_space(16.0);
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 14.0;
+                                    store::tile(ui, &entry.icon);
+                                    ui.vertical(|ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 2.0);
+                                        ui.horizontal(|ui| {
+                                            store::strong(ui, &entry.title, 15.0);
+                                            if entry.verified {
+                                                store::verified_pill(ui);
+                                            }
+                                        });
+                                        store::paragraph(
+                                            ui,
+                                            &format!(
+                                                "{} \u{b7} Version {} \u{b7} Published by {}",
+                                                market::size(entry.size),
+                                                entry.version,
+                                                entry.publisher
+                                            ),
+                                            13.0,
+                                        );
+                                    });
+                                });
+                                ui.add_space(14.0);
+                                store::heading(ui, "It can");
+                                ui.add_space(10.0);
+                                store::access_lines(ui, entry);
+                                if entry.kind == crate::catalog::Kind::Native {
+                                    ui.add_space(6.0);
+                                    store::paragraph(
+                                        ui,
+                                        "Open tools will close for the update.",
+                                        13.0,
+                                    );
+                                }
+                            }
+                        });
+                });
+                ui.add_space(16.0);
+                store::paragraph(
+                    ui,
+                    &format!(
+                        "{} add-on{} \u{b7} {} total download",
+                        entries.len(),
+                        if entries.len() == 1 { "" } else { "s" },
+                        market::size(entries.iter().map(|entry| entry.size).sum())
+                    ),
+                    13.0,
+                );
+                store::paragraph(
+                    ui,
+                    "You can remove an add-on later. Its saved data is kept unless you choose to delete it.",
+                    13.0,
+                );
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let label = if entries.len() == 1 {
+                        "Install add-on"
+                    } else {
+                        "Install these add-ons"
+                    };
+                    if store::button(ui, label, store::Look::Primary).clicked() {
+                        for entry in &entries {
+                            if let Some(supervisor) = &mut self.supervisor {
+                                supervisor.stop(&entry.id, std::time::Instant::now());
+                            }
+                            self.views.remove(&entry.id);
+                        }
+                        self.market.review = None;
+                        self.market.queue(entries.clone());
+                        self.registry.config.first_run_complete = true;
+                        self.persist();
                     }
-                    self.views.remove(&entry.id);
-                }
-                self.market.review = None;
-                self.market.queue(entries);
-                self.registry.config.first_run_complete = true;
-                self.persist();
-            }
-            if ui.button("Cancel").clicked() {
-                self.market.review = None;
-            }
+                    if store::button(ui, "Cancel", store::Look::Secondary).clicked() {
+                        self.market.review = None;
+                    }
+                });
+            });
         });
     }
 
     fn job_list(&mut self, ui: &mut egui::Ui) {
         let ids: Vec<_> = self.market.jobs.keys().cloned().collect();
         for id in ids {
-            section(ui, &self.market.jobs[&id].entry.title.clone());
+            ui.add_space(8.0);
+            store::heading(ui, &self.market.jobs[&id].entry.title.clone());
+            ui.add_space(4.0);
             self.job_actions(ui, &id);
         }
     }
@@ -552,18 +660,20 @@ impl App {
         };
         let entry = job.entry.clone();
         let status = job.status.clone();
-        caption(ui, status.label());
+        store::paragraph(ui, &status.label(), 13.0);
         if let InstallStatus::Failed(error) = &status {
-            muted(ui, error);
+            store::paragraph(ui, error, 13.0);
         }
+        ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(10.0, 8.0);
             if status.busy() {
-                if ui.button("Cancel download").clicked() {
+                if store::button(ui, "Cancel download", store::Look::Secondary).clicked() {
                     self.market.cancel(id);
                 }
             } else {
                 if matches!(status, InstallStatus::Ready) {
-                    if ui.button("Open").clicked() {
+                    if store::button(ui, "Open", store::Look::Secondary).clicked() {
                         self.open_market_addon(id);
                     }
                 } else if self
@@ -571,11 +681,11 @@ impl App {
                     .entries
                     .iter()
                     .any(|available| available == &entry)
-                    && ui.button("Try again").clicked()
+                    && store::button(ui, "Try again", store::Look::Secondary).clicked()
                 {
                     self.market.review = Some(vec![entry]);
                 }
-                if ui.button("Dismiss").clicked() {
+                if store::button(ui, "Dismiss", store::Look::Secondary).clicked() {
                     self.market.dismiss(id);
                 }
             }
@@ -648,7 +758,15 @@ impl App {
                 }
             }
             if expanded {
-                caption(ui, status);
+                let pill = ui.horizontal(|ui| {
+                    ui.add_space(44.0);
+                    store::status_pill(ui, &status)
+                });
+                if pill.inner.clicked() {
+                    self.screen = Screen::Browser;
+                    self.market.focused = Some(entry.id.clone());
+                    self.market.details = true;
+                }
             }
             if expanded && self.screen == Screen::External(entry.id.clone()) {
                 for (page, title) in entry.pages.iter().enumerate() {
@@ -672,7 +790,11 @@ impl App {
         let status = self.market_status(id);
         if let Some(status) = status {
             if expanded {
-                if ui.small_button(&status).clicked() {
+                let pill = ui.horizontal(|ui| {
+                    ui.add_space(44.0);
+                    store::status_pill(ui, &status)
+                });
+                if pill.inner.clicked() {
                     self.screen = Screen::Browser;
                     self.market.focused = Some(id.into());
                     self.market.details = true;
@@ -754,38 +876,90 @@ impl App {
         };
         let name = crate::installer::installed_entry(&self.registry.root, &id)
             .map_or_else(|| id.clone(), |entry| entry.title);
-        let response = egui::Modal::new(egui::Id::unique("market-remove")).frame(panel()).show(ctx, |ui| {
-            ui.set_width(420.0_f32.min(ctx.content_rect().width() - 64.0));
-            Self::title(ui, &format!("Remove {name}?"), "The add-on will leave your sidebar. Its saved data stays on this PC by default, ready if you install it again.");
-            ui.checkbox(&mut delete_data, "Also delete its data");
-            if delete_data { muted(ui, "Saved settings and data will be deleted. This cannot be undone."); }
-            let running = self.supervisor.as_ref().is_some_and(|supervisor| supervisor.is_running(&id));
-            if running {
-                if ui.button("Close add-on before removing").clicked() { self.supervisor.as_mut().unwrap().stop(&id, std::time::Instant::now()); }
-            } else if ui.button("Remove add-on").clicked() {
-                let result = if self.registry.packages.iter().any(|package| package.manifest.id == id) {
-                    self.registry.remove(&id, !delete_data)
-                } else {
-                    crate::installer::remove(&self.registry.root, &id, !delete_data).map_err(String::from).and_then(|()| {
-                        if delete_data { self.registry.config.preferences.remove(&id); }
-                        self.registry.save()
-                    })
-                };
-                match result {
-                    Ok(()) => {
-                        if let Some(supervisor) = &mut self.supervisor { supervisor.forget(&id); }
-                        self.views.remove(&id);
-                        self.market.dismiss(&id);
-                        self.message = Some("Add-on removed. You can install it again from Add-ons.".into());
-                        self.screen = Screen::Browser;
-                    }
-                    Err(error) => self.message = Some(format!("Could not remove the add-on: {error}")),
+        let frame = egui::Frame::new()
+            .fill(crate::ui::WINDOW_BG)
+            .stroke(egui::Stroke::new(1.0, crate::ui::BORDER))
+            .corner_radius(12)
+            .inner_margin(24);
+        let response = egui::Modal::new(egui::Id::unique("market-remove"))
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.set_width(440.0_f32.min(ctx.content_rect().width() - 96.0));
+                ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
+                store::page_title(
+                    ui,
+                    &format!("Remove {name}?"),
+                    "The add-on will leave your sidebar. Its saved data stays on this PC by default, ready if you install it again.",
+                );
+                ui.checkbox(
+                    &mut delete_data,
+                    egui::RichText::new("Also delete its data").size(14.0).color(TEXT),
+                );
+                if delete_data {
+                    ui.add_space(8.0);
+                    store::paragraph(
+                        ui,
+                        "Saved settings and data will be deleted. This cannot be undone.",
+                        13.0,
+                    );
                 }
-                self.market.remove = None;
-                return;
-            }
-            if ui.button("Keep add-on").clicked() { self.market.remove = None; }
-        });
+                ui.add_space(20.0);
+                let running = self
+                    .supervisor
+                    .as_ref()
+                    .is_some_and(|supervisor| supervisor.is_running(&id));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if running {
+                        if store::button(ui, "Close add-on before removing", store::Look::Secondary)
+                            .clicked()
+                        {
+                            self.supervisor
+                                .as_mut()
+                                .unwrap()
+                                .stop(&id, std::time::Instant::now());
+                        }
+                    } else if store::button(ui, "Remove add-on", store::Look::Danger).clicked() {
+                        let result = if self
+                            .registry
+                            .packages
+                            .iter()
+                            .any(|package| package.manifest.id == id)
+                        {
+                            self.registry.remove(&id, !delete_data)
+                        } else {
+                            crate::installer::remove(&self.registry.root, &id, !delete_data)
+                                .map_err(String::from)
+                                .and_then(|()| {
+                                    if delete_data {
+                                        self.registry.config.preferences.remove(&id);
+                                    }
+                                    self.registry.save()
+                                })
+                        };
+                        match result {
+                            Ok(()) => {
+                                if let Some(supervisor) = &mut self.supervisor {
+                                    supervisor.forget(&id);
+                                }
+                                self.views.remove(&id);
+                                self.market.dismiss(&id);
+                                self.message =
+                                    Some("Add-on removed. You can install it again from Add-ons.".into());
+                                self.screen = Screen::Browser;
+                            }
+                            Err(error) => {
+                                self.message = Some(format!("Could not remove the add-on: {error}"))
+                            }
+                        }
+                        self.market.remove = None;
+                        return;
+                    }
+                    if store::button(ui, "Keep add-on", store::Look::Secondary).clicked() {
+                        self.market.remove = None;
+                    }
+                });
+            });
         if response.should_close() {
             self.market.remove = None;
         } else if self.market.remove.is_some() {
