@@ -6,6 +6,10 @@
 
 - **Updates are shown on Home.** When an add-on has a newer version, the top of Home says "Update available: Audio Gainer" (or "2 updates available: ...") with an **Update** button that opens the normal access review. The add-on's row says "Update" instead of "On", and its card shows the new version with an **Update** button.
 
+### Changed
+
+- **Keyboard use of the sidebar and header.** Tab now goes down the foot of the sidebar in the order shown (Settings, Add-ons, Pick your tools), a collapsed sidebar shows a row's name while it has keyboard focus, and the header switches to a menu whenever its buttons or page tabs would not fit, not at a fixed window width.
+
 ## [0.13.2] - 2026-11-15
 
 ### Fixed

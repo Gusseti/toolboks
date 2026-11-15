@@ -846,10 +846,11 @@ impl App {
                 expanded,
                 self.addon_tag(&entry.id),
             );
-            if response
-                .on_hover_text(format!("{} - {status}", entry.title))
-                .clicked()
-            {
+            let tip = format!("{} - {status}", entry.title);
+            if !expanded {
+                super::shell::focus_tip(&response, &tip);
+            }
+            if response.on_hover_text(tip).clicked() {
                 if self.installed_version(&entry.id).is_some() {
                     self.open_market_addon(&entry.id);
                 } else {
