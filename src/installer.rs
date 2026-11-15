@@ -1,4 +1,4 @@
-//! Downloads, installs, updates and removes add-ons listed in the signed catalog.
+//! Downloads, installs, updates and removes add-ons listed in the catalog.
 //!
 //! Layout under `addons::data_root()`:
 //! - `addons/<id>/<version>/package.tbaddon` (declarative) or `addon.exe` (native): one folder
@@ -994,9 +994,6 @@ mod tests {
         run(&root, &entry(&id, "1.0.0", &bytes), server.port).unwrap();
         let index = Index {
             format_version: 1,
-            sequence: 1,
-            generated_at: now,
-            expires_at: now + 1,
             entries: vec![entry(&id, "1.1.0", &newer)],
         };
         let found = updates(&root, &index, &HOST);

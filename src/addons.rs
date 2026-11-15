@@ -39,7 +39,7 @@ pub const AURAL_ID: &str = "toolboks.aural";
 pub const LEGACY_AURAL_PACKAGE: &str = include_str!("../assets/aural-legacy-0.1.tbaddon");
 pub const PROFILES_ID: &str = "toolboks.system-profiles";
 pub const MACRO_ID: &str = "toolboks.macro-manager";
-/// Hardcoded for now. The signed catalog replaces it: the verified flag and the list order come
+/// Hardcoded for now. The catalog replaces it: the verified flag and the list order come
 /// from `crate::catalog` (`Index::listing` and `Index::verified`) once the UI is moved over.
 pub const OFFICIAL_ADDONS: [&str; 4] = [toolboks_disk_manager::ID, AURAL_ID, PROFILES_ID, MACRO_ID];
 

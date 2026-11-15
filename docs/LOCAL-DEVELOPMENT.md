@@ -42,7 +42,7 @@ repository's staging/main release policy when publishing is explicitly requested
 
 ## Checking the add-on browser in the real window
 
-Preview builds can read a signed local test catalog and step through the add-on screens,
+Preview builds can read a local test catalog and step through the add-on screens,
 saving a screenshot of each. Release builds do not have this code.
 
 ```powershell

@@ -22,7 +22,7 @@ The initial external runtime supports declarative pages, basic host metrics and 
 preferences. **Disk Manager by stratum** is the first host-linked native add-on,
 with background disk analysis, an integrated space map, fragmentation reports and Windows drive optimization. Install it from the
 add-on browser in the current preview. See [Disk Manager](docs/DISK-MANAGER.md).
-Independent third-party native binaries and an online signed catalog remain later stages.
+Independent third-party native binaries and an open community catalog remain later stages.
 
 Help offers full and current-tab walkthroughs with purple highlights and cancellation.
 See [Guided tours](docs/GUIDED-TOURS.md) and [Drive optimization](docs/DRIVE-OPTIMIZATION.md).
