@@ -501,14 +501,14 @@ pub(super) fn nav_row(
                 if selected { TEXT } else { MUTED },
             );
             if new {
-                // "New" right after the name; it goes once the add-on has been opened.
+                // "New" at the right end of the row; it goes once the add-on has been opened.
                 let tag = ui.painter().layout_no_wrap(
                     "New".to_owned(),
                     egui::FontId::proportional(look::TEXT_CAPTION),
                     ACCENT_TEXT,
                 );
-                let x = (rect.left() + LABEL_X + label_width + 8.0)
-                    .min(rect.right() - tag.size().x - 14.0);
+                let x = (rect.right() - tag.size().x - 18.0)
+                    .max(rect.left() + LABEL_X + label_width + 8.0);
                 let tag_rect = egui::Rect::from_min_size(
                     egui::pos2(x, rect.center().y - tag.size().y / 2.0 - 2.0),
                     tag.size() + Vec2::new(10.0, 4.0),

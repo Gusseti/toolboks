@@ -253,7 +253,8 @@ impl Package {
             return Err("Missing or oversized add-on metadata.".into());
         }
         if ![
-            "grid", "activity", "layers", "storage", "wrench", "leaf", "macro",
+            "grid", "activity", "layers", "storage", "wrench", "leaf", "macro", "sliders", "chip",
+            "shield", "mic", "gauge",
         ]
         .contains(&m.icon.as_str())
         {
@@ -447,6 +448,23 @@ mod tests {
     use super::*;
     fn example() -> serde_json::Value {
         serde_json::from_str(include_str!("../../examples/hello-system.tbaddon")).unwrap()
+    }
+    #[test]
+    fn every_icon_the_host_draws_is_accepted_and_others_are_not() {
+        for icon in [
+            "grid", "activity", "layers", "storage", "wrench", "leaf", "macro", "sliders", "chip",
+            "shield", "mic", "gauge",
+        ] {
+            let mut v = example();
+            v["manifest"]["icon"] = serde_json::json!(icon);
+            assert!(
+                Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_ok(),
+                "{icon}"
+            );
+        }
+        let mut v = example();
+        v["manifest"]["icon"] = serde_json::json!("no-such-icon");
+        assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
     }
     #[test]
     fn starter_is_compatible() {
