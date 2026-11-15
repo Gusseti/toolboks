@@ -182,10 +182,10 @@ fn native_fixture(
         "capabilities":m.capabilities, "pages":services["pages"], "background":services["background"],
         "release_notes":"Local native migration check. Drive-changing optimization is gated on #132."
     });
-    fs::write(
-        folder.join("index.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({"format_version":1, "entries":[entry]}))?,
-    )?;
+    let index =
+        serde_json::to_vec_pretty(&serde_json::json!({"format_version":1, "entries":[entry]}))?;
+    toolboks_catalog::Index::parse(&index)?;
+    fs::write(folder.join("index.json"), index)?;
     println!("Unsigned local native fixture: {}", folder.display());
     Ok(())
 }

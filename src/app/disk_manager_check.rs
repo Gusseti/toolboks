@@ -30,6 +30,9 @@ pub struct Check {
     saved: Arc<AtomicBool>,
     click: Option<(egui::Pos2, bool)>,
     analyze: Option<egui::Pos2>,
+    opened: Option<std::time::Instant>,
+    first_frame_ms: Option<f64>,
+    page_started: std::time::Instant,
 }
 
 impl Check {
@@ -66,6 +69,9 @@ impl Check {
             saved: Arc::new(AtomicBool::new(true)),
             click: None,
             analyze: None,
+            opened: None,
+            first_frame_ms: None,
+            page_started: std::time::Instant::now(),
         }
     }
     fn capture(&mut self, name: &str) {
@@ -75,6 +81,7 @@ impl Check {
         self.frames = 0;
     }
     fn navigate(&mut self, page: usize) {
+        self.page_started = std::time::Instant::now();
         self.app.addon_page = page;
         self.app.supervisor.as_ref().unwrap().send(
             ID,
@@ -105,6 +112,15 @@ impl eframe::App for Check {
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.app.ui(ui, frame);
+        if let Some(opened) = self.opened {
+            if self.first_frame_ms.is_none()
+                && self.app.views.get(ID).is_some_and(|view| {
+                    matches!(view.state(), crate::addon_view::ViewState::Running)
+                })
+            {
+                self.first_frame_ms = Some(opened.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
         let ctx = ui.ctx();
         ctx.request_repaint_after(Duration::from_millis(100));
         assert!(
@@ -183,6 +199,7 @@ impl eframe::App for Check {
                 self.capture("03-installed");
             }
             4 => {
+                self.opened = Some(std::time::Instant::now());
                 self.app.open_market_addon(ID);
                 self.stage += 1;
                 self.frames = 0;
@@ -201,6 +218,13 @@ impl eframe::App for Check {
                 self.frames = 0;
             }
             7 if self.app.services.tour(ID).is_some() => {
+                // Query the real control layout, without the tour's sample-data banner.
+                // The SDK anchor request is still useful after restoring the real page.
+                self.app
+                    .supervisor
+                    .as_ref()
+                    .unwrap()
+                    .send(ID, &HostMessage::TutorialFinish);
                 let step = self
                     .app
                     .services
@@ -265,10 +289,15 @@ impl eframe::App for Check {
                 self.navigate(4);
                 self.stage += 1;
             }
-            18 if self.frames > 50 => {
+            18 if self.page_started.elapsed() > Duration::from_secs(8) => {
                 self.capture("09-optimization-gated");
             }
             19 => {
+                std::fs::write(self.output.join("native-timing.json"), serde_json::to_vec_pretty(&serde_json::json!({
+                    "open_to_first_drawn_frame_ms": self.first_frame_ms.expect("first native frame"),
+                    "method": "App open_market_addon to the first Running frame drawn by the native view, including normal supervisor/named-pipe startup if not already running; background process may have started after install. GPU presentation and human click latency excluded.",
+                    "expected_fixture": {"files":5,"folders_including_root":4,"logical_bytes":6_300_160}
+                })).unwrap()).unwrap();
                 for name in PAGES {
                     let link = crate::addon_services::resolve_link(
                         &format!("Disk Manager/{name}"),
@@ -284,7 +313,7 @@ impl eframe::App for Check {
                         }
                     );
                 }
-                std::fs::write(self.output.join("result.txt"), "PASS: real executable installed through browser review/queue and normal installer; authenticated supervisor and view opened all five pages. Read-only generated scan: 5 files, 4 folders including root, 6,300,160 bytes. Inspect captures for displayed totals and rankings. All five --open page names resolve. Drive changes remain gated on #132; no elevation or maintenance was requested.\n").unwrap();
+                std::fs::write(self.output.join("result.txt"), "PASS: real executable installed through browser review/queue and normal installer; authenticated supervisor and view opened all five pages; all five --open page names resolve. Generated scan fixture expects 5 files, 4 folders including root, 6,300,160 bytes: scan completion/totals/ranking require visual inspection of the captures. Drive changes remain gated on #132; no elevation or maintenance was requested.\n").unwrap();
                 self.app.quitting = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
