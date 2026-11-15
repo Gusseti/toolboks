@@ -358,3 +358,38 @@ Shortcut assignment now uses its own short-lived Windows key-state listener. It 
 ## 🔵 [INFO] Final in-app retest — BLOCKED by user stop
 
 I reopened the revised preview. Computer Use was stopped with physical Escape when finding its window, before the final assignment test. I made no further UI calls. The preview contains the new listener, but the user's physical-key assignment latency remains unconfirmed. No claim is made that the original long delay has been reproduced with physical input or definitively resolved.
+
+
+# Test-8: Add-on security follow-up (#95, F2/F3/F7)
+
+On 14 November 2026, the implementation branch based on staging `5f7c39b` was checked on
+Windows with the stable MSVC Rust toolchain. No real signing keys were generated or committed.
+
+All of these commands passed, with the workspace locked:
+
+- `cargo fmt --all --check`
+- `cargo build --workspace --locked`, normal and `--features preview`
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`, normal and preview
+- `cargo test --workspace --locked -- --test-threads=1`, normal and preview
+
+The complete normal suite had **656 passed, 0 failed, 20 ignored**. Preview had **657 passed,
+0 failed, 20 ignored**. The ignored interactive/hardware/system-changing tests were left ignored.
+
+F2 tests reject missing, expired, tampered and replayed cached catalogs, recovery-key signatures,
+wrong ids/versions, non-native/unverified entries, missing elevation grants and incompatible
+hosts/protocols. Swapping the exe plus `active.json`/`entry.json` does not replace the hash from
+the signed entry. The real supervisor launch path refuses a forged installation without a
+valid signed catalog before it can spawn a child or show UAC.
+
+F3 tests reject planted DLLs, other extra files, directories and an ancestor junction. A real
+supervisor launch refuses a planted DLL without starting the add-on. Another test reads the
+built PE load configuration and confirms `DependentLoadFlags == 0x800`.
+
+F7 tests use real child processes: hiding a foreground add-on ends it, reopening starts a new
+one, reopening during shutdown waits for exit, hiding during launch cancels it, and a hidden
+background add-on retains its process. The catalog background flag is preserved in launch specs.
+
+Limits: UAC consent and a second-account pipe connection were not exercised. F4 (privileged UI
+confirmation boundary), F5 (host release-signing key custody/recovery) and F6 (code-signing
+certificate) remain accepted risks pending owner decision, as recorded in the threat model.
+No release was published and #95 remains open.

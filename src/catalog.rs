@@ -70,6 +70,87 @@ pub fn load_state(root: &Path) -> TrustState {
         .unwrap_or_default()
 }
 
+/// Exact signed bytes are stored together, so an interrupted write cannot mix generations.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedIndex {
+    index: Vec<u8>,
+    signature: Vec<u8>,
+}
+
+fn cache_path(root: &Path) -> PathBuf {
+    root.join("catalog").join("accepted.json")
+}
+
+/// Reverify at the time of use: cached files and install records are user-writable.
+fn cached_with(keys: &TrustedKeys, clock: &dyn Clock, root: &Path) -> Result<Index, String> {
+    use std::io::Read;
+    // JSON byte arrays expand to at most four bytes per original byte.
+    let limit =
+        4 * (toolboks_catalog::MAX_INDEX_BYTES + toolboks_catalog::MAX_SIGNATURE_BYTES) + 1024;
+    let mut bytes = Vec::new();
+    std::fs::File::open(cache_path(root))
+        .and_then(|file| file.take(limit as u64 + 1).read_to_end(&mut bytes))
+        .map_err(|_| {
+            "Refresh the add-on catalog before starting with administrator rights.".to_string()
+        })?;
+    if bytes.len() > limit {
+        return Err("The saved catalog is too large. Refresh the add-on catalog.".into());
+    }
+    let cached: CachedIndex = serde_json::from_slice(&bytes)
+        .map_err(|_| "The saved catalog is damaged. Refresh the add-on catalog.".to_string())?;
+    toolboks_catalog::verify(
+        keys,
+        &load_state(root),
+        &cached.index,
+        Some(&cached.signature),
+        clock,
+    )
+    .map(|accepted| accepted.index)
+    .map_err(|e| {
+        format!("Refresh the add-on catalog before starting with administrator rights: {e}")
+    })
+}
+
+/// The signed entry, never `active.json` or `entry.json`, authorizes an elevated start.
+/// Rollbacks absent from the current signed index cannot be elevated.
+pub fn elevated_entry(root: &Path, id: &str, version: &str) -> Result<Entry, String> {
+    elevated_entry_with(&trusted_keys(), &SystemClock, root, id, version)
+}
+
+fn elevated_entry_with(
+    keys: &TrustedKeys,
+    clock: &dyn Clock,
+    root: &Path,
+    id: &str,
+    version: &str,
+) -> Result<Entry, String> {
+    let _guard = STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let index = cached_with(keys, clock, root)?;
+    let entry = index
+        .entries
+        .into_iter()
+        .find(|entry| entry.id == id && entry.version == version)
+        .ok_or_else(|| {
+            "This installed version is absent from the signed catalog. Update the add-on."
+                .to_string()
+        })?;
+    if entry.kind != Kind::Native
+        || !entry.verified
+        || entry.check(&host()).is_err()
+        || !entry
+            .capabilities
+            .iter()
+            .any(|name| crate::addon_services::ELEVATING_CAPABILITIES.contains(&name.as_str()))
+    {
+        return Err(
+            "The signed catalog does not permit this add-on to use administrator rights.".into(),
+        );
+    }
+    Ok(entry)
+}
+
 /// Verifies a downloaded `index.json` (exact bytes) against its `index.json.sig` and remembers it.
 /// `root` is `addons::data_root()`. An index that cannot be remembered is refused, since the
 /// replay protection depends on it.
@@ -94,6 +175,12 @@ fn accept_with(
             .map_err(|e| Refused::NotPersisted(e.to_string()))?;
         addons::write_atomic(&state_path(root), &bytes).map_err(Refused::NotPersisted)?;
     }
+    let cached = CachedIndex {
+        index: index.to_vec(),
+        signature: signature.ok_or(Refused::MissingSignature)?.to_vec(),
+    };
+    let bytes = serde_json::to_vec(&cached).map_err(|e| Refused::NotPersisted(e.to_string()))?;
+    addons::write_atomic(&cache_path(root), &bytes).map_err(Refused::NotPersisted)?;
     Ok(accepted.index)
 }
 
@@ -263,6 +350,135 @@ mod tests {
         assert!(accept_test(&root, MAIN, &index(3), vec![]).is_ok());
         assert_eq!(load_state(&root).last_sequence, 3);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn native_index(sequence: u64, payload: &[u8]) -> Vec<u8> {
+        let mut value: serde_json::Value = serde_json::from_slice(&index(sequence)).unwrap();
+        let entry = &mut value["entries"][0];
+        entry["kind"] = "native".into();
+        entry["channel"] = "stable".into();
+        entry["capabilities"] = serde_json::json!(["administrator"]);
+        entry["sha256"] = toolboks_catalog::sha256_hex(payload).into();
+        entry["size"] = payload.len().into();
+        serde_json::to_vec(&value).unwrap()
+    }
+
+    fn elevated_test(root: &Path, clock: u64) -> Result<Entry, String> {
+        elevated_entry_with(
+            &test_keys(),
+            &FixedClock(clock),
+            root,
+            "toolboks.sample",
+            "1.0.0",
+        )
+    }
+
+    #[test]
+    fn elevated_start_requires_a_current_untampered_signed_catalog() {
+        let root = root("elevated-cache");
+        assert!(elevated_test(&root, NOW).is_err(), "missing cache");
+        let bytes = native_index(5, b"original");
+        accept_test(&root, MAIN, &bytes, vec![]).unwrap();
+        assert_eq!(
+            elevated_test(&root, NOW).unwrap().sha256,
+            toolboks_catalog::sha256_hex(b"original")
+        );
+        assert!(elevated_test(&root, NOW + 3600).is_err(), "expired index");
+        assert!(elevated_entry_with(
+            &test_keys(),
+            &FixedClock(NOW),
+            &root,
+            "toolboks.other",
+            "1.0.0"
+        )
+        .is_err());
+        assert!(elevated_entry_with(
+            &test_keys(),
+            &FixedClock(NOW),
+            &root,
+            "toolboks.sample",
+            "0.9.0"
+        )
+        .is_err());
+        let saved = std::fs::read(cache_path(&root)).unwrap();
+        let mut cached: CachedIndex = serde_json::from_slice(&saved).unwrap();
+        cached.index = native_index(5, b"attacker");
+        std::fs::write(cache_path(&root), serde_json::to_vec(&cached).unwrap()).unwrap();
+        assert!(
+            elevated_test(&root, NOW).is_err(),
+            "replaced index without signature"
+        );
+        cached.signature = signed(RECOVERY, &cached.index, vec![]);
+        std::fs::write(cache_path(&root), serde_json::to_vec(&cached).unwrap()).unwrap();
+        assert!(
+            elevated_test(&root, NOW).is_err(),
+            "recovery cannot authorize execution"
+        );
+        std::fs::write(cache_path(&root), &saved).unwrap();
+        accept_test(&root, MAIN, &native_index(6, b"newer"), vec![]).unwrap();
+        std::fs::write(cache_path(&root), &saved).unwrap();
+        assert!(
+            elevated_test(&root, NOW).is_err(),
+            "old cache below replay floor"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn swapped_exe_and_install_records_do_not_authorize_elevation() {
+        let root = root("elevated-records");
+        let bytes = native_index(1, b"original");
+        accept_test(&root, MAIN, &bytes, vec![]).unwrap();
+        let dir = root.join("addons/toolboks.sample");
+        std::fs::create_dir_all(dir.join("1.0.0")).unwrap();
+        let malicious = toolboks_catalog::sha256_hex(b"attacker");
+        std::fs::write(
+            dir.join("active.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version": "1.0.0", "confirmed": true, "launched": false, "sha256": malicious,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut forged: Entry = Index::parse(&bytes).unwrap().entries.remove(0);
+        forged.sha256 = malicious.clone();
+        std::fs::write(
+            dir.join("1.0.0/entry.json"),
+            serde_json::to_vec(&forged).unwrap(),
+        )
+        .unwrap();
+        let exe = dir.join("1.0.0/addon.exe");
+        std::fs::write(&exe, b"attacker").unwrap();
+        assert_eq!(
+            crate::installer::native_exe(&root, "toolboks.sample")
+                .unwrap()
+                .1,
+            malicious
+        );
+        let trusted = elevated_test(&root, NOW).unwrap();
+        assert!(trusted
+            .check_download(&std::fs::read(exe).unwrap())
+            .is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn catalog_must_authorize_native_elevation_and_host_compatibility() {
+        for (field, value) in [
+            ("kind", serde_json::json!("declarative")),
+            ("verified", serde_json::json!(false)),
+            ("capabilities", serde_json::json!([])),
+            ("min_toolboks_version", serde_json::json!("999.0.0")),
+            ("protocol_version", serde_json::json!(999)),
+        ] {
+            let root = root(field);
+            let mut index: serde_json::Value =
+                serde_json::from_slice(&native_index(1, b"original")).unwrap();
+            index["entries"][0][field] = value;
+            accept_test(&root, MAIN, &serde_json::to_vec(&index).unwrap(), vec![]).unwrap();
+            assert!(elevated_test(&root, NOW).is_err(), "{field}");
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]

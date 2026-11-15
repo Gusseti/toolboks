@@ -31,6 +31,7 @@ use crate::win::Handle;
 pub enum VerifyError {
     Missing(String),
     WrongHash,
+    UnexpectedFile(String),
 }
 
 /// Checks the exe against the SHA-256 recorded at install time. The returned file is open
@@ -50,6 +51,41 @@ pub fn verify(exe: &Path, sha256: &str) -> Result<File, VerifyError> {
     } else {
         Err(VerifyError::WrongHash)
     }
+}
+
+/// Installed version folders contain code and the catalog entry only. Reject directories,
+/// reparse points (including junctions), and extra files before Windows loads the image.
+pub fn verify_folder(exe: &Path) -> Result<(), VerifyError> {
+    use std::os::windows::fs::MetadataExt;
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+    let bad = |why: String| VerifyError::UnexpectedFile(why);
+    let directory = exe
+        .parent()
+        .ok_or_else(|| bad("no version folder".into()))?;
+    // Refuse redirected ancestors as well as redirected files inside the version folder.
+    for path in directory.ancestors() {
+        let metadata = std::fs::symlink_metadata(path).map_err(|e| bad(e.to_string()))?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+            return Err(bad(format!("redirected folder: {}", path.display())));
+        }
+    }
+    let mut found_exe = false;
+    for item in std::fs::read_dir(directory).map_err(|e| bad(e.to_string()))? {
+        let item = item.map_err(|e| bad(e.to_string()))?;
+        let metadata = std::fs::symlink_metadata(item.path()).map_err(|e| bad(e.to_string()))?;
+        let name = item.file_name();
+        if !metadata.is_file()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
+            || (name != crate::installer::EXE_FILE && name != "entry.json")
+        {
+            return Err(bad(format!("unexpected file: {}", item.path().display())));
+        }
+        found_exe |= name == crate::installer::EXE_FILE;
+    }
+    if !found_exe {
+        return Err(bad("addon.exe is missing".into()));
+    }
+    Ok(())
 }
 
 /// A job object that ends every process in it when its last handle closes. The host holds the
