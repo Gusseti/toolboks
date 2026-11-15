@@ -21,6 +21,13 @@ pub const PROTOCOL_VERSIONS: &[u32] = &[toolboks_addon_proto::PROTOCOL_VERSION];
 pub const URL: &str =
     "https://raw.githubusercontent.com/fredhakon/toolboks-addons/main/catalog/index.json";
 
+/// The same list through GitHub's API. GitHub keeps the plain file address (`URL`) in its cache
+/// for up to five minutes, so a release made a moment ago is missing after a refresh; the API is
+/// at most a minute behind. It is asked first and `URL` is the fallback (a failure, or the API's
+/// limit of 60 requests an hour per address being used up).
+pub const FRESH_URL: &str =
+    "https://api.github.com/repos/fredhakon/toolboks-addons/contents/catalog/index.json";
+
 /// What this build can run. Preview-channel entries are shown by preview builds only.
 pub fn host() -> Host<'static> {
     Host {
