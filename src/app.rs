@@ -134,7 +134,12 @@ impl App {
         let keep_in_tray = registry.config.keep_in_tray;
         let mut selected = (0, 0);
         let mut screen = Screen::Home;
-        if !registry.config.first_run_complete && registry.packages.is_empty() {
+        // Until the built-in tools move out (#94) the sidebar is never empty, so the picker
+        // only opens by itself on a host that has no tools at all.
+        if !registry.config.first_run_complete
+            && registry.builtins.is_empty()
+            && registry.packages.is_empty()
+        {
             screen = Screen::Pick;
         }
         if let Some((tool, page)) = parse_open(&args) {
@@ -649,9 +654,6 @@ mod tests {
         let root = std::env::temp_dir().join(format!("toolboks-open-{}", std::process::id()));
         let mut registry = Registry::load(root.clone());
         let (tool, _) = parse_open(&args(&["--open", "Resource Monitor/Details"])).unwrap();
-        assert!(registry.builtins.is_empty());
-        assert!(open_target(&registry, tool).is_err());
-        registry.builtins = crate::addons::builtin_manifests();
         assert!(open_target(&registry, tool).is_ok());
         registry
             .set_enabled("toolboks.resource-monitor", false)

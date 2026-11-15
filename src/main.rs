@@ -37,7 +37,12 @@ fn main() -> eframe::Result {
             instance::APP_NAME,
             env!("CARGO_PKG_VERSION")
         ))
-        .with_inner_size([1120.0, 760.0])
+        .with_inner_size(if args.iter().any(|arg| arg == "--marketplace-check") {
+            // The screenshot check runs at the width its reference captures were taken at.
+            [1120.0, 760.0]
+        } else {
+            [1540.0, 960.0]
+        })
         .with_min_inner_size([1060.0, 720.0]);
     // The window and taskbar icon. If the embedded image cannot be read, Windows keeps the exe's
     // own icon (see build.rs), so a bad image never stops the app from starting.

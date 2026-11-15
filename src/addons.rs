@@ -9,7 +9,6 @@ use std::{
 use toolboks_addon_sdk::{Package, MAX_PACKAGE_BYTES};
 
 /// The built-in tools, in the same order as `tools::all()`: one manifest each.
-#[cfg(test)]
 pub const BUILTIN_MANIFESTS: [&str; 4] = [
     include_str!("../assets/memory-cleaner.json"),
     include_str!("../assets/resource-monitor.json"),
@@ -17,7 +16,6 @@ pub const BUILTIN_MANIFESTS: [&str; 4] = [
     include_str!("../assets/event-watch.json"),
 ];
 /// The IDs of [`BUILTIN_MANIFESTS`], same order (a test keeps the two in step).
-#[cfg(test)]
 pub const BUILTIN_IDS: [&str; 4] = [
     "toolboks.memory-cleaner",
     "toolboks.resource-monitor",
@@ -27,21 +25,17 @@ pub const BUILTIN_IDS: [&str; 4] = [
 /// The single "System Essentials" entry that older versions stored. It is gone now; saved
 /// settings that mention it are dropped when the configuration is loaded.
 pub const LEGACY_BASE_ID: &str = "toolboks.system-essentials";
-#[cfg(test)]
 pub fn builtin_manifests() -> Vec<toolboks_addon_sdk::Manifest> {
     BUILTIN_MANIFESTS
         .iter()
         .map(|m| serde_json::from_str(m).expect("bundled manifest"))
         .collect()
 }
-#[cfg(test)]
 pub const SDK_EXAMPLE: &str = include_str!("../sdk/examples/hello-system.tbaddon");
-#[cfg(test)]
 pub fn official_disk_package() -> Package {
     serde_json::from_str(toolboks_disk_manager::PACKAGE).expect("bundled disk package")
 }
 pub const AURAL_ID: &str = "toolboks.aural";
-#[cfg(test)]
 pub const LEGACY_AURAL_PACKAGE: &str = include_str!("../assets/aural-legacy-0.1.tbaddon");
 pub const PROFILES_ID: &str = "toolboks.system-profiles";
 pub const MACRO_ID: &str = "toolboks.macro-manager";
@@ -49,7 +43,6 @@ pub const MACRO_ID: &str = "toolboks.macro-manager";
 /// from `crate::catalog` (`Index::listing` and `Index::verified`) once the UI is moved over.
 pub const OFFICIAL_ADDONS: [&str; 4] = [toolboks_disk_manager::ID, AURAL_ID, PROFILES_ID, MACRO_ID];
 
-#[cfg(test)]
 pub fn official_package(id: &str) -> Option<Package> {
     match id {
         MACRO_ID => Some(
@@ -69,7 +62,6 @@ pub fn official_package(id: &str) -> Option<Package> {
     }
 }
 
-#[cfg(test)]
 pub fn trusted_native(p: &Package) -> bool {
     let Ok(value) = serde_json::to_value(p) else {
         return false;
@@ -94,16 +86,6 @@ pub fn trusted_native(p: &Package) -> bool {
                 .as_ref()
                 == Some(&value))
 }
-#[cfg(not(test))]
-pub fn official_package(_id: &str) -> Option<Package> {
-    None
-}
-
-#[cfg(not(test))]
-pub fn trusted_native(_package: &Package) -> bool {
-    false
-}
-
 fn validate_provider(p: &Package) -> Result<(), String> {
     if (p.manifest.native_provider.is_some() || OFFICIAL_ADDONS.contains(&p.manifest.id.as_str()))
         && !trusted_native(p)
@@ -160,7 +142,7 @@ pub struct Registry {
 // Shared with add-ons, so they find and write their data the same way as the host.
 pub use toolboks_shared::storage::{data_root, write_atomic};
 fn reserved(id: &str) -> bool {
-    id == LEGACY_BASE_ID
+    id == LEGACY_BASE_ID || BUILTIN_IDS.contains(&id)
 }
 fn read_package(path: &Path) -> Result<Package, String> {
     let file = fs::File::open(path).map_err(|e| format!("Could not open package: {e}"))?;
@@ -184,7 +166,7 @@ fn read_package(path: &Path) -> Result<Package, String> {
 impl Registry {
     pub fn load(root: PathBuf) -> Self {
         let mut r = Self {
-            builtins: Vec::new(),
+            builtins: builtin_manifests(),
             packages: vec![],
             config: Config::default(),
             root,
@@ -311,6 +293,10 @@ impl Registry {
         self.packages
             .sort_by_key(|a| (!trusted_native(a), a.manifest.title.to_lowercase()));
         Ok(())
+    }
+    #[cfg(test)]
+    pub fn uninstall(&mut self, id: &str) -> Result<(), String> {
+        self.remove(id, false)
     }
     /// Removes an add-on. With `keep_data` its preferences and data folder stay, so a later
     /// install picks them up again.
@@ -480,16 +466,16 @@ mod tests {
         let mut reloaded = Registry::load(root.clone());
         assert_eq!(reloaded.packages.len(), 1);
         assert!(!reloaded.enabled("com.example.hello-system"));
-        assert!(reloaded.remove("toolboks.memory-cleaner", false).is_err());
-        reloaded.remove("com.example.hello-system", false).unwrap();
+        assert!(reloaded.uninstall("toolboks.memory-cleaner").is_err());
+        reloaded.uninstall("com.example.hello-system").unwrap();
         assert!(Registry::load(root.clone()).packages.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn cannot_reintroduce_retired_system_essentials() {
+    fn cannot_impersonate_bundled_addon() {
         let mut r = Registry::load(std::env::temp_dir());
         let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
-        p.manifest.id = LEGACY_BASE_ID.into();
+        p.manifest.id = "toolboks.event-watch".into();
         assert!(r.install(p).is_err());
     }
     #[test]
@@ -516,7 +502,7 @@ mod tests {
             loaded.packages[0].manifest.native_provider.as_deref(),
             Some(toolboks_disk_manager::PROVIDER)
         );
-        loaded.remove(toolboks_disk_manager::ID, false).unwrap();
+        loaded.uninstall(toolboks_disk_manager::ID).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -542,16 +528,6 @@ mod tests {
         assert_eq!(reloaded.errors.len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
-    #[test]
-    fn fresh_install_has_no_bundled_or_preloaded_addons() {
-        let root = std::env::temp_dir().join(format!("toolboks-empty-host-{}", std::process::id()));
-        let registry = Registry::load(root.clone());
-        assert!(registry.builtins.is_empty());
-        assert!(registry.packages.is_empty());
-        assert!(!registry.config.first_run_complete);
-        assert!(!root.join("addons").exists());
-    }
-
     #[test]
     fn every_builtin_manifest_parses_and_validates() {
         let manifests = builtin_manifests();
@@ -614,10 +590,12 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn local_packages_cannot_take_the_retired_combined_id() {
+    fn local_packages_cannot_take_old_or_new_builtin_ids() {
         let mut r = Registry::load(std::env::temp_dir());
-        let mut package = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
-        package.manifest.id = LEGACY_BASE_ID.into();
-        assert!(r.install(package).is_err());
+        for id in [LEGACY_BASE_ID, "toolboks.debloater"] {
+            let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
+            p.manifest.id = id.into();
+            assert!(r.install(p).is_err());
+        }
     }
 }

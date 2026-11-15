@@ -285,11 +285,11 @@ fn row(
         );
         let clipped = painter.with_clip_rect(text_rect);
         let title = clipped.layout_no_wrap(entry.title.clone(), font(15.0, 600), TEXT);
-        clipped.galley(egui::pos2(left, rect.top() + 14.0), title.clone(), TEXT);
+        clipped.galley(egui::pos2(left, rect.top() + 17.0), title.clone(), TEXT);
         let badge_left = left + title.size().x + 6.0;
         if entry.verified {
             let badge = Rect::from_min_size(
-                egui::pos2(badge_left, rect.top() + 15.0),
+                egui::pos2(badge_left, rect.top() + 18.0),
                 Vec2::new(69.0, 17.2),
             );
             clipped.rect_filled(
@@ -312,7 +312,7 @@ fn row(
             );
         } else {
             clipped.text(
-                egui::pos2(badge_left, rect.top() + 24.0),
+                egui::pos2(badge_left, rect.top() + 27.0),
                 egui::Align2::LEFT_CENTER,
                 &entry.publisher,
                 font(13.0, 400),
@@ -328,7 +328,7 @@ fn row(
         job.wrap.max_rows = 1;
         job.wrap.break_anywhere = true;
         let description = ui.fonts_mut(|fonts| fonts.layout_job(job));
-        clipped.galley(egui::pos2(left, rect.top() + 41.2), description, MUTED);
+        clipped.galley(egui::pos2(left, rect.top() + 43.2), description, MUTED);
         if installed {
             icon(
                 painter,
@@ -343,7 +343,7 @@ fn row(
         painter.galley(
             egui::pos2(
                 rect.right() - 12.0 - state_text.size().x,
-                rect.center().y - state_text.size().y / 2.0,
+                rect.center().y - state_text.size().y / 2.0 - 1.0,
             ),
             state_text,
             state_color,
@@ -368,17 +368,20 @@ impl App {
             ui.spacing_mut().item_spacing=Vec2::ZERO;
             let store_frame = egui::Frame::new().fill(WINDOW_BG).stroke(Stroke::new(1.0,BORDER)).corner_radius(12).show(ui,|ui| {
                 ui.set_width(ui.available_width());
-                egui::Frame::new().fill(look::SIDEBAR_BG).inner_margin(Margin::symmetric(16,14)).show(ui,|ui| {
+                egui::Frame::new().fill(look::SIDEBAR_BG).inner_margin(Margin{left:16,right:16,top:15,bottom:14}).show(ui,|ui| {
                     ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing=Vec2::new(16.0,12.0);
-                    ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing=Vec2::new(17.0,12.0);
+                    // One centred row when it fits; the categories wrap below the search when it does not.
+                    let bar=Vec2::new(ui.available_width(),46.0);
+                    let wrap=bar.x<840.0;
+                    ui.allocate_ui_with_layout(bar,egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(wrap),|ui| {
                         egui::Frame::new().fill(PANEL_BG).stroke(Stroke::new(1.0,BORDER)).corner_radius(8).inner_margin(Margin::symmetric(12,0)).show(ui,|ui| {
-                            ui.set_min_size(Vec2::new(294.0,46.0));
                             ui.spacing_mut().item_spacing.x=8.0;
-                            ui.horizontal(|ui| {
+                            ui.allocate_ui_with_layout(Vec2::new(294.0,44.0),egui::Layout::left_to_right(egui::Align::Center),|ui| {
+                                ui.set_min_size(Vec2::new(294.0,44.0));
                                 let (rect,_)=ui.allocate_exact_size(Vec2::splat(17.0),Sense::hover());
                                 icon(ui.painter(),rect,"search",MUTED);
-                                let response=ui.add(egui::TextEdit::singleline(&mut self.search).desired_width(269.0).hint_text("Search add-ons").font(font(15.0,400)).frame(egui::Frame::NONE).margin(Vec2::new(0.0,10.0)));
+                                let response=ui.add(egui::TextEdit::singleline(&mut self.search).desired_width(269.0).hint_text(text("Search add-ons",15.0,400,MUTED)).font(font(15.0,400)).frame(egui::Frame::NONE).margin(Vec2::ZERO));
                                 anchors::mark(ui,"browser-search",response.rect);
                             });
                         });
@@ -389,12 +392,13 @@ impl App {
                         for entry in &self.market.entries {
                             if !categories.contains(&entry.category) {categories.push(entry.category.clone());}
                         }
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing=Vec2::new(4.0,4.0);
+                        ui.allocate_ui_with_layout(Vec2::new(ui.available_width(),36.0),egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(wrap),|ui| {
+                            // 4 px in the source; the extra covers egui snapping glyph advances to whole pixels.
+                            ui.spacing_mut().item_spacing=Vec2::new(6.0,4.0);
                             ui.spacing_mut().button_padding=Vec2::new(12.0,7.0);
                             for category in categories {
                                 let selected=self.market.category==category;
-                                let response=ui.add(egui::Button::new(text(&category,14.0,400,if selected {TEXT} else {MUTED})).fill(if selected {look::SELECTED_BG} else {Color32::TRANSPARENT}).stroke(Stroke::NONE).corner_radius(7).min_size(Vec2::ZERO));
+                                let response=ui.add(egui::Button::new(text(&category,14.0,400,if selected {TEXT} else {MUTED})).fill(if selected {look::SELECTED_BG} else {Color32::TRANSPARENT}).stroke(Stroke::NONE).corner_radius(7).min_size(Vec2::new(0.0,37.0)));
                                 if category=="All" {anchors::mark(ui,"browser-category",response.rect);}
                                 if response.clicked(){self.market.category=category;}
                             }
@@ -404,14 +408,16 @@ impl App {
                 let line=ui.allocate_exact_size(Vec2::new(ui.available_width(),1.0),Sense::hover()).0;
                 ui.painter().rect_filled(line,0,DIVIDER);
                 let wide=ui.available_width()>=796.0;
-                let height=(ui.available_height()-2.0).clamp(180.0,520.0);
-                let list_width=if wide {ui.available_width()-DETAIL_WIDTH} else {ui.available_width()};
+                // Fill the page down to the bottom edge; the list and the details scroll inside.
+                let height=(ui.available_height()-2.0).max(180.0);
+                // The 1 px divider sits between the list and the 340 px detail column.
+                let list_width=if wide {ui.available_width()-DETAIL_WIDTH-1.0} else {ui.available_width()};
                 ui.with_layout(if wide {egui::Layout::left_to_right(egui::Align::Min)} else {egui::Layout::top_down(egui::Align::Min)},|ui| {
                     ui.allocate_ui_with_layout(Vec2::new(list_width,if wide {height} else {height*0.4}),egui::Layout::top_down(egui::Align::Min),|ui| {
                         ui.set_width(list_width);
-                        egui::Frame::new().inner_margin(8).show(ui,|ui| {
+                        egui::Frame::new().inner_margin(Margin{left:8,right:8,top:8,bottom:0}).show(ui,|ui| {
                             ui.spacing_mut().item_spacing.y=ROW_GAP;
-                            egui::ScrollArea::vertical().id_salt("market-list").max_height(if wide {height-16.0} else {height*0.4-16.0}).auto_shrink([false,false]).show(ui,|ui| {
+                            egui::ScrollArea::vertical().id_salt("market-list").max_height(if wide {height-8.0} else {height*0.4-8.0}).auto_shrink([false,false]).show(ui,|ui| {
                                 anchors::region(ui,"browser-list",|ui| {
                                     for entry in entries {
                                         let installed=self.installed_version(&entry.id).is_some();
@@ -429,9 +435,9 @@ impl App {
                         let rect=ui.allocate_exact_size(Vec2::new(1.0,height),Sense::hover()).0;
                         ui.painter().rect_filled(rect,0,DIVIDER);
                     }
-                    ui.allocate_ui_with_layout(Vec2::new(if wide {DETAIL_WIDTH-1.0}else{ui.available_width()},if wide {height}else{height*0.6}),egui::Layout::top_down(egui::Align::Min),|ui| {
+                    ui.allocate_ui_with_layout(Vec2::new(if wide {DETAIL_WIDTH}else{ui.available_width()},if wide {height}else{height*0.6}),egui::Layout::top_down(egui::Align::Min),|ui| {
                         egui::Frame::new().inner_margin(20).show(ui,|ui| {
-                            ui.set_width(if wide {DETAIL_WIDTH-41.0}else{ui.available_width()});
+                            ui.set_width(if wide {DETAIL_WIDTH-40.0}else{ui.available_width()});
                             egui::ScrollArea::vertical().id_salt("market-preview").max_height(if wide {height-40.0}else{height*0.6-40.0}).auto_shrink([false,false]).show(ui,|ui| {
                                 if let Some(entry)=self.focused_entry(){self.store_detail(ui,&entry,if wide {height-40.0}else{0.0});}
                             });
@@ -455,7 +461,15 @@ impl App {
         );
         ui.add_space(4.0);
         ui.label(text(
-            format!("{} \u{b7} {}", entry.publisher, entry.category),
+            match &entry.byline {
+                Some(byline) => {
+                    format!(
+                        "{byline} \u{b7} {} \u{b7} {}",
+                        entry.publisher, entry.category
+                    )
+                }
+                None => format!("{} \u{b7} {}", entry.publisher, entry.category),
+            },
             13.0,
             400,
             MUTED,
@@ -469,6 +483,7 @@ impl App {
             .corner_radius(8)
             .inner_margin(Margin::symmetric(12, 10))
             .show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 ui.horizontal_top(|ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
                     icon(
@@ -492,8 +507,11 @@ impl App {
                     );
                 });
             });
-        ui.add_space(16.0);
-        ui.separator();
+        ui.add_space(14.0);
+        let line = ui
+            .allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover())
+            .0;
+        ui.painter().rect_filled(line, 0, DIVIDER);
         ui.add_space(14.0);
         ui.label(text("It can", 13.0, 600, TEXT));
         ui.add_space(10.0);
@@ -545,7 +563,7 @@ impl App {
                 } else {
                     accepted && market::can_install(entry) && !busy && !self.market.loading
                 };
-                ui.spacing_mut().button_padding = Vec2::new(20.0, 14.0);
+                ui.spacing_mut().button_padding = Vec2::new(21.0, 15.0);
                 if ui
                     .add_enabled(
                         enabled,

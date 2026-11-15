@@ -18,8 +18,11 @@ pub struct Check {
 
 impl Check {
     pub fn new(output: PathBuf, updates: PathBuf) -> Self {
+        let mut app = App::new();
+        // The built-in tools keep the sidebar filled until #94, so the picker is opened here.
+        app.screen = Screen::Pick;
         Self {
-            app: App::new(),
+            app,
             output,
             updates,
             stage: 0,
@@ -151,7 +154,7 @@ impl eframe::App for Check {
             }
             7 => {
                 self.app.screen = Screen::Browser;
-                self.app.market.focused = Some("example.event-watch".into());
+                self.app.market.focused = Some("example.disk-manager".into());
                 self.capture(ctx, "07-browser");
             }
             8 => {

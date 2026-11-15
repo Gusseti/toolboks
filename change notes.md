@@ -4,11 +4,17 @@
 
 - **Add-on browser and first run (#86):** choose tools with nothing preselected, review several installs together, and download them through the checked catalog and existing installer. Browse by search, category or installed state; inspect screenshots, access and release notes; update, open or remove without leaving Toolboks. Installs show progress and failures stay in the sidebar until dismissed, including after a restart. Removal keeps data by default, with an explicit option to delete it. Local `.tbaddon` review and a browser walkthrough remain available.
 - **Installed native add-ons:** catalog-installed programs open through the existing supervisor and drawing view in the Toolboks window. Updates wait for the old program to stop. A signed local test catalog is available only to preview builds for first-run checks; release builds never accept its keys or file transport.
-- **Catalog-only startup:** a fresh install contains no tools. First-run choices come only from the signed runtime catalog at the single `src/catalog.rs::URL` constant. The marketplace uses the landing page's wide rows, 340 px detail pane, icon tiles, verified pills and category buttons, with source-derived values in `visual-spec.md`. Final visual verification remains outstanding.
+- **Browser look:** the add-on browser follows the landing page: wide rows, a 340 px detail pane, icon tiles, verified pills and category buttons, in Schibsted Grotesk. The source values are in `docs/reviews/86/visual-spec.md` and the side-by-side check in `docs/reviews/86/compare/`.
+- **Catalog entries:** optional `byline` field, such as "by stratum", shown in the details.
+- **Catalog address:** the browser and the first-run picker list only what the signed catalog at `src/catalog.rs::URL` returns. Nothing in those lists is built into the app.
+
+## Not changed here
+
+- The built-in tools and the add-ons shipped inside the app (Disk Manager, Aural, System Profiles, Macro Manager) stay until they move to the catalog (#88 to #93) and are removed with a migration (#94). Local packages still cannot take a built-in tool's ID. The first-run picker opens by itself only when the app has no tools; until #94 it is reached from the sidebar.
 
 ## Release prerequisites
 
-- Public downloads still need the owner's real offline catalog public keys and a published signed catalog in `fredhakon/toolboks-addons`. Placeholder keys continue to reject downloads. The catalog repository is currently private and has no entries. Publish the catalog and release assets before shipping. Legacy provider source extraction remains separate work in #88 through #94; no bundled manifests or sample packages are offered or loaded by this build.
+- Public downloads need the owner's real offline catalog public keys and a published, signed catalog in `fredhakon/toolboks-addons`. The placeholder keys reject every download. The catalog repository is private and has no entries; it must be public for the app to read it.
 
 ## Existing platform work
 

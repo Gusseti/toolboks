@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bytes = serde_json::to_vec(&package)?;
         let filename = format!("{slug}.tbaddon");
         fs::write(folder.join(&filename), &bytes)?;
-        entries.push(serde_json::json!({
+        let mut entry = serde_json::json!({
             "id": id, "title": title.to_owned(), "short_description": description,
             "long_description": "A harmless local SDK test package. This is not the published tool. It shows live memory readings and saves its own preferences inside Toolboks.",
             "publisher": "Toolboks", "category": category, "icon": icon, "accent": "#8b5cf6",
@@ -120,7 +120,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "size": bytes.len(), "sha256": sha256_hex(&bytes), "verified": true, "channel": "stable",
             "capabilities": capabilities, "pages": ["Overview", "Preferences"],
             "release_notes": "First local test version. No Windows changes."
-        }));
+        });
+        if slug == "disk-manager" {
+            entry["byline"] = "by stratum".into();
+        }
+        entries.push(entry);
     }
     if let Some(exe) = native {
         let bytes = fs::read(exe)?;

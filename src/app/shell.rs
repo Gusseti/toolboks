@@ -843,7 +843,21 @@ impl App {
                 enabled: self.tool_enabled(i),
             });
         }
+        // Still shipped inside the app until they move to the catalog (#88 to #94).
+        for id in addons::OFFICIAL_ADDONS {
+            if let Some(package) = addons::official_package(id) {
+                list.push(Entry {
+                    enabled: self.registry.enabled(id),
+                    installed: self.registry.packages.iter().any(|p| p.manifest.id == id),
+                    verified: true,
+                    m: package.manifest,
+                });
+            }
+        }
         for p in &self.registry.packages {
+            if addons::OFFICIAL_ADDONS.contains(&p.manifest.id.as_str()) {
+                continue;
+            }
             list.push(Entry {
                 m: p.manifest.clone(),
                 verified: self.registry.verified(&p.manifest.id),
@@ -988,6 +1002,10 @@ impl App {
     /// The primary action of an add-on: install it, turn it on, or open it.
     fn run_action(&mut self, e: &Entry) {
         if !e.installed {
+            if let Some(package) = addons::official_package(&e.m.id) {
+                self.pending_package = Some(package);
+                return;
+            }
             self.screen = Screen::Browser;
             self.market.focused = Some(e.m.id.clone());
             return;
@@ -1120,7 +1138,15 @@ impl App {
                     }
                 });
                 ui.add_space(look::GAP);
-                muted(ui, "For developers: choose a local .tbaddon file. No sample tools are bundled.");
+                if ui.button("Try the example package").clicked() {
+                    match toolboks_addon_sdk::Package::parse(
+                        addons::SDK_EXAMPLE.as_bytes(),
+                        env!("CARGO_PKG_VERSION"),
+                    ) {
+                        Ok(p) => self.pending_package = Some(p),
+                        Err(e) => self.message = Some(e),
+                    }
+                }
             });
             ui.add_space(look::GAP);
         }
