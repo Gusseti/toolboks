@@ -32,7 +32,7 @@ use toolboks_addon_proto::{
 };
 use toolboks_catalog::{Entry, Kind};
 
-/// Capabilities that let an add-on ask for a restart with administrator rights.
+/// Capabilities that let an add-on request a separate administrator helper.
 pub const ELEVATING_CAPABILITIES: [&str; 3] = ["administrator", "drive_optimize", "system_tuning"];
 
 const MAX_STATUS_ITEMS: usize = 8;
@@ -425,7 +425,7 @@ mod tests {
             "pages": pages,
             "version": "1.0.0",
             "min_toolboks_version": "0.12.0",
-            "protocol_version": 2,
+            "protocol_version": toolboks_addon_proto::PROTOCOL_VERSION,
             "download_url": "https://github.com/test/addon.exe",
             "size": 1,
             "sha256": "00".repeat(32),

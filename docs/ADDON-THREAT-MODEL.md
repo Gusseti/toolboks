@@ -117,9 +117,10 @@ A program tries to talk to an add-on, or to pose as one.
   that is new for every launch. **Covered** (`supervisor` tests). For an add-on started through
   the UAC prompt the host may not learn the process id; then only the token is checked.
 - A program of the same user is not kept out by design. **Accepted** for normal add-ons. For an
-  add-on running with administrator rights it is a way up: **accepted risk pending owner
-  decision**, finding F4. No privileged native add-on may ship until the owner approves the
-  per-change confirmation boundary and its implementation is tested.
+  administrator helper it must never be consent: **implemented, real UAC validation pending**
+  (F4). The helper accepts one action, builds its own preview and owns a native Confirm/Cancel
+  dialog. Forwarded host input cannot approve it. The drawing process stays unelevated.
+  No privileged native add-on may ship until the real UAC integration is checked.
 
 ### 5. A malicious local `.tbaddon`
 
@@ -193,7 +194,7 @@ F1 is unchanged. The implementation follow-up records these statuses for F2-F7; 
 |---|---|---|
 | F2 | **Fixed** | Cache the accepted index and signature atomically; reverify signature, expiry, replay floor, compatibility, native kind and signed elevation capability before a privileged start. Hash the locked exe against the signed entry, never the writable install record. Tests cover missing/expired/tampered/replayed catalogs, recovery-key misuse, mismatched ids/versions, incompatible entries and swapped exe plus records. |
 | F3 | **Fixed** | Build MSVC exes with `/DEPENDENTLOADFLAG:0x800`; refuse installed version folders with extra files, directories or reparse points. Tests inspect the built PE loader flag and reject planted DLLs, other files, directories and junctions. Outside-workspace builds must carry the same loader restriction. |
-| F4 | **Accepted risk pending owner decision** | The owner must approve the privileged UI boundary for #92/#88: mandatory per-change dialogs owned by the elevated process versus keeping the UI elevated; remote host input cannot count as confirmation. No privileged native add-on may ship before that decision and its implementation/tests. |
+| F4 | **Implemented; real UAC validation pending** | #118 chose per-change dialogs in a small elevated helper; protocol 3 implements this in #132. The SDK validates/previews the exact action, owns its native Confirm/Cancel window and checks its PID. Headless tests cover host click/key/result rejection, Cancel and disconnect. A native ownership test exists but is opt-in pending an approved GUI session. Disk Manager uses the boundary. Real UAC and privileged execution need manual validation; the unsigned-code limitation is explained below. |
 | F5 | **Accepted risk pending owner decision** | Host releases need an offline signing key with owner-approved custody and recovery; the catalog decision authorizes signing indexes only, so its key is not silently reused for host executables. The existing checksum is still only a corruption check. #13/#14 and release signature enforcement remain release blockers. |
 | F6 | **Accepted risk pending owner decision** | Owner decision 2 in #95: whether to purchase a code-signing certificate before the first add-on release, and who holds its signing credentials. #50 remains open. |
 | F7 | **Fixed** | Hidden non-background add-ons quit and are ended after the grace period; an in-flight launch is cancelled. Reopening starts again, also when the previous process is still quitting. Background add-ons alone remain suspended. Process tests cover each case. |
@@ -207,9 +208,9 @@ F1 is unchanged. The implementation follow-up records these statuses for F2-F7; 
    placeholders, so no index is accepted until the owner swaps in the real ones.
 2. **Whether to buy a code-signing certificate before the first add-on release.** Not answered
    yet. See F6.
-3. **Privileged UI boundary for native add-ons.** Pending (F4): approve per-change native
-   confirmation dialogs owned by the elevated process, or explicitly choose another boundary,
-   before #92/#88 move system-changing actions out of the elevated host.
+3. **Privileged UI boundary for native add-ons.** Decided in #118 on 2026-11-15: each change
+   requires a native dialog owned by the small elevated helper; the add-on UI stays unelevated.
+   Protocol 3 migration is owner-approved. Implemented in #132; real UAC validation remains.
 4. **Host release-signing key custody and recovery.** Pending (F5): choose the release key and
    who holds it offline. Catalog key ownership does not authorize a second signing purpose.
    No real signing keys were created or changed in this implementation follow-up.
@@ -221,8 +222,18 @@ F1 is unchanged. The implementation follow-up records these statuses for F2-F7; 
 - [x] F1 is fixed (PR #112).
 - [x] F2 and F3 are fixed, with regression tests.
 - [x] F7: hidden non-background add-ons hold no process after shutdown completes.
-- [ ] F4: the owner approves the privileged UI boundary and the chosen confirmation mechanism
-      is implemented and tested before any privileged native add-on is published.
+- [x] F4: owner approved the helper boundary; protocol 3 and regression tests implement it.
+- [ ] F4 integration: manually try UAC consent/decline, native Confirm/Cancel and a real
+      privileged action before publishing any add-on with administrator rights.
 - [ ] Owner decision 2 is recorded.
 - [ ] The key rotation was practised once with test keys.
 - [ ] The elevated start and a second Windows account on the pipe were tried on a real PC.
+
+### F4 scope under the unsigned catalog decision
+
+Protocol 3 enforces per-action confirmation inside the SDK helper and the bundled Disk
+Manager. It is not a sandbox for arbitrary elevated native code. Under the accepted #134
+catalog model, a publisher can supply an executable that ignores the SDK and the confirmation
+contract altogether. After a user grants that executable UAC rights, Toolboks cannot force it
+to confirm each OS write. The catalog's `verified` flag and hash do not authenticate a publisher.
+This inherited limitation is not fixed or hidden by the helper implementation.

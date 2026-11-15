@@ -59,7 +59,9 @@ change three things:
 | `tray_items()`, `tray_action(id)` | After every message; when the user picks one | Optional entries in the tray menu. |
 | `tutorial_steps()`, `tutorial_location()`, `tutorial_start()`, `tutorial_navigate(page)`, `tutorial_finish()` | During a guided tour | Describe the tour. Mark the parts with `tutorial::mark` or `tutorial::region`. |
 | `set_capabilities(capabilities)` | After the host connected | Learn what the user granted. Do nothing that was not granted. |
-| `take_host_request()` | After every message | Ask for the package review or a restart with administrator rights. |
+| `take_host_request()` | After every message | Ask for the package review or one administrator operation. |
+| `prepare_admin(request)` | Dedicated elevated helper only | Validate and return a read-only preview plus its exact action. |
+| `admin_result(id, outcome)` | Original unelevated process | Show the result; never use it as permission to write. |
 | `cancel()` | Before the add-on exits | Stop work safely. |
 
 Rules that come from being a separate program:
@@ -123,11 +125,40 @@ subdirectories or redirected paths make the supervisor refuse a start.
 Leaving a non-background add-on page ends its process; opening it again starts a new one.
 Only add-ons declared as `background` in the catalog keep a suspended process while hidden.
 
-A native add-on with administrator rights must confirm each system change in a real window
-owned by that elevated process, using its own preview of the exact action. A remote-drawn
-confirmation or host message is not user consent across that boundary. The owner decision on
-this boundary (F4 in `ADDON-THREAT-MODEL.md`) and the implementation/tests must be complete
-before a privileged native add-on ships.
+Administrator actions use protocol 3 and a separate helper. The add-on's entire UI must stay
+unelevated. Use `runtime::run_addon_with_admin(create_ui, ID, prepare)` as your entry point;
+it selects helper mode before creating UI state. The hello sample uses this entry point and
+refuses administrator operations, because its counter needs no administrator rights.
+
+- From an explicit action, return `HostRequest::AdminOperation(AdminRequest { id, operation,
+  json })`. Use a unique id while work is pending; keep parameters under 32 KiB. Disable duplicate
+  actions until `admin_result` arrives. Tours must never enqueue an operation.
+- `prepare` runs only in the helper. Match a fixed operation name, parse a strict typed payload,
+  validate current OS state, and return `Box<dyn admin::AdminChange>`. Do not change anything
+  while preparing. `capability()` names a granted elevation capability; `description()` says
+  exactly what will change and any undo limit. Never accept a command line, preview or approval
+  flag from the host. Keep the validated target inside this value.
+- `AdminChange::apply(self: Box<Self>)` is called once, only after the SDK's native Confirm
+  button. Revalidate mutable OS state and refuse if the target changed during confirmation.
+  An operation is one reviewed change, not an open-ended script or a batch of future commands.
+- Handle `AdminOutcome::{Completed, Cancelled, Failed}` in `admin_result`. This callback is
+  informational; privileged writes belong only in `apply`. Cancel makes no change. Closing the
+  host cancels a pending dialog; approved work may need to finish safely.
+- Installed helper launches require the saved catalog's hash and elevation capability.
+  `RestartElevated` no longer restarts an interface; update code using that legacy variant.
+  Still-bundled providers implement `NativeAddon::prepare_admin` and use the same SDK boundary.
+
+The development `addon_host` speaks v3 but deliberately refuses helper requests for development
+executables. Inspect the actual dialog without UAC or writes with a preview build:
+
+```powershell
+$env:TOOLBOKS_DATA_DIR = "$PWD\target\admin-dialog-preview-data"
+cargo run --features preview --example admin_dialog
+```
+
+For real elevation, install a checked add-on from a saved catalog. Manually test both UAC
+consent and decline, native Confirm and Cancel, closing the host during confirmation, and the
+absence of administrator rights in the drawing process. Never automate the UAC prompt.
 
 To reach users, the add-on needs an entry in the catalog. An entry states, among other
 things:
@@ -137,7 +168,7 @@ things:
 | `id`, `title`, `short_description`, `publisher`, `category`, `icon`, `accent` | What the add-on browser shows. |
 | `kind` | `native` for an exe, `declarative` for a `.tbaddon`. |
 | `version`, `min_toolboks_version` | Plain `x.y.z`. An update must have a higher version. |
-| `protocol_version` | The wire protocol your SDK speaks: 2 today. |
+| `protocol_version` | The wire protocol your SDK speaks: 3 today. Rebuild all v2 binaries and update their catalog entries. |
 | `download_url`, `size`, `sha256` | Where the exe is (an HTTPS address on GitHub), and exactly what it must be. Toolboks places nothing that does not match. |
 | `capabilities` | What the add-on may do, shown to the user before installing. |
 | `pages` | Your page names, so `--open "Title/Page"` links work. |

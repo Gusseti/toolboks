@@ -117,6 +117,7 @@
               "local_preferences",
               "filesystem_read",
               "user_exports",
+              "administrator",
               "drive_optimize",
               "live_audio",
               "system_tuning",

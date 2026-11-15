@@ -32,6 +32,7 @@ use toolboks_addon_proto::{
 struct Running {
     child: Child,
     side: mpsc::Receiver<AddonMessage>,
+    sender: addon_view::SharedSender,
 }
 
 /// Starts the exe, does the handshake and hands the connection to the view.
@@ -57,11 +58,15 @@ fn start(
     let link = AddonLink::spawn(reader, writer, ctx, side_tx).map_err(|e| e.to_string())?;
     let sender = link.sender();
     view.attach(link);
-    if let Ok(mut sender) = sender.lock() {
+    if let Ok(mut locked) = sender.lock() {
         let json = preferences.to_string();
-        let _ = sender.send(&HostMessage::LoadPreferences { json });
+        let _ = locked.send(&HostMessage::LoadPreferences { json });
     }
-    Ok(Running { child, side })
+    Ok(Running {
+        child,
+        side,
+        sender,
+    })
 }
 
 struct Host {
@@ -134,6 +139,14 @@ impl eframe::App for Host {
                     }
                     AddonMessage::Log { level, line } => eprintln!("log {level:?}: {line}"),
                     AddonMessage::Pong { .. } => {}
+                    AddonMessage::HostRequest(
+                        toolboks_addon_proto::HostRequest::AdminOperation(request),
+                    ) => {
+                        // This development host never elevates arbitrary development executables.
+                        if let Ok(mut sender) = running.sender.lock() {
+                            let _ = sender.send(&HostMessage::AdminResult { id: request.id, outcome: toolboks_addon_proto::AdminOutcome::Failed { reason: "The test host does not launch administrator helpers. Install from a saved catalog to test elevation; use the preview admin_dialog example to inspect the window.".into() } });
+                        }
+                    }
                     other => eprintln!("add-on: {other:?}"),
                 }
             }

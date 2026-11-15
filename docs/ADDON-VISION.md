@@ -33,7 +33,7 @@ together, is in [ADDON-ARCHITECTURE.md](ADDON-ARCHITECTURE.md). The plan and its
   and defaults, with deeper controls available when useful.
 - Every workspace offers Help with full and current-tab guided tours. Tours open only when
   requested, highlight their subject, never run an action, and can be cancelled at any point.
-- An add-on gets administrator rights only when it needs them, and only that add-on.
+- Each administrator action uses a separate helper with its own Confirm/Cancel window; the add-on interface stays unelevated.
 - One add-on that crashes or hangs does not close the app.
 
 ## Assumptions in the plan (say so if any is wrong)
