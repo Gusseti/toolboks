@@ -1,7 +1,12 @@
 name: Deploy landing page
 
 # Publishes site/ to GitHub Pages (https://gusseti.github.io/toolboks/).
-# Needs Settings > Pages > Source set to "GitHub Actions".
+#
+# Settings > Pages > Source should be "GitHub Actions". While it is still "Deploy from a branch",
+# GitHub rebuilds a plain page from README.md after EVERY push to main and replaces this site.
+# The workflow_run trigger below is the safeguard for that: it publishes the landing page again
+# each time that README build finishes, so the landing page is always the one left standing.
+# Once the source is "GitHub Actions" the README build no longer runs and the trigger is idle.
 
 on:
   push:
@@ -9,6 +14,10 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
+  workflow_run:
+    workflows: ["pages build and deployment"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +31,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
