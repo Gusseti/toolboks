@@ -33,6 +33,8 @@ Every add-on follows the design system in [DESIGN.md](../DESIGN.md) and passes t
 | Repository and release workflow for first-party add-ons | [`toolboks-addons`](https://github.com/fredhakon/toolboks-addons) | Built (#83); no real tool released yet |
 | The tools as add-on exes | #88 to #93 | Not built; they are still compiled into the app (see "Today") |
 
+Where each tool goes and how the move works: [ADDON-MOVE.md](ADDON-MOVE.md).
+
 Details: [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md) (protocol, connection, supervisor, host
 services), [catalog-signing.md](catalog-signing.md) (catalog format and the owner's runbook),
 [ADDON-THREAT-MODEL.md](ADDON-THREAT-MODEL.md) (what can go wrong and what is still open).
@@ -50,8 +52,9 @@ services), [catalog-signing.md](catalog-signing.md) (catalog format and the owne
 3. **Run.** The host sends input for one frame at a time, at most 60 a second; the add-on answers
    with the drawing. An idle add-on sends nothing and costs the host nothing. Status bar items,
    tray entries, tour steps and preferences travel as messages.
-4. **Hide.** The add-on is told to suspend. (Whether a hidden add-on that is not a background
-   add-on should hold no process at all is open, see #97.)
+4. **Hide.** A background add-on is told to suspend. Other add-ons quit (and are ended if
+   needed after the grace period); opening the page again starts a new process. Hiding during
+   launch cancels it. See #95 F7 and the process budget in #97.
 5. **Fail.** A crash, a failed start or a long stall restarts the add-on at most 3 times per
    minute. Then it stays stopped with a plain message, a Restart action and a report the user can
    copy.

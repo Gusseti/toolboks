@@ -2,13 +2,14 @@
 //!
 //! - An add-on starts when its page is opened ([`Supervisor::open`]) or, for a background
 //!   add-on, when the host asks ([`Supervisor::start_background`]).
-//! - Before every start the exe is checked against the SHA-256 recorded at install time, and
-//!   the checked file is held open until the process runs, so a swapped file never starts.
+//! - Before every start the exe is hashed and held open until the process runs. Normal starts
+//!   use the install record; privileged starts require a currently valid signed catalog entry.
+//!   Installed version folders refuse unexpected files or redirected paths.
 //! - Each launch gets two named pipes that only the current user can open and a random token
 //!   the add-on must present (see `pipe`), then the protocol handshake.
 //! - Every add-on process is in one job object that ends with the host, also after a crash of
 //!   the host (see `process`).
-//! - A hidden add-on is told to suspend. One that crashes restarts at most
+//! - Hidden background add-ons suspend; other hidden add-ons exit. A crash restarts at most
 //!   [`Timing::restart_max`] times per [`Timing::restart_window`], then stays stopped with a
 //!   plain reason until the user restarts it ([`Supervisor::restart`]); [`Supervisor::report`]
 //!   is the text for a bug report.
@@ -60,6 +61,8 @@ pub struct LaunchSpec {
     pub sha256: String,
     /// The add-on may be restarted with administrator rights when it asks.
     pub may_elevate: bool,
+    /// Background add-ons keep their process while their page is hidden.
+    pub background: bool,
     /// `addons::data_root()` for an add-on the installer placed. The supervisor then follows
     /// the installer's start bookkeeping (`launching`, `started`), so a new version that never
     /// starts rolls back.
@@ -357,17 +360,21 @@ impl Supervisor {
                 *heartbeat = HeartbeatMonitor::new(now);
                 send(sender, &HostMessage::Resume);
             }
+            Phase::Stopping { then, .. } if visible => *then = Then::Restart,
             _ => {}
         }
     }
 
-    /// The add-on's page was left: it is told to suspend and keeps running.
+    /// A background add-on suspends; every other add-on exits when its page is left.
     pub fn hide(&mut self, id: &str) {
         if let Some(managed) = self.addons.get_mut(id) {
-            if std::mem::replace(&mut managed.visible, false) {
+            managed.visible = false;
+            if managed.spec.background {
                 if let Phase::Running { sender, .. } = &managed.phase {
                     send(sender, &HostMessage::Suspend);
                 }
+            } else {
+                begin_stop(&self.shared, managed, Then::Stay, Instant::now());
             }
         }
     }
@@ -549,7 +556,7 @@ fn launch(
     cancel: &AtomicBool,
 ) -> Result<Started, LaunchError> {
     let failed = |e: &dyn std::fmt::Display| LaunchError::Failed(e.to_string());
-    let (exe, sha256) = match &spec.installed_root {
+    let (exe, mut sha256) = match &spec.installed_root {
         Some(root) => {
             // May roll back to the previous version when the new one never started.
             installer::launching(root, &spec.id).map_err(|e| failed(&e))?;
@@ -559,11 +566,35 @@ fn launch(
         }
         None => (spec.exe.clone(), spec.sha256.clone()),
     };
+    let refused = |why| LaunchError::Stop(StopReason::Refused(why));
+    // Also covers ordinary children of an already elevated host, not just UAC restarts.
+    if elevated || crate::elevation::is_elevated() {
+        let root = spec.installed_root.as_ref().ok_or_else(|| refused(
+            "Only installed add-ons from a valid signed catalog can start with administrator rights.".into()))?;
+        let version = exe
+            .parent()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                refused("The installed version is invalid. Reinstall the add-on.".into())
+            })?;
+        sha256 = crate::catalog::elevated_entry(root, &spec.id, version)
+            .map_err(refused)?
+            .sha256;
+    }
+    if spec.installed_root.is_some() {
+        process::verify_folder(&exe).map_err(|e| {
+            refused(format!(
+                "The add-on folder contains unexpected files. Reinstall the add-on. {e:?}"
+            ))
+        })?;
+    }
     // Held until the process runs: the checked file cannot be swapped in between.
     let _checked = process::verify(&exe, &sha256).map_err(|e| {
         LaunchError::Stop(match e {
             VerifyError::WrongHash => StopReason::WrongFile,
             VerifyError::Missing(why) => StopReason::Missing(why),
+            VerifyError::UnexpectedFile(why) => StopReason::Refused(why),
         })
     })?;
 

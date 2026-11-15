@@ -69,6 +69,7 @@ pub fn launch_spec(root: &Path, entry: &Entry) -> LaunchSpec {
             .capabilities
             .iter()
             .any(|name| ELEVATING_CAPABILITIES.contains(&name.as_str())),
+        background: entry.background,
         installed_root: Some(root.to_path_buf()),
     }
 }
@@ -675,6 +676,8 @@ mod tests {
         assert_eq!(specs[0].id, "toolboks.memory-cleaner");
         assert_eq!(specs[0].name, "Memory Cleaner");
         assert!(specs[0].may_elevate);
+        assert!(specs[0].background);
+        assert!(!launch_spec(root, &installed[3]).background);
         assert_eq!(specs[0].installed_root.as_deref(), Some(root));
         assert!(!launch_spec(root, &installed[3]).may_elevate);
     }

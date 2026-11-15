@@ -113,7 +113,21 @@ cargo build --release -p <your add-on>
 ```
 
 The workspace's release profile already optimises for size (`opt-level = "z"`, LTO, stripped).
-The exe must not need DLLs beside it; the workspace links the C runtime statically.
+The exe must not need DLLs beside it; the workspace links the C runtime statically and uses
+`/DEPENDENTLOADFLAG:0x800` on MSVC to load implicit DLL dependencies from System32 only. Copy
+both settings from `.cargo/config.toml` when building outside this workspace. Explicit DLL
+loads must use System32 or an absolute trusted path. Installed version folders hold only
+`addon.exe` and `entry.json`; put mutable files under the add-on data directory. Extra files,
+subdirectories or redirected paths make the supervisor refuse a start.
+
+Leaving a non-background add-on page ends its process; opening it again starts a new one.
+Only add-ons declared as `background` in the catalog keep a suspended process while hidden.
+
+A native add-on with administrator rights must confirm each system change in a real window
+owned by that elevated process, using its own preview of the exact action. A remote-drawn
+confirmation or host message is not user consent across that boundary. The owner decision on
+this boundary (F4 in `ADDON-THREAT-MODEL.md`) and the implementation/tests must be complete
+before a privileged native add-on ships.
 
 To reach users, the add-on needs an entry in the signed catalog. An entry states, among other
 things:
