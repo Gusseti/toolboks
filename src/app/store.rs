@@ -437,7 +437,7 @@ impl App {
                                     }
                                     if entries.is_empty(){ui.label(text("No add-ons match. Clear the search or choose another category.",13.0,400,MUTED));}
                                     ui.add_space(6.0);
-                                    egui::Frame::new().inner_margin(12).show(ui,|ui|{ui.label(text(format!("{} add-ons. Verified tools are listed first.",entries.len()),13.0,400,MUTED));});
+                                    egui::Frame::new().inner_margin(12).show(ui,|ui|{ui.label(text(format!("{} add-ons. Verified tools are listed first. {}",entries.len(),self.market.last_checked.map(|at|crate::marketplace::checked_text(at.elapsed())).unwrap_or_default()),13.0,400,MUTED));});
                                 });
                             });
                         });
