@@ -60,7 +60,7 @@ fn main() -> eframe::Result {
         } else {
             [1540.0, 960.0]
         })
-        .with_min_inner_size([1060.0, 720.0]);
+        .with_min_inner_size(app::MIN_INNER_SIZE);
     // The window and taskbar icon. If the embedded image cannot be read, Windows keeps the exe's
     // own icon (see build.rs), so a bad image never stops the app from starting.
     if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon.png")) {

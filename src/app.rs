@@ -23,6 +23,10 @@ mod tutorial;
 use crate::addons::{self, Registry};
 use shell::Screen;
 
+/// The smallest window Toolboks supports, in points: width, height. `main.rs` sets it as the
+/// window's minimum and DESIGN.md states it. Nothing in the shell is laid out for less.
+pub const MIN_INNER_SIZE: [f32; 2] = [1060.0, 720.0];
+
 /// Results sent back from the update worker thread.
 enum UpdateMsg {
     Checked(Result<CheckOutcome, UpdateError>),
