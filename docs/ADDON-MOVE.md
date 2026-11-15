@@ -134,6 +134,8 @@ What each tool needs beyond the common steps:
 
 ## Status, 2026-11-15
 
+**Update, same day:** all eight tools are released (`fredhakon/toolboks-addons` tags) and listed in the public catalog, the Debloater's administrator changes work through the helper (#145), and the host no longer contains any tool (#94): the built-in tools, host-linked providers, bundled manifests and per-tool tours are gone, the host exe is 6.77 MB (it was 8.24 MB with seven tools still built in), and updating from an earlier version offers "Restore your tools". Still open: a real UAC run of the administrator operations, and the host release itself.
+
 All eight tools are in the add-ons repo and each was installed from a test catalog and opened in
 a real window with the preview app's `--addon-check <id> <folder>`. Found that way: an add-on
 process has no fonts of its own, so each add-on applies the Toolboks look when it first draws,

@@ -14,7 +14,7 @@ add-ons repository; the other tools below remain part of the app. See [the archi
 ## Local add-on preview
 
 The local development branch introduces a Stratum-inspired shell, a persistent sidebar,
-and an add-on framework. The original four tools (Memory Cleaner, Resource Monitor, Debloater and Event Watch) are separate built-in add-ons that can each be turned off.
+and an add-on framework. Every tool (Memory Cleaner, Resource Monitor, Debloater, Event Watch, Disk Manager, Audio Gainer, Macro Manager and System Profiles) is a separate add-on that you install from the add-on browser; Toolboks itself contains none.
 Local `.tbaddon` packages render inside the same window. See [the architecture](docs/ADDON-ARCHITECTURE.md),
 [SDK](sdk/README.md), and [preview build instructions](docs/LOCAL-DEVELOPMENT.md).
 
