@@ -125,6 +125,37 @@ fn argument(name: &str) -> Option<String> {
     None
 }
 
+struct AdminRequester {
+    sent: bool,
+}
+impl NativeAddon for AdminRequester {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut BTreeMap<String, serde_json::Value>) -> bool {
+        ui.label("Administrator request test");
+        false
+    }
+    fn take_host_request(&mut self) -> Option<toolboks_addon_sdk::HostRequest> {
+        if self.sent {
+            return None;
+        }
+        self.sent = true;
+        Some(toolboks_addon_sdk::HostRequest::AdminOperation(
+            toolboks_addon_sdk::AdminRequest {
+                id: 42,
+                operation: "test_action".into(),
+                json: "{}".into(),
+            },
+        ))
+    }
+    fn admin_result(&mut self, id: u64, outcome: toolboks_addon_sdk::AdminOutcome) {
+        let path = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("admin-result.json");
+        std::fs::write(path, serde_json::to_vec(&(id, outcome)).unwrap()).unwrap();
+    }
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--sleep") {
         std::thread::sleep(Duration::from_secs(120));
@@ -169,7 +200,9 @@ fn main() {
                 std::fs::write(folder.join("child.pid"), child.id().to_string())
                     .expect("child.pid");
             }
-            if mode == "services" {
+            if mode == "admin-request" {
+                let _ = run_addon(AdminRequester { sent: false }, ID);
+            } else if mode == "services" {
                 let _ = run_addon(Services::default(), ID);
             } else {
                 let _ = run_addon(Fake, ID);

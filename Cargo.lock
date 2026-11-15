@@ -3166,6 +3166,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toolboks-addon-proto",
+ "windows 0.62.2",
 ]
 
 [[package]]

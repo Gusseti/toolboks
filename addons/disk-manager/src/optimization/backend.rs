@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Media {
     Hdd,
     Ssd,
@@ -23,7 +23,8 @@ impl Media {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Action {
     Analyze,
     Defrag,
@@ -48,7 +49,7 @@ impl Action {
         }
     }
 }
-#[derive(Clone, Default, Debug, Deserialize)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct History {
     pub operation: String,
     pub volume: String,
@@ -64,7 +65,7 @@ impl History {
         }
     }
 }
-#[derive(Clone, Default, Debug, Deserialize)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Volume {
     pub letter: String,
     pub device_id: String,
@@ -74,7 +75,7 @@ pub struct Volume {
     pub free: u64,
     pub dirty: bool,
     pub history: Vec<History>,
-    #[serde(skip)]
+    #[serde(default)]
     pub media: Media,
 }
 impl Volume {
@@ -92,7 +93,7 @@ impl Volume {
                 .contains(&self.filesystem.to_ascii_uppercase().as_str())
     }
 }
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Metadata {
     pub elevated: bool,
     pub volumes: Vec<Volume>,
@@ -258,9 +259,7 @@ fn validate_request<'a>(
         return Err("Invalid drive letter.".into());
     }
     if !m.elevated {
-        return Err(
-            "Restart Toolboks with administrator access before analyzing or optimizing.".into(),
-        );
+        return Err("Use the administrator helper to analyze or optimize this drive.".into());
     }
     let v = m
         .volumes
@@ -282,82 +281,120 @@ fn validate_request<'a>(
     }
     Ok(v)
 }
-pub fn start(service: &Service, letter: &str, device_id: &str, action: Action) {
-    if !valid_letter(letter) {
-        return;
-    }
-    {
-        let mut s = service.lock().unwrap();
-        if s.job.is_some() || s.refreshing {
-            return;
-        }
-        s.message = None;
-        s.last_output.clear();
-        s.job = Some(Job {
-            letter: letter.into(),
-            action,
-            started: Instant::now(),
-            phase_percent: None,
-            output: String::new(),
-        });
-    }
-    let service = service.clone();
-    let letter = letter.to_owned();
-    let device_id = device_id.to_owned();
-    std::thread::spawn(move || {
-        let result = (|| {
-            let m = metadata()?;
-            let v = validate_request(&m, &letter, &device_id, action)?;
-            if action != Action::Analyze {
-                optimize(&service, &letter, action)?;
-            }
-            let report = analyze(&letter).and_then(|r| {
-                if r.device_id == v.device_id {
-                    Ok(r)
-                } else {
-                    Err(
-                        "The drive identity changed during analysis. Refresh and analyze again."
-                            .into(),
-                    )
-                }
-            });
-            let mut s = service.lock().unwrap();
-            if action != Action::Analyze {
-                s.reports.remove(&v.device_id);
-            }
-            match report {
-                Ok(report) => {
-                    s.reports.insert(report.device_id.clone(), report);
-                    Ok(())
-                }
-                Err(e) if action != Action::Analyze => {
-                    s.message = Some(format!(
-                        "{} completed. A fresh fragmentation report is unavailable: {e}",
-                        action.label()
-                    ));
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        })();
-        let refreshed = metadata();
-        let mut s = service.lock().unwrap();
-        if let Ok(m) = refreshed {
-            s.metadata = Some(m)
-        }
-        if let Some(job) = s.job.take() {
-            s.last_output = job.output;
-        }
-        match result {
-            Ok(()) => {
-                if s.message.is_none() {
-                    s.message = Some(format!("{} completed for {letter}.", action.label()));
-                }
-            }
-            Err(e) => s.message = Some(e),
-        }
-    });
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriveRequest {
+    pub letter: String,
+    pub device_id: String,
+    pub action: Action,
 }
+#[derive(Serialize, Deserialize)]
+pub struct DriveResult {
+    pub device_id: String,
+    pub report: Option<Analysis>,
+    pub metadata: Metadata,
+    pub message: String,
+    pub output: String,
+}
+struct PreparedDrive {
+    request: DriveRequest,
+}
+
+pub fn prepare_admin(
+    request: &toolboks_addon_sdk::AdminRequest,
+) -> Result<Box<dyn toolboks_addon_sdk::admin::AdminChange>, String> {
+    if request.operation != "drive_optimize" {
+        return Err("Unknown drive action.".into());
+    }
+    let request: DriveRequest =
+        serde_json::from_str(&request.json).map_err(|_| "Invalid drive action.")?;
+    let metadata = metadata()?;
+    validate_request(
+        &metadata,
+        &request.letter,
+        &request.device_id,
+        request.action,
+    )?;
+    Ok(Box::new(PreparedDrive { request }))
+}
+impl toolboks_addon_sdk::admin::AdminChange for PreparedDrive {
+    fn capability(&self) -> &str {
+        "drive_optimize"
+    }
+    fn description(&self) -> String {
+        let explanation = match self.request.action {
+            Action::Analyze => {
+                "Windows will read a fragmentation report. No files will be changed."
+            }
+            Action::Trim => "Windows will tell the SSD which unused blocks it can reclaim.",
+            Action::Defrag => {
+                "Windows will rearrange fragmented files. The drive may be busy while this runs."
+            }
+            Action::Automatic => "Windows will choose the appropriate optimization for this drive.",
+        };
+        format!("{} drive {}\n\n{explanation}\n\nToolboks cannot undo drive optimization. Windows maintenance may continue after Toolboks closes.", self.request.action.label(), self.request.letter)
+    }
+    fn apply(self: Box<Self>) -> Result<String, String> {
+        let DriveRequest {
+            letter,
+            device_id,
+            action,
+        } = &self.request;
+        // Refuse hot-swapped volumes and changed drive state after the confirmation too.
+        let current = metadata()?;
+        validate_request(&current, letter, device_id, *action)?;
+        let service = Arc::new(Mutex::new(Shared {
+            job: Some(Job {
+                letter: letter.clone(),
+                action: *action,
+                started: Instant::now(),
+                phase_percent: None,
+                output: String::new(),
+            }),
+            ..Default::default()
+        }));
+        if *action != Action::Analyze {
+            optimize(&service, letter, *action)?;
+        }
+        let report = analyze(letter).and_then(|report| {
+            if report.device_id == *device_id {
+                Ok(report)
+            } else {
+                Err("The drive identity changed during analysis. Refresh and analyze again.".into())
+            }
+        });
+        let (report, message) = match report {
+            Ok(report) => (
+                Some(report),
+                format!("{} completed for {letter}.", action.label()),
+            ),
+            Err(error) if *action != Action::Analyze => (
+                None,
+                format!(
+                    "{} completed. A fresh fragmentation report is unavailable: {error}",
+                    action.label()
+                ),
+            ),
+            Err(error) => return Err(error),
+        };
+        let output = service
+            .lock()
+            .unwrap()
+            .job
+            .as_ref()
+            .map(|job| job.output.clone())
+            .unwrap_or_default();
+        serde_json::to_string(&DriveResult {
+            device_id: device_id.clone(),
+            report,
+            metadata: metadata().unwrap_or(current),
+            message,
+            output,
+        })
+        .map_err(|e| e.to_string())
+    }
+}
+
 fn optimize(service: &Service, letter: &str, action: Action) -> Result<(), String> {
     let flag = action
         .flag()

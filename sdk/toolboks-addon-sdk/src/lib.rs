@@ -12,6 +12,11 @@ pub mod tutorial;
 #[cfg(feature = "runtime")]
 pub mod runtime;
 
+#[cfg(feature = "native-ui")]
+pub mod admin;
+#[cfg(feature = "native-ui")]
+pub use toolboks_addon_proto::{AdminOutcome, AdminRequest};
+
 /// Declarative tours only describe and navigate UI; they never execute actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +79,7 @@ pub enum Capability {
     LiveAudio,
     SystemTuning,
     InputAutomation,
+    Administrator,
 }
 
 #[cfg(feature = "native-ui")]
@@ -96,8 +102,12 @@ pub struct TrayItem {
 
 #[cfg(feature = "native-ui")]
 pub enum HostRequest {
-    RestartElevated { page: String },
+    /// Legacy source contract; protocol-3 hosts refuse whole-interface elevation.
+    RestartElevated {
+        page: String,
+    },
     ReviewUpdate,
+    AdminOperation(AdminRequest),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -286,6 +296,7 @@ impl Package {
                         | Capability::LiveAudio
                         | Capability::SystemTuning
                         | Capability::InputAutomation
+                        | Capability::Administrator
                 )
             })
         {
@@ -373,6 +384,15 @@ pub trait NativeAddon {
         _preferences: &std::collections::BTreeMap<String, serde_json::Value>,
     ) {
     }
+    /// Read-only preparation in the dedicated helper, never in the drawing runtime.
+    fn prepare_admin(
+        &mut self,
+        _request: &AdminRequest,
+    ) -> Result<Box<dyn admin::AdminChange>, String> {
+        Err("This add-on does not support administrator actions.".into())
+    }
+    /// Informational result in the unelevated UI; never use this to authorize a write.
+    fn admin_result(&mut self, _id: u64, _outcome: AdminOutcome) {}
     fn take_host_request(&mut self) -> Option<HostRequest> {
         None
     }
@@ -458,6 +478,7 @@ mod tests {
         v["manifest"]["capabilities"] = serde_json::json!([]);
         assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
         for capability in [
+            "administrator",
             "drive_optimize",
             "live_audio",
             "system_tuning",

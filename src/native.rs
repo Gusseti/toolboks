@@ -10,6 +10,7 @@ mod profiles;
 pub struct NativeHost {
     active: BTreeMap<String, Box<dyn NativeAddon>>,
     foreground: Option<String>,
+    admin_jobs: BTreeMap<String, crate::supervisor::admin::AdminJob>,
 }
 
 impl NativeHost {
@@ -37,7 +38,76 @@ impl NativeHost {
     pub fn take_host_request(&mut self, provider: &str) -> Option<toolboks_addon_sdk::HostRequest> {
         self.provider(provider).and_then(|p| p.take_host_request())
     }
+    pub fn request_admin(
+        &mut self,
+        provider: &str,
+        request: toolboks_addon_sdk::AdminRequest,
+        capabilities: &[toolboks_addon_sdk::Capability],
+        ctx: &eframe::egui::Context,
+    ) {
+        if self.admin_jobs.contains_key(provider) {
+            if let Some(addon) = self.provider(provider) {
+                addon.admin_result(
+                    request.id,
+                    toolboks_addon_sdk::AdminOutcome::Failed {
+                        reason: "Another administrator action is still open.".into(),
+                    },
+                );
+            }
+            return;
+        }
+        let allowed = capabilities.iter().any(|cap| {
+            matches!(
+                cap,
+                toolboks_addon_sdk::Capability::Administrator
+                    | toolboks_addon_sdk::Capability::DriveOptimize
+                    | toolboks_addon_sdk::Capability::SystemTuning
+            )
+        });
+        if let Err(reason) = request.validate().and_then(|()| {
+            if allowed {
+                Ok(())
+            } else {
+                Err("This add-on was not granted administrator access.".into())
+            }
+        }) {
+            if let Some(addon) = self.provider(provider) {
+                addon.admin_result(
+                    request.id,
+                    toolboks_addon_sdk::AdminOutcome::Failed { reason },
+                );
+            }
+            return;
+        }
+        let caps = capabilities
+            .iter()
+            .filter_map(|cap| serde_json::to_value(cap).ok()?.as_str().map(str::to_owned))
+            .collect();
+        self.admin_jobs.insert(
+            provider.into(),
+            crate::supervisor::admin::AdminJob::builtin(
+                ctx.clone(),
+                provider.into(),
+                caps,
+                request,
+            ),
+        );
+    }
+    pub fn prepare_admin(
+        &mut self,
+        provider: &str,
+        request: &toolboks_addon_sdk::AdminRequest,
+    ) -> Result<Box<dyn toolboks_addon_sdk::admin::AdminChange>, String> {
+        self.provider(provider)
+            .ok_or("This native provider is not available.")?
+            .prepare_admin(request)
+    }
     fn provider(&mut self, provider: &str) -> Option<&mut Box<dyn NativeAddon>> {
+        // A legacy built-in tool may elevate the host. Add-ons must not inherit that UI
+        // boundary; only the early, helper-only entry may construct a provider elevated.
+        if crate::elevation::is_elevated() && !toolboks_addon_sdk::admin::is_helper() {
+            return None;
+        }
         let create: fn() -> Box<dyn NativeAddon> = match provider {
             toolboks_disk_manager::PROVIDER => {
                 || Box::new(toolboks_disk_manager::DiskManager::default())
@@ -81,6 +151,10 @@ impl NativeHost {
         capabilities: &[toolboks_addon_sdk::Capability],
         prefs: &mut BTreeMap<String, serde_json::Value>,
     ) -> bool {
+        if crate::elevation::is_elevated() {
+            ui.label("Reopen Toolboks without administrator rights to open add-ons.");
+            return false;
+        }
         let Some(addon) = self.provider(provider) else {
             ui.label("This native provider is not available in this Toolboks build.");
             return false;
@@ -187,6 +261,23 @@ impl NativeHost {
     }
 
     pub fn tick(&mut self, ctx: &eframe::egui::Context) {
+        let finished: Vec<_> = self
+            .admin_jobs
+            .iter()
+            .filter_map(|(provider, job)| job.poll().map(|result| (provider.clone(), result)))
+            .collect();
+        for (provider, (id, outcome)) in finished {
+            self.admin_jobs.remove(&provider);
+            if let Some(addon) = self.active.get_mut(&provider) {
+                addon.admin_result(id, outcome);
+            }
+        }
+        self.admin_jobs
+            .retain(|provider, _| self.active.contains_key(provider));
+        if !self.admin_jobs.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
         if self
             .active
             .get(crate::addons::MACRO_ID)

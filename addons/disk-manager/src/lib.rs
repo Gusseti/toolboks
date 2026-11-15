@@ -587,13 +587,21 @@ impl NativeAddon for DiskManager {
     fn set_capabilities(&mut self, capabilities: &[toolboks_addon_sdk::Capability]) {
         self.optimization.capabilities(capabilities);
     }
+    fn prepare_admin(
+        &mut self,
+        request: &toolboks_addon_sdk::AdminRequest,
+    ) -> Result<Box<dyn toolboks_addon_sdk::admin::AdminChange>, String> {
+        optimization::prepare_admin(request)
+    }
+    fn admin_result(&mut self, id: u64, outcome: toolboks_addon_sdk::AdminOutcome) {
+        self.optimization.admin_result(id, outcome);
+    }
     fn take_host_request(&mut self) -> Option<toolboks_addon_sdk::HostRequest> {
         self.optimization.request()
     }
     fn navigate(&mut self, page: &str) {
         let page = page.parse::<usize>().unwrap_or(0).min(PAGES.len() - 1);
         if page != self.page {
-            self.optimization.dismiss_confirmation();
             self.export_kind = None;
             self.page = page;
             self.offset = 0;

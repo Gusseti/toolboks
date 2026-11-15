@@ -483,3 +483,20 @@ fn unhandled_flood_past_the_cap_ends_with_a_clear_error() {
     );
     assert!(error.to_string().contains("4096 messages"));
 }
+
+#[test]
+fn drawing_runtime_refuses_a_helper_operation_without_running_the_addon() {
+    let mut host = TestHost::connect(Counter::default());
+    host.send(HostMessage::AdminOperation {
+        request: proto::AdminRequest {
+            id: 1,
+            operation: "test".into(),
+            json: "{}".into(),
+        },
+        capabilities: vec!["administrator".into()],
+    });
+    assert!(matches!(
+        host.addon.join().unwrap(),
+        Err(ProtocolError::Unexpected(_))
+    ));
+}

@@ -271,4 +271,15 @@ mod tests {
         assert_eq!(parsed.verified("toolboks.sample", &host), expected.is_ok());
         assert_eq!(entry.check_download(b"hello"), Ok(()));
     }
+    #[test]
+    fn this_host_accepts_protocol_three_and_hides_protocol_two() {
+        assert_eq!(PROTOCOL_VERSIONS, &[3]);
+        let mut index: Index = serde_json::from_slice(&index()).unwrap();
+        let entry = &mut index.entries[0];
+        entry.channel = Channel::Stable;
+        entry.protocol_version = 2;
+        assert_eq!(entry.check(&host()), Err(Hidden::UnknownProtocol));
+        entry.protocol_version = 3;
+        assert_eq!(entry.check(&host()), Ok(()));
+    }
 }

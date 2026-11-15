@@ -1,4 +1,4 @@
-//! A sample Toolboks add-on that is its own program. Toolboks starts it, it draws its page with
+//! A protocol-3 sample Toolboks add-on that is its own program. Toolboks starts it, it draws its page with
 //! egui, and the SDK runtime sends the drawing to the Toolboks window and brings input back.
 //!
 //! Build and try it (see `docs/ADDON-AUTHOR-GUIDE.md`):
@@ -12,7 +12,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::BTreeMap;
-use toolboks_addon_sdk::runtime::{log, proto::LogLevel, run_addon};
+use toolboks_addon_sdk::runtime::{log, proto::LogLevel, run_addon_with_admin};
 use toolboks_addon_sdk::{tutorial, NativeAddon, StatusItem, TutorialStep};
 
 /// The id the host knows this add-on by. It must match the catalog entry.
@@ -90,7 +90,9 @@ impl NativeAddon for Hello {
 
 fn main() {
     // Runs until the host says quit or closes the connection.
-    if let Err(error) = run_addon(Hello::default(), ID) {
+    if let Err(error) = run_addon_with_admin(Hello::default, ID, |_| {
+        Err("The hello sample has no administrator actions.".into())
+    }) {
         eprintln!("hello-addon stopped: {error}");
         std::process::exit(1);
     }
