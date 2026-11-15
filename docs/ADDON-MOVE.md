@@ -36,8 +36,8 @@ follow the tool.
 | Resource Monitor | `toolboks.resource-monitor` | `src/tools/resources/` (copy also in the add-ons repo; host copy goes with #94) | `addons/resource-monitor/` | [#89](https://github.com/Gusseti/toolboks/issues/89) (code moved and window-checked; publication pending) |
 | Memory Cleaner | `toolboks.memory-cleaner` | `src/tools/memory/` (copy also in the add-ons repo; host copy goes with #94) | `addons/memory-cleaner/` | [#90](https://github.com/Gusseti/toolboks/issues/90) (code moved and window-checked; purge uses the helper; publication pending) |
 | Event Watch | `toolboks.event-watch` | `src/tools/events/` (copy also in the add-ons repo; the host copy goes with #94) | `addons/event-watch/` | [#91](https://github.com/Gusseti/toolboks/issues/91) (code moved; publication pending) |
-| Debloater | `toolboks.debloater` | `src/tools/debloat/` (copy also in the add-ons repo; host copy goes with #94) | `addons/debloater/` | [#92](https://github.com/Gusseti/toolboks/issues/92) (moved without administrator changes; those are #142) |
-| System Profiles | `toolboks.system-profiles` | `src/native/profiles/` (copy also in the add-ons repo; host copy goes with #94) | `addons/system-profiles/` | [#92](https://github.com/Gusseti/toolboks/issues/92) (review only; applying and restoring are #142) |
+| Debloater | `toolboks.debloater` | `src/tools/debloat/` (copy also in the add-ons repo; host copy goes with #94) | `addons/debloater/` | [#92](https://github.com/Gusseti/toolboks/issues/92) (moved; administrator changes go through the helper, #142) |
+| System Profiles | `toolboks.system-profiles` | `src/native/profiles/` (copy also in the add-ons repo; host copy goes with #94) | `addons/system-profiles/` | [#92](https://github.com/Gusseti/toolboks/issues/92) (applying and restoring go through the helper, #142) |
 | Audio Gainer (Aural) | `toolboks.aural` | `src/native/aural/` (copy also in the add-ons repo; host copy goes with #94) | `addons/aural/` | [#93](https://github.com/Gusseti/toolboks/issues/93) (code moved and window-checked; publication pending) |
 | Macro Manager | `toolboks.macro-manager` | `src/native/macros/` (copy also in the add-ons repo; host copy goes with #94) | `addons/macro-manager/` | [#93](https://github.com/Gusseti/toolboks/issues/93) (code moved and window-checked; recording behavior needs a real-input check; publication pending) |
 
@@ -125,7 +125,7 @@ What each tool needs beyond the common steps:
 
 | Tool | Extra care |
 |---|---|
-| Disk Manager | Fragmentation analysis uses the existing elevation request. Defrag, TRIM and Windows-selected optimization are gated on #132; repin and rebuild after its protocol 3 helper merges. Results and remaining checks: `docs/reviews/88/`. |
+| Disk Manager | Analysis, defrag, TRIM and Windows-selected optimization all go through the administrator helper (protocol 3). Results and remaining checks: `docs/reviews/88/`. |
 | Resource Monitor | Runs in the background so the history recorder (#64) keeps recording with the window hidden. The history files live in its data folder. |
 | Memory Cleaner | Runs in the background for automatic cleaning. Some actions need administrator rights. |
 | Event Watch | Checked: no page needs administrator rights. Event logs are read per channel, and a channel the user cannot read is reported in the page header as before. Crash dump headers are read as files (`filesystem_read`). It changes nothing and has no saved settings. |
@@ -139,10 +139,8 @@ What each tool needs beyond the common steps:
 All eight tools are in the add-ons repo and each was installed from a test catalog and opened in
 a real window with the preview app's `--addon-check <id> <folder>`. Found that way: an add-on
 process has no fonts of its own, so each add-on applies the Toolboks look when it first draws,
-and the shared font set-up loads Consolas for fixed-width text. Still open: every change that
-needs administrator rights in Debloater and System Profiles (#142), real UAC tests, the first
-releases and catalog entries, and the migration (#94). Until #142 is done, removing the built-in
-Debloater and System Profiles would take features away from users.
+and the shared font set-up loads Consolas for fixed-width text. Still open: real UAC tests of the administrator
+changes in Debloater and System Profiles (they go through the helper, #142), the first releases and catalog entries, and the migration (#94).
 
 ## Order
 
@@ -168,7 +166,6 @@ the pilot.
 ## Open points
 
 - The add-ons repo is public and its catalog is an unsigned plain list. Disk Manager still needs its first owner/orchestrator release and catalog entry.
-- The protocol 2 pilot must be repinned and rebuilt after #132 merges to staging, before it can run on that protocol 3 host.
 - The add-ons repo is pinned to a host commit on `staging`. Before the first real release it
   should point at a released host version ([#117](https://github.com/Gusseti/toolboks/issues/117)).
 - Nothing is signed: not the catalog and not the exes (owner decision, 2026-11-15). Windows

@@ -12,9 +12,8 @@ After the owner publishes it in the catalog, use Add-on browser, choose Disk Man
 review its access, and install it. The `.tbaddon` in the source repository describes the
 executable; installing that file alone does not install or activate a native provider.
 
-The pilot remains on protocol 2. Before publication, repin the add-ons repository's host
-dependencies and rebuild Disk Manager after #132 merges to staging. The first release and
-catalog review belong to the owner/orchestrator. No catalog publication is part of this move.
+Disk Manager uses protocol 3 and the administrator helper for drive actions. Releases and
+catalog entries belong to the owner/orchestrator.
 
 Choose a drive, browse to a folder, or paste a folder path, then Analyze space. Scanning is read-only,
 runs on a worker thread. Stop scan keeps partial results while Disk Manager is open.
@@ -41,9 +40,9 @@ There is no NTFS MFT fast path in this version.
 
 ## Framework boundary
 
-The SDK runtime draws Disk Manager in its own process and sends frames through protocol 2.
+The SDK runtime draws Disk Manager in its own process and sends frames through protocol 3.
 The installed catalog entry supplies its five page names and background declaration; the host
-provides navigation, preferences and per-add-on elevation through the existing supervisor.
+provides navigation and preferences, and starts the administrator helper for drive actions.
 The catalog generator copies page/background metadata from `host-services.json` in the add-on.
 
 The ID remains `toolboks.disk-manager`. Preferences remain under that ID in `config.json`:
@@ -79,13 +78,8 @@ The folder picker was exercised with a local fixture. A one-byte folder beside a
 ## Drive optimization (0.2)
 
 The Optimization page remains available before a folder scan. Drive inventory, media type,
-Windows history and cached reports remain available. New fragmentation analysis requires
-the `drive_optimize` capability and administrator rights, requested through the existing
-`HostRequest::RestartElevated { page: "4" }` path; it does not change the drive.
-
-**Gated on #132:** Defragment (`/D`), TRIM (`/L`) and Optimize with Windows (`/O`) cannot
-start. Both the controls and backend reject these actions. The old remote-drawn confirmation
-is removed; this change does not implement a replacement. #132 supplies the separate elevated
-helper and its own confirmation window, with protocol 3. After it merges to staging, repin,
-rebuild and verify analysis and each maintenance action before enabling them. See
-[DRIVE-OPTIMIZATION.md](DRIVE-OPTIMIZATION.md) and the pilot record in `docs/reviews/88/`.
+Windows history and cached reports remain available. Fragmentation analysis, Defragment (`/D`),
+TRIM (`/L`) and Optimize with Windows (`/O`) require the `drive_optimize` capability. Each
+action is sent to the separate administrator helper, which shows its own Confirm/Cancel window.
+Analysis does not change the drive. See [DRIVE-OPTIMIZATION.md](DRIVE-OPTIMIZATION.md) and the
+pilot record in `docs/reviews/88/`.
