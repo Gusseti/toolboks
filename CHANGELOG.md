@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-11-15
+
+### Added
+
+- **Updates are visible.** An add-on with a newer version shows "Update" at the right end of its row in the sidebar (an amber dot on the collapsed sidebar), so you no longer have to open the Add-ons page to find out.
+- **The add-on list refreshes itself every 5 minutes** while Toolboks is open, so a new release is noticed without a restart. If the connection fails, the list you already have stays as it is. The Add-ons page says when it was last checked, and "Refresh list" is still there.
+
 ## [0.13.0] - 2026-11-15
 
 This is a big update: Toolboks is now a small shell and every tool is a separate add-on you download. **Read this before updating.** When you start the new version it offers to restore your tools; nothing is lost.

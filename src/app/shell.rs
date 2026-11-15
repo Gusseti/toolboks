@@ -454,14 +454,27 @@ fn focus_ring(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response) {
 
 /// One row of the sidebar: an icon centred in the 36 px rail column and, when `show_label`, the
 /// name next to it. `label` is always the accessible name.
+/// A mark at the right end of a sidebar row. An update is more urgent than "New".
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Tag {
+    None,
+    New,
+    Update,
+}
+
 pub(super) fn nav_row(
     ui: &mut egui::Ui,
     label: &str,
     icon: &str,
     selected: bool,
     show_label: bool,
-    new: bool,
+    tag: Tag,
 ) -> egui::Response {
+    let name = match tag {
+        Tag::None => label.to_owned(),
+        Tag::New => format!("{label}, new"),
+        Tag::Update => format!("{label}, update available"),
+    };
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), egui::Sense::click());
     if ui.is_rect_visible(rect) {
@@ -500,33 +513,47 @@ pub(super) fn nav_row(
                 galley,
                 if selected { TEXT } else { MUTED },
             );
-            if new {
-                // "New" at the right end of the row; it goes once the add-on has been opened.
-                let tag = ui.painter().layout_no_wrap(
-                    "New".to_owned(),
+            if tag != Tag::None {
+                // The word sits at the right end of the row. "New" goes once the add-on has been
+                // opened; "Update" goes once the update is installed.
+                let (word, color, wash) = match tag {
+                    Tag::Update => (
+                        "Update",
+                        look::AMBER,
+                        Color32::from_rgba_unmultiplied(240, 168, 58, 38),
+                    ),
+                    _ => ("New", ACCENT_TEXT, look::ACCENT_WASH),
+                };
+                let text = ui.painter().layout_no_wrap(
+                    word.to_owned(),
                     egui::FontId::proportional(look::TEXT_CAPTION),
-                    ACCENT_TEXT,
+                    color,
                 );
-                let x = (rect.right() - tag.size().x - 18.0)
+                let x = (rect.right() - text.size().x - 18.0)
                     .max(rect.left() + LABEL_X + label_width + 8.0);
                 let tag_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, rect.center().y - tag.size().y / 2.0 - 2.0),
-                    tag.size() + Vec2::new(10.0, 4.0),
+                    egui::pos2(x, rect.center().y - text.size().y / 2.0 - 2.0),
+                    text.size() + Vec2::new(10.0, 4.0),
                 );
-                ui.painter().rect_filled(tag_rect, 9.0, look::ACCENT_WASH);
+                ui.painter().rect_filled(tag_rect, 9.0, wash);
                 ui.painter()
-                    .galley(tag_rect.min + Vec2::new(5.0, 2.0), tag, ACCENT_TEXT);
+                    .galley(tag_rect.min + Vec2::new(5.0, 2.0), text, color);
             }
-        } else if new {
+        } else if tag != Tag::None {
             // The collapsed rail has no room for a word: a dot on the icon, named in the tooltip.
+            // Amber for an update, purple for "new".
             ui.painter().circle_filled(
                 egui::pos2(rect.left() + 28.0, rect.center().y - 8.0),
                 3.5,
-                ACCENT,
+                if tag == Tag::Update {
+                    look::AMBER
+                } else {
+                    ACCENT
+                },
             );
         }
     }
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &name));
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -537,13 +564,13 @@ fn nav(
     icon: &str,
     selected: bool,
     expanded: bool,
-    new: bool,
+    tag: Tag,
 ) -> bool {
-    let response = nav_row(ui, label, icon, selected, expanded, new);
-    let label = if new && !expanded {
-        format!("{label} (new)")
-    } else {
-        label.to_owned()
+    let response = nav_row(ui, label, icon, selected, expanded, tag);
+    let label = match tag {
+        Tag::New if !expanded => format!("{label} (new)"),
+        Tag::Update if !expanded => format!("{label} (update available)"),
+        _ => label.to_owned(),
     };
     let label = label.as_str();
     if expanded {
@@ -647,7 +674,7 @@ impl App {
                 } else {
                     "Open sidebar"
                 };
-                let response = nav_row(ui, tip, "menu", false, false, false);
+                let response = nav_row(ui, tip, "menu", false, false, Tag::None);
                 if expanded {
                     // The sidebar's title: the app name in bold at title size.
                     ui.painter().text(
@@ -690,14 +717,14 @@ impl App {
                             "home",
                             self.screen == Screen::Home,
                             expanded,
-                            false,
+                            Tag::None,
                         ) {
                             self.screen = Screen::Home;
                         }
                         for (id, title, icon, pages) in installed {
                             let on = self.screen == Screen::External(id.clone());
-                            let new = self.registry.config.new_addons.contains(&id);
-                            if nav(ui, &title, sidebar_icon(&id, &icon), on, expanded, new) {
+                            let tag = self.addon_tag(&id);
+                            if nav(ui, &title, sidebar_icon(&id, &icon), on, expanded, tag) {
                                 self.open_addon(&id);
                             }
                             self.market_sidebar_status(ui, &id, expanded);
@@ -725,12 +752,12 @@ impl App {
                         self.screen = Screen::Pick;
                     }
                     if toolboks_addon_sdk::tutorial::region(ui, "browser-sidebar", |ui| {
-                        nav(ui, "Add-ons", "grid", browser_on, expanded, false)
+                        nav(ui, "Add-ons", "grid", browser_on, expanded, Tag::None)
                     }) {
                         self.screen = Screen::Browser;
                     }
                     let settings_on = self.screen == Screen::Settings;
-                    if nav(ui, "Settings", "gear", settings_on, expanded, false) {
+                    if nav(ui, "Settings", "gear", settings_on, expanded, Tag::None) {
                         self.screen = Screen::Settings;
                     }
                     // A hairline between the tools and the fixed entries at the bottom.

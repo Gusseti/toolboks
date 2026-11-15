@@ -29,6 +29,27 @@ pub enum InstallStatus {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_list_is_fetched_again_every_five_minutes() {
+        let start = std::time::Instant::now();
+        let every = REFRESH_EVERY;
+        assert_eq!(every.as_secs(), 300);
+        // Never asked yet: the first fetch is not the periodic one.
+        assert!(!refresh_due(None, start, every));
+        assert!(!refresh_due(Some(start), start + every / 2, every));
+        assert!(refresh_due(Some(start), start + every, every));
+        assert!(refresh_due(Some(start), start + every * 3, every));
+    }
+
+    #[test]
+    fn the_age_of_the_list_is_said_in_plain_words() {
+        let secs = std::time::Duration::from_secs;
+        assert_eq!(checked_text(secs(5)), "Checked just now");
+        assert_eq!(checked_text(secs(60)), "Checked 1 min ago");
+        assert_eq!(checked_text(secs(59 * 60)), "Checked 59 min ago");
+        assert_eq!(checked_text(secs(3 * 3600 + 20)), "Checked 3 h ago");
+    }
+
     use super::*;
 
     fn entry(id: &str) -> Entry {
@@ -264,11 +285,41 @@ enum Message {
     ),
     Image(String, Result<Vec<u8>, String>),
 }
+/// How often the add-on list is fetched again while the app is open.
+pub const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// True when the list was last asked for at least `every` ago. `last_attempt` is when the last
+/// fetch started, whether it worked or not, so a failing connection is retried on the same
+/// schedule instead of on every frame.
+pub fn refresh_due(
+    last_attempt: Option<std::time::Instant>,
+    now: std::time::Instant,
+    every: std::time::Duration,
+) -> bool {
+    last_attempt.is_some_and(|at| now.saturating_duration_since(at) >= every)
+}
+
+/// "Checked just now", "Checked 3 min ago", "Checked 2 h ago" for a list fetched `elapsed` ago.
+pub fn checked_text(elapsed: std::time::Duration) -> String {
+    let minutes = elapsed.as_secs() / 60;
+    match minutes {
+        0 => "Checked just now".into(),
+        1..=59 => format!("Checked {minutes} min ago"),
+        _ => format!("Checked {} h ago", minutes / 60),
+    }
+}
+
 pub struct Marketplace {
     pub entries: Vec<Entry>,
     pub error: Option<String>,
     pub loading: bool,
     pub checked: bool,
+    /// When the list was last fetched successfully.
+    pub last_checked: Option<std::time::Instant>,
+    /// When the last fetch started (worked or not).
+    pub last_attempt: Option<std::time::Instant>,
+    /// A background fetch is running; its failure is ignored and keeps the list as it is.
+    quiet_pending: bool,
     pub selected: BTreeSet<String>,
     pub category: String,
     pub installed_only: bool,
@@ -293,6 +344,9 @@ impl Default for Marketplace {
             error: None,
             loading: false,
             checked: false,
+            last_checked: None,
+            last_attempt: None,
+            quiet_pending: false,
             selected: BTreeSet::new(),
             category: "All".into(),
             installed_only: false,
@@ -487,12 +541,31 @@ impl Marketplace {
         self.loading = true;
         self.checked = true;
         self.error = None;
+        self.last_attempt = Some(std::time::Instant::now());
         let sender = self.sender.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let _ = sender.send(Message::Catalog(load_catalog(&root)));
             ctx.request_repaint();
         });
+    }
+    /// The periodic fetch: nothing on screen changes while it runs, and when it fails the list the
+    /// user already has stays exactly as it is (no error, no emptied list, no closed review).
+    pub fn refresh_quietly(&mut self, root: PathBuf, ctx: &eframe::egui::Context) {
+        if self.loading || self.quiet_pending || self.busy() || self.review.is_some() {
+            return;
+        }
+        self.quiet_pending = true;
+        self.last_attempt = Some(std::time::Instant::now());
+        let sender = self.sender.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(Message::Catalog(load_catalog(&root)));
+            ctx.request_repaint();
+        });
+    }
+    pub fn refresh_due(&self, now: std::time::Instant) -> bool {
+        refresh_due(self.last_attempt, now, REFRESH_EVERY)
     }
     pub fn select(&mut self, id: &str, selected: bool) {
         if selected {
@@ -575,8 +648,11 @@ impl Marketplace {
             match message {
                 Message::Catalog(result) => {
                     self.loading = false;
+                    let quiet = std::mem::take(&mut self.quiet_pending);
                     match result {
+                        Err(_) if quiet => {}
                         Ok(index) => {
+                            self.last_checked = Some(std::time::Instant::now());
                             self.entries = index
                                 .listing(&catalog::host())
                                 .into_iter()
