@@ -49,6 +49,9 @@ pub struct Config {
     /// Tools the user had before the update that are not installed yet: offered once at the
     /// first start as "Restore your tools" and kept until they are installed or skipped.
     pub restore_pending: Vec<String>,
+    /// Add-ons installed or updated that have not been opened since: they show "New" in the
+    /// sidebar until the user switches to them.
+    pub new_addons: Vec<String>,
 }
 pub struct Registry {
     pub packages: Vec<Package>,

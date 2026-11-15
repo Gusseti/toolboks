@@ -53,7 +53,7 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-fn font(size: f32, weight: u16) -> FontId {
+pub(super) fn font(size: f32, weight: u16) -> FontId {
     FontId::new(size, FontFamily::Name(format!("store-{weight}").into()))
 }
 

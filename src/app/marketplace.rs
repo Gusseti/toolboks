@@ -52,10 +52,33 @@ impl App {
             })
             .map(|entry| entry.id)
             .collect();
+        let ready_before: Vec<String> = self
+            .market
+            .jobs
+            .iter()
+            .filter(|(_, job)| job.status == InstallStatus::Ready)
+            .map(|(id, _)| id.clone())
+            .collect();
         if self.market.poll(&self.registry.root, ctx, &running) {
             let config = self.registry.config.clone();
             self.registry = Registry::load(self.registry.root.clone());
             self.registry.config = config;
+        }
+        // An add-on that has just finished installing or updating is "New" until it is opened.
+        let finished: Vec<String> = self
+            .market
+            .jobs
+            .iter()
+            .filter(|(id, job)| job.status == InstallStatus::Ready && !ready_before.contains(id))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !finished.is_empty() {
+            for id in finished {
+                if !self.registry.config.new_addons.contains(&id) {
+                    self.registry.config.new_addons.push(id);
+                }
+            }
+            self.persist();
         }
         if self.supervisor.is_none() {
             match crate::supervisor::Supervisor::new(ctx) {
@@ -202,6 +225,24 @@ impl App {
             return;
         }
         let restoring = self.restore_pending();
+        // Everything chosen is installed and nothing is waiting or failed: the picker has no job
+        // left, so go to the toolkit. A failed install keeps the page so it can be retried.
+        if !restoring
+            && !self.market.jobs.is_empty()
+            && self.market.selected.is_empty()
+            && self
+                .market
+                .jobs
+                .values()
+                .all(|job| job.status == InstallStatus::Ready)
+        {
+            let ids: Vec<String> = self.market.jobs.keys().cloned().collect();
+            for id in ids {
+                self.market.dismiss(&id);
+            }
+            self.finish_picker();
+            return;
+        }
         let width = ui.available_width().min(760.0);
         ui.horizontal_top(|ui| {
             ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
@@ -690,7 +731,15 @@ impl App {
     }
 
     fn job_list(&mut self, ui: &mut egui::Ui) {
-        let ids: Vec<_> = self.market.jobs.keys().cloned().collect();
+        // A finished install is already marked "Installed" in the list above; only downloads in
+        // progress and installs that failed or were cancelled need a block of their own.
+        let ids: Vec<_> = self
+            .market
+            .jobs
+            .iter()
+            .filter(|(_, job)| job.status != InstallStatus::Ready)
+            .map(|(id, _)| id.clone())
+            .collect();
         for id in ids {
             ui.add_space(8.0);
             store::heading(ui, &self.market.jobs[&id].entry.title.clone());
@@ -786,9 +835,10 @@ impl App {
             let response = super::shell::nav_row(
                 ui,
                 &entry.title,
-                &entry.icon,
+                super::shell::sidebar_icon(&entry.id, &entry.icon),
                 self.screen == Screen::External(entry.id.clone()),
                 expanded,
+                self.registry.config.new_addons.contains(&entry.id),
             );
             if response
                 .on_hover_text(format!("{} - {status}", entry.title))
@@ -802,7 +852,9 @@ impl App {
                     self.market.details = true;
                 }
             }
-            if expanded {
+            // A tag only for something worth saying: a download, a failure or an update. An
+            // installed add-on in the sidebar is installed, so that is never repeated.
+            if expanded && self.market_status(&entry.id).is_some() {
                 let pill = ui.horizontal(|ui| {
                     ui.add_space(44.0);
                     store::status_pill(ui, &status)

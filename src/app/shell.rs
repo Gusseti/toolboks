@@ -176,7 +176,7 @@ fn list_row(
                 egui::pos2(rect.left() + 20.0, rect.center().y),
                 Vec2::splat(18.0),
             ),
-            &m.icon,
+            sidebar_icon(&m.id, &m.icon),
             icon_color,
             18.0,
         );
@@ -321,6 +321,77 @@ fn paint_glyph(p: &egui::Painter, r: egui::Rect, name: &str, color: Color32, siz
             ],
             stroke,
         );
+    } else if name == "chip" {
+        p.rect_stroke(
+            egui::Rect::from_min_max(pt(0.28, 0.28), pt(0.72, 0.72)),
+            2,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        for t in [0.38, 0.5, 0.62] {
+            p.line_segment([pt(t, 0.28), pt(t, 0.12)], stroke);
+            p.line_segment([pt(t, 0.72), pt(t, 0.88)], stroke);
+            p.line_segment([pt(0.28, t), pt(0.12, t)], stroke);
+            p.line_segment([pt(0.72, t), pt(0.88, t)], stroke);
+        }
+    } else if name == "shield" {
+        p.line(
+            vec![
+                pt(0.5, 0.08),
+                pt(0.86, 0.22),
+                pt(0.86, 0.52),
+                pt(0.5, 0.92),
+                pt(0.14, 0.52),
+                pt(0.14, 0.22),
+                pt(0.5, 0.08),
+            ],
+            stroke,
+        );
+    } else if name == "mic" {
+        p.rect_stroke(
+            egui::Rect::from_min_max(pt(0.38, 0.08), pt(0.62, 0.52)),
+            6,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        p.line(
+            vec![
+                pt(0.22, 0.42),
+                pt(0.25, 0.6),
+                pt(0.36, 0.72),
+                pt(0.5, 0.76),
+                pt(0.64, 0.72),
+                pt(0.75, 0.6),
+                pt(0.78, 0.42),
+            ],
+            stroke,
+        );
+        p.line_segment([pt(0.5, 0.76), pt(0.5, 0.92)], stroke);
+        p.line_segment([pt(0.36, 0.92), pt(0.64, 0.92)], stroke);
+    } else if name == "gauge" {
+        let arc: Vec<egui::Pos2> = (0..=14)
+            .map(|i| {
+                let a = std::f32::consts::PI * (1.0 + i as f32 / 14.0);
+                pt(0.5 + 0.4 * a.cos(), 0.72 + 0.4 * a.sin())
+            })
+            .collect();
+        p.line(arc, stroke);
+        p.line_segment([pt(0.1, 0.72), pt(0.9, 0.72)], stroke);
+        p.line_segment([pt(0.5, 0.72), pt(0.68, 0.42)], stroke);
+        p.circle_filled(pt(0.5, 0.72), size * 0.06, color);
+    } else if name == "gear" {
+        p.circle_stroke(pt(0.5, 0.5), size * 0.27, stroke);
+        p.circle_stroke(pt(0.5, 0.5), size * 0.1, stroke);
+        for k in 0..8 {
+            let a = k as f32 * std::f32::consts::FRAC_PI_4;
+            p.line_segment(
+                [
+                    pt(0.5 + 0.27 * a.cos(), 0.5 + 0.27 * a.sin()),
+                    pt(0.5 + 0.4 * a.cos(), 0.5 + 0.4 * a.sin()),
+                ],
+                stroke,
+            );
+        }
     } else {
         for (x, y) in [(0.12, 0.12), (0.57, 0.12), (0.12, 0.57), (0.57, 0.57)] {
             p.rect_stroke(
@@ -345,8 +416,23 @@ fn verified_mark(ui: &mut egui::Ui) {
     paint_verified(ui.painter(), r);
     response.on_hover_text("Toolboks verified - bundled publisher");
 }
+/// The sidebar icon of an add-on. The tools Toolboks ships each have their own, so no two rows look
+/// alike; anything else uses the icon its manifest names.
+pub(super) fn sidebar_icon<'a>(id: &str, declared: &'a str) -> &'a str {
+    match id {
+        "toolboks.memory-cleaner" => "chip",
+        "toolboks.resource-monitor" => "activity",
+        "toolboks.debloater" => "sliders",
+        "toolboks.event-watch" => "shield",
+        "toolboks.disk-manager" => "storage",
+        "toolboks.aural" => "mic",
+        "toolboks.system-profiles" => "gauge",
+        "toolboks.macro-manager" => "macro",
+        _ => declared,
+    }
+}
 const RAIL_W: f32 = 52.0;
-const SIDEBAR_W: f32 = 204.0;
+const SIDEBAR_W: f32 = 240.0;
 const HEADER_H: f32 = 46.0;
 const STATUS_H: f32 = 24.0;
 const ROW_H: f32 = 32.0;
@@ -374,6 +460,7 @@ pub(super) fn nav_row(
     icon: &str,
     selected: bool,
     show_label: bool,
+    new: bool,
 ) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), egui::Sense::click());
@@ -399,12 +486,43 @@ pub(super) fn nav_row(
             18.0,
         );
         if show_label {
-            ui.painter().with_clip_rect(rect).text(
-                egui::pos2(rect.left() + LABEL_X, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                label,
+            let galley = ui.painter().layout_no_wrap(
+                label.to_owned(),
                 egui::FontId::proportional(look::TEXT_SECTION),
                 if selected { TEXT } else { MUTED },
+            );
+            let label_width = galley.size().x;
+            ui.painter().with_clip_rect(rect).galley(
+                egui::pos2(
+                    rect.left() + LABEL_X,
+                    rect.center().y - galley.size().y / 2.0,
+                ),
+                galley,
+                if selected { TEXT } else { MUTED },
+            );
+            if new {
+                // "New" right after the name; it goes once the add-on has been opened.
+                let tag = ui.painter().layout_no_wrap(
+                    "New".to_owned(),
+                    egui::FontId::proportional(look::TEXT_CAPTION),
+                    ACCENT_TEXT,
+                );
+                let x = (rect.left() + LABEL_X + label_width + 8.0)
+                    .min(rect.right() - tag.size().x - 14.0);
+                let tag_rect = egui::Rect::from_min_size(
+                    egui::pos2(x, rect.center().y - tag.size().y / 2.0 - 2.0),
+                    tag.size() + Vec2::new(10.0, 4.0),
+                );
+                ui.painter().rect_filled(tag_rect, 9.0, look::ACCENT_WASH);
+                ui.painter()
+                    .galley(tag_rect.min + Vec2::new(5.0, 2.0), tag, ACCENT_TEXT);
+            }
+        } else if new {
+            // The collapsed rail has no room for a word: a dot on the icon, named in the tooltip.
+            ui.painter().circle_filled(
+                egui::pos2(rect.left() + 28.0, rect.center().y - 8.0),
+                3.5,
+                ACCENT,
             );
         }
     }
@@ -413,8 +531,21 @@ pub(super) fn nav_row(
 }
 
 /// A navigation row; with the rail collapsed it shows its name as a tooltip. True when clicked.
-fn nav(ui: &mut egui::Ui, label: &str, icon: &str, selected: bool, expanded: bool) -> bool {
-    let response = nav_row(ui, label, icon, selected, expanded);
+fn nav(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: &str,
+    selected: bool,
+    expanded: bool,
+    new: bool,
+) -> bool {
+    let response = nav_row(ui, label, icon, selected, expanded, new);
+    let label = if new && !expanded {
+        format!("{label} (new)")
+    } else {
+        label.to_owned()
+    };
+    let label = label.as_str();
     if expanded {
         response.clicked()
     } else {
@@ -494,6 +625,12 @@ impl App {
         if let Some(path) = dropped.first() {
             self.review_package(path);
         }
+        if let Screen::External(id) = &self.screen {
+            if self.registry.config.new_addons.contains(id) {
+                self.registry.config.new_addons.retain(|n| n != id);
+                self.persist();
+            }
+        }
         let expanded = self.sidebar_expanded && ui.ctx().content_rect().width() >= 760.0;
         egui::Panel::left("host-sidebar")
             .resizable(false)
@@ -510,13 +647,14 @@ impl App {
                 } else {
                     "Open sidebar"
                 };
-                let response = nav_row(ui, tip, "menu", false, false);
+                let response = nav_row(ui, tip, "menu", false, false, false);
                 if expanded {
+                    // The sidebar's title: the app name in bold at title size.
                     ui.painter().text(
                         egui::pos2(response.rect.left() + LABEL_X, response.rect.center().y),
                         egui::Align2::LEFT_CENTER,
                         "Toolboks",
-                        egui::FontId::proportional(look::TEXT_SECTION),
+                        super::store::font(look::TEXT_TITLE - 1.0, 700),
                         TEXT,
                     );
                 }
@@ -546,12 +684,20 @@ impl App {
                     .max_height((ui.available_height() - 2.0 * ROW_H - 8.0).max(50.0))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
-                        if nav(ui, "Home", "home", self.screen == Screen::Home, expanded) {
+                        if nav(
+                            ui,
+                            "Home",
+                            "home",
+                            self.screen == Screen::Home,
+                            expanded,
+                            false,
+                        ) {
                             self.screen = Screen::Home;
                         }
                         for (id, title, icon, pages) in installed {
                             let on = self.screen == Screen::External(id.clone());
-                            if nav(ui, &title, &icon, on, expanded) {
+                            let new = self.registry.config.new_addons.contains(&id);
+                            if nav(ui, &title, sidebar_icon(&id, &icon), on, expanded, new) {
                                 self.open_addon(&id);
                             }
                             self.market_sidebar_status(ui, &id, expanded);
@@ -569,19 +715,34 @@ impl App {
                     });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    if expanded && page_row(ui, "Pick your tools", self.screen == Screen::Pick) {
+                    let browser_on = matches!(self.screen, Screen::Browser | Screen::Pick);
+                    // The one extra page of the Add-ons entry, shown only while that entry is open,
+                    // like the pages of any other entry.
+                    if expanded
+                        && browser_on
+                        && page_row(ui, "Pick your tools", self.screen == Screen::Pick)
+                    {
                         self.screen = Screen::Pick;
                     }
-                    let browser_on = matches!(self.screen, Screen::Browser | Screen::Pick);
                     if toolboks_addon_sdk::tutorial::region(ui, "browser-sidebar", |ui| {
-                        nav(ui, "Add-ons", "grid", browser_on, expanded)
+                        nav(ui, "Add-ons", "grid", browser_on, expanded, false)
                     }) {
                         self.screen = Screen::Browser;
                     }
                     let settings_on = self.screen == Screen::Settings;
-                    if nav(ui, "Settings", "sliders", settings_on, expanded) {
+                    if nav(ui, "Settings", "gear", settings_on, expanded, false) {
                         self.screen = Screen::Settings;
                     }
+                    // A hairline between the tools and the fixed entries at the bottom.
+                    let (line, _) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), 9.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().hline(
+                        line.x_range(),
+                        line.center().y,
+                        egui::Stroke::new(1.0, look::BORDER),
+                    );
                 });
             });
 
@@ -967,7 +1128,7 @@ impl App {
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_top(|ui| {
-                glyph(ui, &e.m.icon, accent(&e.m), 22.0);
+                glyph(ui, sidebar_icon(&e.m.id, &e.m.icon), accent(&e.m), 22.0);
                 let side = 190.0_f32.min(ui.available_width() * 0.4);
                 ui.vertical(|ui| {
                     ui.set_width((ui.available_width() - side - look::GAP).max(120.0));
