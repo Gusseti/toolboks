@@ -46,8 +46,26 @@ fn main() -> eframe::Result {
     crash::install();
     // One window per user: a plain second launch shows the first one and exits. Held until exit.
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let Some(_instance) = instance::acquire(&args) else {
-        return Ok(());
+    // The isolated preview checks use their own data folder, so they must not hand over to (or
+    // wait for) a Toolboks Preview window that is already open.
+    #[cfg(feature = "preview")]
+    let isolated_check = args.iter().any(|a| {
+        [
+            "--addon-check",
+            "--disk-manager-check",
+            "--marketplace-check",
+        ]
+        .contains(&a.as_str())
+    });
+    #[cfg(not(feature = "preview"))]
+    let isolated_check = false;
+    let _instance = if isolated_check {
+        None
+    } else {
+        let Some(guard) = instance::acquire(&args) else {
+            return Ok(());
+        };
+        Some(guard)
     };
     let mut viewport = egui::ViewportBuilder::default()
         .with_title(format!(
@@ -78,6 +96,20 @@ fn main() -> eframe::Result {
             ui::apply_style(&cc.egui_ctx);
             app::store::install_fonts(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
+            #[cfg(feature = "preview")]
+            if let Some(index) = args.iter().position(|arg| arg == "--addon-check") {
+                let id = args.get(index + 1).expect("add-on id").clone();
+                let output =
+                    std::path::PathBuf::from(args.get(index + 2).expect("screenshot folder"));
+                assert!(std::env::var_os("TOOLBOKS_TEST_CATALOG").is_some());
+                assert!(std::env::var_os("TOOLBOKS_DATA_DIR").is_some());
+                assert!(
+                    !addons::data_root().exists(),
+                    "Use a fresh isolated data folder"
+                );
+                std::fs::create_dir_all(&output).expect("create screenshot folder");
+                return Ok(Box::new(app::addon_check::Check::new(output, id)));
+            }
             #[cfg(feature = "preview")]
             if let Some(index) = args.iter().position(|arg| arg == "--disk-manager-check") {
                 let output =

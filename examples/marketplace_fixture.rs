@@ -179,7 +179,8 @@ fn native_fixture(
         "protocol_version":toolboks_addon_proto::PROTOCOL_VERSION,
         "download_url":format!("https://github.com/fredhakon/toolboks-addons/releases/download/fixture/{filename}"),
         "size":bytes.len(), "sha256":sha256_hex(&bytes), "verified":true, "channel":"stable",
-        "capabilities":m.capabilities, "pages":services["pages"], "background":services["background"],
+        "capabilities":m.capabilities, "pages":services.get("pages").cloned().unwrap_or(serde_json::json!([])),
+        "background":services.get("background").and_then(|b| b.as_bool()).unwrap_or(false),
         "release_notes":"Local native migration check. Drive-changing optimization is gated on #132."
     });
     let index =
