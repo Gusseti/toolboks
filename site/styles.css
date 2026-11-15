@@ -399,6 +399,32 @@ footer a { text-decoration: none; } footer a:hover { color: var(--fg); }
 footer .brand { font-size: .9375rem; color: var(--fg); }
 
 
+/* ---------- document pages (privacy) ---------- */
+.nav-links a[aria-current="page"] { color: var(--fg); }
+footer a[aria-current="page"] { color: var(--fg); }
+.doc { padding-block: 88px 120px; }
+.doc-head { max-width: 46rem; }
+.doc h1 { font-size: clamp(2.5rem, 6vw, 4rem); font-weight: 800; line-height: 1.02; letter-spacing: -0.035em; }
+.doc-lede { margin-top: 24px; font-size: clamp(1.1875rem, 2.2vw, 1.4375rem); line-height: 1.45; color: var(--fg); text-wrap: pretty; }
+.doc-meta { margin-top: 20px; color: var(--muted); font-size: .9375rem; }
+.doc-body { max-width: 42rem; margin-top: 24px; }
+.doc-body section { padding-top: 56px; }
+.doc-body h2 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; scroll-margin-top: 88px; }
+.doc-body p { margin-top: 14px; color: #c9cbd1; text-wrap: pretty; }
+.doc-body strong { color: var(--fg); font-weight: 600; }
+.doc-body a { color: var(--accent-text); text-decoration-color: color-mix(in srgb, var(--accent-text) 45%, transparent); text-underline-offset: 3px; }
+.doc-body a:hover { text-decoration-color: currentColor; }
+.conn-list { margin-top: 28px; border-top: 1px solid var(--line); }
+.conn { padding-block: 22px; border-bottom: 1px solid var(--line); }
+.conn h3 { font-size: 1.0625rem; font-weight: 600; }
+.conn p { margin-top: 6px; }
+.conn dl { display: flex; flex-wrap: wrap; gap: 6px 32px; margin: 14px 0 0; font-size: .875rem; }
+.conn dl div { display: flex; gap: 8px; }
+.conn dt { color: var(--muted); }
+.conn dd { margin: 0; color: var(--fg); font-weight: 500; }
+@media (max-width: 720px) { .doc { padding-block: 56px 88px; } .doc-body section { padding-top: 44px; } }
+
+
 /* entrance: content is visible at rest; this only adds a short rise */
 .rise { animation: rise .9s var(--ease) both; }
 .rise.d1 { animation-delay: .08s; } .rise.d2 { animation-delay: .16s; } .rise.d3 { animation-delay: .24s; }
