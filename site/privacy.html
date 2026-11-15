@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Privacy policy: Toolboks</title>
+<meta name="description" content="Toolboks does not collect data. No accounts, no analytics, no telemetry. This page lists every time the app connects to the internet and what is sent.">
+<meta name="theme-color" content="#070809">
+<link rel="canonical" href="https://gusseti.github.io/toolboks/privacy.html">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Privacy policy: Toolboks">
+<meta property="og:description" content="Toolboks does not collect data. Every internet connection the app makes is listed here.">
+<meta property="og:url" content="https://gusseti.github.io/toolboks/privacy.html">
+<meta property="og:image" content="https://gusseti.github.io/toolboks/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-mark" viewBox="0 0 24 24"><path d="M4 10h16v9H4zM9 10V7h6v3M4 14h16"/></symbol>
+</svg>
+
+<nav class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="./"><span class="mark"><svg><use href="#i-mark"/></svg></span>Toolboks</a>
+    <div class="nav-links">
+      <a href="./#tools">Our tools</a>
+      <a href="./#browser">Add-on browser</a>
+      <a href="./#addons">Developers</a>
+      <a href="privacy.html" aria-current="page">Privacy</a>
+      <a href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">Source</a>
+    </div>
+    <a class="btn small primary" href="./#download"><svg class="ic" style="width:16px;height:16px"><use href="#i-down"/></svg>Download</a>
+  </div>
+</nav>
+
+<main class="doc" id="main">
+  <div class="wrap">
+    <header class="doc-head">
+      <h1>Privacy policy</h1>
+      <p class="doc-lede">Toolboks does not collect data. There are no accounts, no analytics, no telemetry and no ads, and we run no server that could receive anything from the app.</p>
+      <p class="doc-meta">Last updated <time datetime="2026-11-15">15 November 2026</time>. Covers the Toolboks app and this website.</p>
+    </header>
+
+    <div class="doc-body">
+      <section>
+        <h2 id="stays">What stays on your PC</h2>
+        <p>Toolboks reads information about your system so it can show it to you: running programs, memory, drives, network connections, Windows events and settings. All of it is read, shown and kept on your PC. None of it is sent anywhere.</p>
+        <p>Your preferences, profiles, macros and undo history are saved in a local data folder. Deleting that folder removes them.</p>
+      </section>
+
+      <section>
+        <h2 id="connections">When Toolboks connects to the internet</h2>
+        <p>This is the complete list. Each request only asks for a file or a page. It carries no information about you, your PC or how you use Toolboks.</p>
+
+        <div class="conn-list">
+          <div class="conn">
+            <h3>Update check</h3>
+            <p>Once when the app starts, and when you press <strong>Check for updates</strong>, Toolboks asks GitHub which version is the latest. This is the only connection made without you asking for it.</p>
+            <dl><div><dt>Goes to</dt><dd>GitHub</dd></div><div><dt>Sent about you</dt><dd>Nothing</dd></div></dl>
+          </div>
+          <div class="conn">
+            <h3>Installing an update</h3>
+            <p>If you choose to install a new version, Toolboks downloads the new <span class="num">toolboks.exe</span> and its checksum.</p>
+            <dl><div><dt>Goes to</dt><dd>GitHub</dd></div><div><dt>Sent about you</dt><dd>Nothing</dd></div></dl>
+          </div>
+          <div class="conn">
+            <h3>Add-ons</h3>
+            <p>The add-on browser fetches the list of add-ons and checks whether the ones you have installed are up to date. When you install or update an add-on, its file is downloaded.</p>
+            <dl><div><dt>Goes to</dt><dd>GitHub</dd></div><div><dt>Sent about you</dt><dd>Nothing</dd></div></dl>
+          </div>
+          <div class="conn">
+            <h3>Host name lookup</h3>
+            <p>In Resource Monitor you can ask for the name behind a network address. Windows then asks your usual DNS server about that address.</p>
+            <dl><div><dt>Goes to</dt><dd>Your DNS server</dd></div><div><dt>Sent about you</dt><dd>The address you looked up</dd></div></dl>
+          </div>
+          <div class="conn">
+            <h3>Links</h3>
+            <p>Links to help pages and websites open in your own browser, which then follows that site's rules.</p>
+            <dl><div><dt>Goes to</dt><dd>The site you open</dd></div><div><dt>Sent about you</dt><dd>Nothing by Toolboks</dd></div></dl>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 id="github">What GitHub sees</h2>
+        <p>Toolboks and its add-ons are downloaded from GitHub. Like any web server, GitHub sees the IP address a request comes from, the time, and the program name “toolboks”. GitHub handles that under its own <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">privacy statement</a>. We cannot see it.</p>
+        <p>GitHub shows us one number per file: how many times it has been downloaded in total. Download counts shown for Toolboks or for add-ons come from that public total. It does not tell us who downloaded anything.</p>
+      </section>
+
+      <section>
+        <h2 id="addons">Add-ons</h2>
+        <p>Add-ons are separate programs that run inside the Toolboks window. Tools with the <strong>Toolboks verified</strong> mark are made by the Toolboks team and follow this policy. An add-on from anyone else is the responsibility of its author, so read what it says about your data before you install it.</p>
+      </section>
+
+      <section>
+        <h2 id="website">This website</h2>
+        <p>This site has no cookies, no analytics and no forms. It is hosted on GitHub Pages, so GitHub sees your IP address when you visit. The fonts are loaded from Google Fonts, so Google sees your IP address when the page loads them.</p>
+      </section>
+
+      <section>
+        <h2 id="signing">Code signing statement</h2>
+        <p>This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The one automatic connection is the update check described above, which sends no information about you or your PC.</p>
+      </section>
+
+      <section>
+        <h2 id="changes">Changes and questions</h2>
+        <p>Because we hold no data about you, there is nothing for us to show, correct or delete. If Toolboks ever starts to collect anything, this page will say so first, and the change will be listed in the <a href="https://github.com/Gusseti/toolboks/blob/main/CHANGELOG.md" target="_blank" rel="noopener">changelog</a>.</p>
+        <p>Toolboks is open source, so you can check all of this in the <a href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">source code</a>. Questions go to the <a href="https://github.com/Gusseti/toolboks/issues" target="_blank" rel="noopener">issue tracker</a>.</p>
+      </section>
+    </div>
+  </div>
+</main>
+
+<footer><div class="wrap">
+  <a class="brand" href="./"><span class="mark"><svg><use href="#i-mark"/></svg></span>Toolboks</a>
+  <a href="https://github.com/Gusseti/toolboks" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/Gusseti/toolboks/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+  <a href="https://github.com/Gusseti/toolboks/tree/main/sdk" target="_blank" rel="noopener">Add-on SDK</a>
+  <a href="privacy.html" aria-current="page">Privacy</a>
+  <span style="margin-left:auto">MIT licence</span>
+</div></footer>
+<script>
+  (function () {
+    var nav = document.getElementById('nav');
+    function onScroll() { nav.classList.toggle('scrolled', scrollY > 8); }
+    addEventListener('scroll', onScroll, { passive: true }); onScroll();
+  })();
+</script>
+</body>
+</html>
