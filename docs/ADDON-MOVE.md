@@ -35,7 +35,7 @@ follow the tool.
 | Disk Manager | `toolboks.disk-manager` | Removed by the pilot | `addons/disk-manager/` | [#88](https://github.com/Gusseti/toolboks/issues/88) (code moved; publication and #132 rebuild pending) |
 | Resource Monitor | `toolboks.resource-monitor` | `src/tools/resources/` | `addons/resource-monitor/` | [#89](https://github.com/Gusseti/toolboks/issues/89) |
 | Memory Cleaner | `toolboks.memory-cleaner` | `src/tools/memory/` | `addons/memory-cleaner/` | [#90](https://github.com/Gusseti/toolboks/issues/90) |
-| Event Watch | `toolboks.event-watch` | `src/tools/events/` | `addons/event-watch/` | [#91](https://github.com/Gusseti/toolboks/issues/91) |
+| Event Watch | `toolboks.event-watch` | `src/tools/events/` (copy also in the add-ons repo; the host copy goes with #94) | `addons/event-watch/` | [#91](https://github.com/Gusseti/toolboks/issues/91) (code moved; publication pending) |
 | Debloater | `toolboks.debloater` | `src/tools/debloat/` | `addons/debloater/` | [#92](https://github.com/Gusseti/toolboks/issues/92) |
 | System Profiles | `toolboks.system-profiles` | `src/native/profiles/` | `addons/system-profiles/` | [#92](https://github.com/Gusseti/toolboks/issues/92) |
 | Audio Gainer (Aural) | `toolboks.aural` | `src/native/aural/` | `addons/aural/` | [#93](https://github.com/Gusseti/toolboks/issues/93) |
@@ -128,7 +128,7 @@ What each tool needs beyond the common steps:
 | Disk Manager | Fragmentation analysis uses the existing elevation request. Defrag, TRIM and Windows-selected optimization are gated on #132; repin and rebuild after its protocol 3 helper merges. Results and remaining checks: `docs/reviews/88/`. |
 | Resource Monitor | Runs in the background so the history recorder (#64) keeps recording with the window hidden. The history files live in its data folder. |
 | Memory Cleaner | Runs in the background for automatic cleaning. Some actions need administrator rights. |
-| Event Watch | Check which pages need administrator rights to read event logs and crash dumps. |
+| Event Watch | Checked: no page needs administrator rights. Event logs are read per channel, and a channel the user cannot read is reported in the page header as before. Crash dump headers are read as files (`filesystem_read`). It changes nothing and has no saved settings. |
 | Debloater, System Profiles | They change Windows. Undo information must survive an update or removal of the add-on. Use the per-change helper boundary decided in [#118](https://github.com/Gusseti/toolboks/issues/118) and implemented in #132; real UAC validation is still required. |
 | Audio Gainer, Macro Manager | Global input recording and live audio must work from a background process. The install review must name these rights plainly. |
 
@@ -146,6 +146,12 @@ What each tool needs beyond the common steps:
    their settings kept.
 
 Until step 4, the tools that have not moved stay built into the app and keep working.
+
+A tool that is built into the app today (Resource Monitor, Memory Cleaner, Event Watch,
+Debloater) is added to the add-ons repo first and keeps its built-in copy in the host until
+step 4, so nobody loses the tab or sees the tool twice. Its host code is removed together with
+the migration in #94. Disk Manager was already an official add-on, so its host copy went with
+the pilot.
 
 ## Open points
 
