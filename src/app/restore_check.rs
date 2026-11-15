@@ -139,10 +139,41 @@ impl eframe::App for Check {
                     "5m",
                     "saved settings stay under the same id"
                 );
+                // Open sidebar, so the names, the icons and the "New" marks can be read.
+                self.app.sidebar_expanded = true;
                 self.app.screen = Screen::Home;
                 self.capture("04-home");
             }
             5 => {
+                // Installed through the restore and not opened yet: every one is marked "New".
+                let mut new = self.app.registry.config.new_addons.clone();
+                new.sort();
+                let mut expected = self.expected.clone();
+                expected.sort();
+                assert_eq!(new, expected, "installed add-ons are new until opened");
+                // Opening one clears its mark, and only its mark.
+                self.app.open_market_addon("toolboks.aural");
+                self.capture("05-opened-addon");
+            }
+            6 => {
+                assert!(
+                    !self
+                        .app
+                        .registry
+                        .config
+                        .new_addons
+                        .contains(&"toolboks.aural".to_owned()),
+                    "opening an add-on clears its mark"
+                );
+                assert_eq!(
+                    self.app.registry.config.new_addons.len(),
+                    self.expected.len() - 1,
+                    "the others stay new"
+                );
+                self.stage += 1;
+                self.frames = 0;
+            }
+            7 => {
                 std::fs::write(
                     self.output.join("result.txt"),
                     format!(

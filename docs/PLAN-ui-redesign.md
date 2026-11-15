@@ -20,7 +20,7 @@ Anatomy:
 
 ![Anatomy](design/h-anatomy.png)
 
-1. Hamburger: switches the sidebar between 52 px (icons) and 204 px (names). Remembered for the session only.
+1. Hamburger: switches the sidebar between 52 px (icons) and 240 px (names; 204 px in the first mockup). Remembered for the session only.
 2. Breadcrumb: tool / page. The page title is the only 14 px bold text in the header.
 3. Range switch: 1 min, 5 min, 1 h, 4 h, 24 h. Applies to every graph on the page.
 4. Resource list: name, one plain line of detail, current value and a small line. The selected row has a lighter fill, never a coloured edge.

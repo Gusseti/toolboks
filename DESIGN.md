@@ -13,7 +13,7 @@ Dark graphite, compact, calm. A tool you open for a minute next to a game or wor
 ## Layout
 
 - Window default 1120 x 760, resizable. Layout is structural: the sidebar collapses, lists and tables scroll, cards never shrink below their content.
-- **Sidebar**: 52 px icon rail with a hamburger at the top; the hamburger opens it to 204 px with names, and the active tool's pages nest under it. State is in memory only. Order: Home, the built-in tools, add-ons, then Add-ons browser at the bottom.
+- **Sidebar**: 52 px icon rail with a hamburger at the top; the hamburger opens it to 240 px with names (wider than the first mockup, which was 204 px: names such as "Resource Monitor" and the "New" tag need the room, and it suits the wider default windows), and the active tool's pages nest under it. State is in memory only. Order: Home, the built-in tools, add-ons, then Add-ons browser at the bottom.
 - **Header** (46 px): breadcrumb `Tool / Page` at the left, page controls at the right (for graph pages the range switch 1 min, 5 min, 1 h, 4 h, 24 h). No second tab strip: pages live in the sidebar.
 - **Status bar** (24 px): RAM, CPU, GPU, version. Tools may add short items; no more than three.
 - **Content**: 16 px padding, 8 to 12 px gap between cards. Master and detail is the default for a page about several things (list on the left, 260 to 290 px; detail on the right).
