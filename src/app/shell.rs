@@ -39,6 +39,7 @@ pub(super) fn manifest_of(entry: &crate::catalog::Entry) -> Manifest {
         screenshots: entry.screenshots.clone(),
         capabilities: Vec::new(),
         data_note: entry.data_note.clone(),
+        checks: entry.checks.clone(),
     }
 }
 
@@ -149,74 +150,6 @@ impl Entry {
     }
 }
 
-/// One selectable row of the Home list: small icon, name, one plain detail line, state at the
-/// right. Selected = lighter fill.
-fn list_row(
-    ui: &mut egui::Ui,
-    m: &Manifest,
-    status: &str,
-    status_color: Color32,
-    selected: bool,
-    icon_color: Color32,
-) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), egui::Sense::click());
-    if ui.is_rect_visible(rect) {
-        let fill = if selected {
-            look::SELECTED_BG
-        } else if response.hovered() {
-            look::BAR_DIVIDER
-        } else {
-            Color32::TRANSPARENT
-        };
-        ui.painter().rect_filled(rect, look::CONTROL_RADIUS, fill);
-        focus_ring(ui, rect, &response);
-        paint_glyph(
-            ui.painter(),
-            egui::Rect::from_center_size(
-                egui::pos2(rect.left() + 20.0, rect.center().y),
-                Vec2::splat(18.0),
-            ),
-            sidebar_icon(&m.id, &m.icon),
-            icon_color,
-            18.0,
-        );
-        let small = egui::FontId::proportional(look::TEXT_CAPTION);
-        let state = ui
-            .painter()
-            .layout_no_wrap(status.to_owned(), small.clone(), status_color);
-        let text_clip = egui::Rect::from_min_max(
-            rect.min,
-            egui::pos2(rect.right() - state.size().x - 16.0, rect.bottom()),
-        );
-        let p = ui.painter().with_clip_rect(text_clip);
-        p.text(
-            egui::pos2(rect.left() + 38.0, rect.center().y - 8.0),
-            egui::Align2::LEFT_CENTER,
-            &m.title,
-            egui::FontId::proportional(look::TEXT_BODY),
-            TEXT,
-        );
-        p.text(
-            egui::pos2(rect.left() + 38.0, rect.center().y + 8.0),
-            egui::Align2::LEFT_CENTER,
-            &m.category,
-            small,
-            MUTED,
-        );
-        ui.painter().galley(
-            egui::pos2(
-                rect.right() - state.size().x - 10.0,
-                rect.center().y - state.size().y / 2.0,
-            ),
-            state,
-            status_color,
-        );
-    }
-    let name = format!("{}, {}", m.title, status);
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &name));
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
 fn accent(m: &Manifest) -> Color32 {
     let rgb = u32::from_str_radix(&m.accent[1..], 16).unwrap_or(0xa48aca);
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
@@ -1117,6 +1050,15 @@ impl App {
         list
     }
     fn home(&mut self, ui: &mut egui::Ui) {
+        // Long lists scroll inside the content area. A solid bar takes its own room, so it never
+        // sits on a card's edge.
+        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+        egui::ScrollArea::vertical()
+            .id_salt("home")
+            .auto_shrink([false, false])
+            .show(ui, |ui| self.home_content(ui));
+    }
+    fn home_content(&mut self, ui: &mut egui::Ui) {
         if self.restore_pending() {
             panel().show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -1166,149 +1108,9 @@ impl App {
             });
             ui.add_space(look::GAP);
         }
-        let entries = self.entries();
-        let added = entries.len();
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                Self::title(
-                    ui,
-                    "Your toolkit",
-                    &format!(
-                        "{added} {} installed.",
-                        if added == 1 { "add-on" } else { "add-ons" }
-                    ),
-                );
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                if ui.button("Browse add-ons").clicked() {
-                    self.screen = Screen::Browser;
-                }
-            });
-        });
-        let selected = entries
-            .iter()
-            .position(|e| Some(&e.m.id) == self.home_selected.as_ref())
-            .unwrap_or(0);
-        // Narrow window or large text scale: stack the list above the detail instead of
-        // squeezing two columns.
-        let narrow = ui.available_width() < 520.0;
-        let (list_w, height, layout) = if narrow {
-            (
-                ui.available_width(),
-                (ui.available_height() * 0.4).clamp(132.0, 220.0),
-                egui::Layout::top_down(egui::Align::Min),
-            )
-        } else {
-            (
-                280.0_f32.min(ui.available_width() * 0.45),
-                ui.available_height(),
-                egui::Layout::left_to_right(egui::Align::Min),
-            )
-        };
-        ui.with_layout(layout, |ui| {
-            ui.allocate_ui_with_layout(
-                Vec2::new(list_w, height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_width(list_w);
-                    egui::ScrollArea::vertical()
-                        .id_salt("home-list")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 2.0;
-                            for (i, e) in entries.iter().enumerate() {
-                                let tint = if e.enabled && e.installed {
-                                    look::GREEN
-                                } else {
-                                    MUTED
-                                };
-                                // An add-on with an update says "Update" where it said "On".
-                                let (status, tint) = if updates.iter().any(|u| u.id == e.m.id) {
-                                    ("Update", look::AMBER)
-                                } else {
-                                    (e.status(), tint)
-                                };
-                                if list_row(ui, &e.m, status, tint, i == selected, accent(&e.m))
-                                    .clicked()
-                                {
-                                    self.home_selected = Some(e.m.id.clone());
-                                }
-                            }
-                        });
-                },
-            );
-            ui.add_space(look::GAP);
-            let Some(e) = entries.get(selected) else {
-                return;
-            };
-            ui.vertical(|ui| {
-                self.addon_detail_card(ui, e);
-            });
-        });
-    }
-    /// The right side of Home: the chosen add-on, what it does, and the one thing to do next.
-    fn addon_detail_card(&mut self, ui: &mut egui::Ui, e: &Entry) {
-        let update = self
-            .pending_updates()
-            .into_iter()
-            .find(|entry| entry.id == e.m.id);
-        panel().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(&e.m.title)
-                        .size(look::TEXT_TITLE)
-                        .strong()
-                        .color(TEXT),
-                );
-                if e.verified {
-                    verified_mark(ui);
-                }
-            });
-            let mut line = format!("{} · {} · v{}", e.m.publisher, e.m.category, e.m.version);
-            if let Some(byline) = &e.m.byline {
-                line = format!("{byline} · {line}");
-            }
-            caption(ui, line);
-            ui.add_space(look::GAP);
-            badge(
-                ui,
-                e.status(),
-                if e.enabled && e.installed {
-                    ACCENT_TEXT
-                } else {
-                    MUTED
-                },
-                false,
-            );
-            if let Some(update) = &update {
-                ui.add_space(look::SPACE_XS);
-                badge(
-                    ui,
-                    &format!("Update available: v{}", update.version),
-                    look::AMBER,
-                    false,
-                );
-            }
-            ui.add_space(look::GAP);
-            ui.label(&e.m.description);
-            ui.add_space(look::SPACE_L);
-            ui.horizontal_wrapped(|ui| {
-                if let Some(update) = &update {
-                    if primary(ui, "Update").clicked() {
-                        self.review_updates(vec![update.clone()]);
-                    }
-                    if ui.button(e.action()).clicked() {
-                        self.run_action(e);
-                    }
-                } else if primary(ui, e.action()).clicked() {
-                    self.run_action(e);
-                }
-                if ui.button("View details").clicked() {
-                    self.detail = Some(e.m.id.clone());
-                }
-            });
-        });
+        // Health replaces the "Your toolkit" list (#182): the sidebar and the Add-ons page list
+        // the add-ons; Home says what they found.
+        self.health(ui);
     }
     /// The primary action of an add-on: install it, turn it on, or open it.
     fn run_action(&mut self, e: &Entry) {
@@ -1372,8 +1174,12 @@ impl App {
             self.message = Some(e);
             return false;
         }
-        if !enabled && self.help.as_deref() == Some(id) {
-            self.help = None;
+        if !enabled {
+            if self.help.as_deref() == Some(id) {
+                self.help = None;
+            }
+            // Its health findings leave Home with it.
+            self.services.health.remove(id);
         }
         true
     }

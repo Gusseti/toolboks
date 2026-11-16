@@ -24,7 +24,7 @@ Downloaded from GitHub Releases (`toolboks.exe` plus `.sha256`). Updates are che
 
 ## Capabilities and Constraints
 
-- Current stable version: 0.14.0 (2026-11-16).
+- Current stable version: 0.15.0 (2026-11-16).
 - Add-on SDK 0.4 developer preview. Signed publisher identity, the online catalog (marketplace) and remote add-on updates are the direction but not built yet; the landing page may show the add-on browser as the place to find tools, but must not claim third-party publishing is open today.
 - Code signing (SignPath) is not done yet; SmartScreen warnings are likely.
 - Whether the repository is public is an open decision in docs/PLAN.md.

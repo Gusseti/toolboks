@@ -14,6 +14,9 @@ mod app;
 mod catalog;
 mod crash;
 mod elevation;
+// Home draws the health view from #182 (H3) on; until then only the tests read it.
+#[allow(dead_code)]
+mod health;
 mod installer;
 mod instance;
 mod marketplace;
@@ -34,6 +37,7 @@ fn main() -> eframe::Result {
         [
             "--addon-check",
             "--disk-manager-check",
+            "--health-check",
             "--marketplace-check",
             "--restore-check",
         ]
@@ -58,6 +62,9 @@ fn main() -> eframe::Result {
         .with_inner_size(if args.iter().any(|arg| arg == "--marketplace-check") {
             // The screenshot check runs at the width its reference captures were taken at.
             [1120.0, 760.0]
+        } else if let Some(scale) = health_check_scale(&args) {
+            // 1060 x 720 points at the check's scale (the zoom factor is set to match below).
+            [1060.0 * scale, 720.0 * scale]
         } else {
             [1540.0, 960.0]
         })
@@ -124,6 +131,20 @@ fn main() -> eframe::Result {
                 return Ok(Box::new(app::disk_manager_check::Check::new(output)));
             }
             #[cfg(feature = "preview")]
+            if let Some(index) = args.iter().position(|arg| arg == "--health-check") {
+                let output =
+                    std::path::PathBuf::from(args.get(index + 1).expect("screenshot folder"));
+                assert!(std::env::var_os("TOOLBOKS_DATA_DIR").is_some());
+                assert!(
+                    !addons::data_root().exists(),
+                    "Use a fresh isolated data folder"
+                );
+                std::fs::create_dir_all(&output).expect("create screenshot folder");
+                cc.egui_ctx
+                    .set_zoom_factor(health_check_scale(&args).unwrap_or(1.0));
+                return Ok(Box::new(app::health_check::Check::new(output)));
+            }
+            #[cfg(feature = "preview")]
             if let Some(index) = args.iter().position(|arg| arg == "--marketplace-check") {
                 let output =
                     std::path::PathBuf::from(args.get(index + 1).expect("screenshot folder"));
@@ -146,5 +167,17 @@ fn main() -> eframe::Result {
             }
             Ok(Box::new(app::App::new()))
         }),
+    )
+}
+
+/// The scale of a `--health-check <out> [scale]` run (preview builds only), else `None`.
+fn health_check_scale(args: &[String]) -> Option<f32> {
+    if !cfg!(feature = "preview") {
+        return None;
+    }
+    let index = args.iter().position(|arg| arg == "--health-check")?;
+    Some(
+        args.get(index + 2)
+            .map_or(1.0, |value| value.parse().expect("scale")),
     )
 }

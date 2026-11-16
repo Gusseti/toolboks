@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-16
+
+### Added
+
+- **Home now shows the health of your PC, as measured by your add-ons.** Instead of repeating the sidebar, Home lists what needs attention first (a drive that may fail soon, memory under pressure, and so on), then what was checked and found fine. Every line says what was measured, which add-on measured it, and how long ago. There is no score and no "your PC is healthy" claim: Toolboks only reports what your add-ons check. **Check again** asks the add-ons to re-check. An add-on that has not reported yet shows as "Not checked". Add-ons start reporting here as they are updated.
+- **For add-on makers: protocol 4.** Add-ons can send small plain-text findings to Home (`findings()` in the SDK) and answer **Check again** (`check_now()`). Add-ons built for protocol 3 keep working unchanged. A catalog entry can list the checks an add-on reports (`checks`, optional). See `docs/ADDON-PROTOCOL.md` and `docs/ADDON-AUTHOR-GUIDE.md`.
+
+### Changed
+
+- The "Your toolkit" list is gone from Home; the sidebar and the Add-ons page already list your tools.
+
 ## [0.14.0] - 2026-11-16
 
 ### Added

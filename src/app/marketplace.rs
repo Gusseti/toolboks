@@ -115,13 +115,21 @@ impl App {
         }
         let supervisor = self.supervisor.as_mut().unwrap();
         for event in supervisor.tick(std::time::Instant::now()) {
-            if let Some(crate::addon_services::Effect::SaveConfig) = self.services.apply(
+            match self.services.apply(
                 &event,
                 supervisor,
                 &self.registry.root,
                 &mut self.registry.config,
             ) {
-                self.preferences_dirty = Some(std::time::Instant::now());
+                Some(crate::addon_services::Effect::SaveConfig) => {
+                    self.preferences_dirty = Some(std::time::Instant::now());
+                }
+                Some(crate::addon_services::Effect::FindingsDropped { id, lines }) => {
+                    for line in lines {
+                        supervisor.note(&id, line);
+                    }
+                }
+                _ => {}
             }
             match event {
                 crate::supervisor::Event::Connected { id } => {
@@ -132,11 +140,19 @@ impl App {
                     if let Some(link) = supervisor.take_link(&id) {
                         view.attach(link);
                     }
+                    // A route from a Home finding wins over the page index, once.
+                    let route = match self.pending_route.take() {
+                        Some((for_id, route)) if for_id == id => Some(route),
+                        other => {
+                            self.pending_route = other;
+                            None
+                        }
+                    };
                     if self.screen == Screen::External(id.clone()) {
                         supervisor.send(
                             &id,
                             &toolboks_addon_proto::HostMessage::Navigate {
-                                page: self.addon_page.to_string(),
+                                page: route.unwrap_or_else(|| self.addon_page.to_string()),
                             },
                         );
                     }
@@ -1110,6 +1126,7 @@ impl App {
                                 if let Some(supervisor) = &mut self.supervisor {
                                     supervisor.forget(&id);
                                 }
+                                self.services.health.remove(&id);
                                 self.views.remove(&id);
                                 self.market.dismiss(&id);
                                 self.message =

@@ -32,8 +32,9 @@ log line. Press **Restart add-on**: the add-on is started again and still shows 
 the test host gave its preferences back.
 
 The sample is [sdk/examples/hello-addon](../sdk/examples/hello-addon/src/main.rs), about a
-hundred lines. Its test (`cargo test -p hello-addon`) starts the built exe and checks that it
-draws a frame and quits when asked.
+hundred and fifty lines, with one health finding as the example. Its test
+(`cargo test -p hello-addon`) starts the built exe and checks that it draws a frame, reports its
+finding at protocol 4 and none at protocol 3, and quits when asked.
 
 ## 2. Create your own
 
@@ -58,6 +59,8 @@ change three things:
 | `has_background_work()`, `tick_background()` | Every 200 ms while hidden | Work that continues while hidden. |
 | `status_items()` | After every message | Short items for the status bar. |
 | `tray_items()`, `tray_action(id)` | After every message; when the user picks one | Optional entries in the tray menu. |
+| `findings()` | After every message and background tick, also while hidden | Health checks for Home (protocol 4; see "Health findings" below). Sent only when they change. |
+| `check_now()` | The user pressed "Check again" on Home | Optional: check again when you can. |
 | `tutorial_steps()`, `tutorial_location()`, `tutorial_start()`, `tutorial_navigate(page)`, `tutorial_finish()` | During a guided tour | Describe the tour. Mark the parts with `tutorial::mark` or `tutorial::region`. |
 | `set_capabilities(capabilities)` | After the host connected | Learn what the user granted. Do nothing that was not granted. |
 | `take_host_request()` | After every message | Ask for the package review or one administrator operation. |
@@ -77,6 +80,40 @@ Rules that come from being a separate program:
   to your page while a tour runs.
 - **Preferences are yours alone.** The host saves them under your add-on's id. Keep them small
   (the host accepts at most 256 KiB).
+
+### Health findings
+
+Home shows what the installed add-ons measured: no score and no "your PC is healthy". Each
+check you make is one `Finding`, built with `Finding::ok`, `Finding::attention(.., Severity)`,
+`Finding::unavailable` or `Finding::not_checked`, plus `.stale_after(secs)` and at most one action
+(`.open_page(label, route)` or `.instruction(text)`). Findings need protocol 4: the runtime sends
+them only to a host that speaks it, and an older host never sees them.
+
+- **Build a finding when you measure, keep it, and return a copy from `findings()`.** The builders
+  stamp the current time, so a finding built inside `findings()` changes every second and is sent
+  again each time. Keep the check itself a pure function (`fn check(input) -> Finding`) and test
+  it on made-up input, as the sample does.
+- `id` is your own stable name for the check (`memory-pressure`, `drive-health-c`): 1 to 48
+  characters of `a-z`, `0-9`, `.` and `-`, unique within your add-on.
+- Plain text only, nothing is interpreted: `title` one line of at most 80 characters,
+  `observation` at most 240, an `OpenPage` label at most 40, an `Instruction` at most 240. Longer
+  text is cut. At most 16 findings per add-on.
+- `Ok` says what was measured ("No crashes recorded in the last 7 days"), never "healthy PC".
+- `NotChecked`: you could check but have not yet (the first read is still running, the page was
+  never opened). `Unavailable`: you cannot check on this PC; say why ("Needs administrator
+  rights", "This drive does not report health").
+- `Severity::Problem` is for harm to the PC or its data now or soon (a drive "Replace soon", blue
+  screens). `Severity::Watch` is for "slows the PC or worth a look" (memory pressure,
+  throttling, XMP off). Severity counts only for `Attention`.
+- `stale_after_secs`: how long the reading stays current, 60 seconds to 7 days. After that Home
+  shows it as out of date, never as OK.
+- One action at most, and never one that changes the system from Home. `OpenPage` leads to one of
+  your own pages (its first segment must be one of your catalog `pages`, or the finding is
+  dropped), where your usual preview, confirm and undo apply. `Instruction` is for something only
+  the user can do (BIOS, Windows Settings).
+- A background add-on (`background: true`) reports with its page closed: `findings()` is also
+  read after every `tick_background`. A foreground add-on reports only while its page is open.
+- Findings stay on the PC: the host keeps them in memory only.
 
 ## 3. Make it look like Toolboks
 
@@ -169,7 +206,7 @@ things:
 | `id`, `title`, `short_description`, `publisher`, `category`, `icon`, `accent` | What the add-on browser shows. |
 | `kind` | `native` for an exe, `declarative` for a `.tbaddon`. |
 | `version`, `min_toolboks_version` | Plain `x.y.z`. An update must have a higher version. |
-| `protocol_version` | The wire protocol your SDK speaks: 3 today. Rebuild all v2 binaries and update their catalog entries. |
+| `protocol_version` | The wire protocol your exe speaks: 4 with the current SDK, 3 for exes built before it. Toolboks speaks the version in this entry, so it must match the exe (an exe built for 3 refuses a host at 4). An entry at 4 needs a Toolboks that speaks 4: older ones hide it, so set `min_toolboks_version` to the first such release. Rebuild all v2 binaries. |
 | `download_url`, `size`, `sha256` | Where the exe is (an HTTPS address on GitHub), and exactly what it must be. Toolboks places nothing that does not match. |
 | `capabilities` | What the add-on may do, shown to the user before installing. |
 | `pages` | Your page names, so `--open "Title/Page"` links work. |

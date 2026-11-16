@@ -24,10 +24,21 @@ use serde::{Deserialize, Serialize};
 
 pub use egui;
 
-/// The wire protocol version. Bump it on any change to a message other than [`Hello`] and
-/// the refusal variant, which are frozen so that two versions can always refuse each other
-/// in plain words.
-pub const PROTOCOL_VERSION: u32 = 3;
+/// The newest wire protocol version this crate speaks. Bump it on any change to a message
+/// other than [`Hello`] and the refusal variant, which are frozen so that two versions can
+/// always refuse each other in plain words. New messages are appended at the end of the
+/// enums, so every older message keeps its bytes (see `tests/golden.rs`).
+///
+/// Protocol 4 adds [`AddonMessage::Findings`] and [`HostMessage::CheckNow`].
+pub const PROTOCOL_VERSION: u32 = 4;
+
+/// The oldest wire protocol version this crate still speaks. A connection runs at the version
+/// the host chose in its `Hello` when it lies in `MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION`;
+/// messages newer than that version are never sent on it.
+pub const MIN_PROTOCOL_VERSION: u32 = 3;
+
+/// The first protocol version with [`AddonMessage::Findings`] and [`HostMessage::CheckNow`].
+pub const FINDINGS_PROTOCOL_VERSION: u32 = 4;
 
 /// The first message in both directions. Its layout and its variant index 0 never change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +57,19 @@ impl Hello {
             protocol_version: PROTOCOL_VERSION,
             addon_id: addon_id.into(),
             software_version: software_version.into(),
+        }
+    }
+
+    /// A `Hello` for a given protocol version. The host speaks the version recorded for the
+    /// installed add-on, which may be older than [`PROTOCOL_VERSION`].
+    pub fn with_version(
+        addon_id: impl Into<String>,
+        software_version: impl Into<String>,
+        protocol_version: u32,
+    ) -> Self {
+        Self {
+            protocol_version,
+            ..Self::new(addon_id, software_version)
         }
     }
 }
@@ -111,6 +135,10 @@ pub enum HostMessage {
         id: u64,
         outcome: AdminOutcome,
     },
+    /// Protocol 4. The user asked Home to check again. Optional to honour: the add-on checks
+    /// again when it can and sends [`AddonMessage::Findings`]. Never sent on a protocol 3
+    /// connection.
+    CheckNow,
 }
 
 /// Messages from the add-on to the host.
@@ -166,6 +194,10 @@ pub enum AddonMessage {
         id: u64,
         outcome: AdminOutcome,
     },
+    /// Protocol 4. The full set of this add-on's health findings; replaces the previous set.
+    /// Sent when it changes, also while suspended. Never sent on a protocol 3 connection, and
+    /// a host ignores it there.
+    Findings(Vec<Finding>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -357,6 +389,196 @@ pub struct TutorialStep {
     pub description: String,
 }
 
+/// The most findings the host keeps from one [`AddonMessage::Findings`]; the rest are dropped.
+pub const MAX_FINDINGS: usize = 16;
+/// [`Finding::id`]: 1 to this many characters of `a-z`, `0-9`, `.` and `-`.
+pub const MAX_FINDING_ID_CHARS: usize = 48;
+/// [`Finding::title`]: one line of at most this many characters.
+pub const MAX_FINDING_TITLE_CHARS: usize = 80;
+/// [`Finding::observation`] and [`FindingAction::Instruction`]: at most this many characters.
+pub const MAX_FINDING_TEXT_CHARS: usize = 240;
+/// The label of [`FindingAction::OpenPage`]: at most this many characters.
+pub const MAX_FINDING_LABEL_CHARS: usize = 40;
+/// [`Finding::stale_after_secs`] is clamped to `MIN_STALE_AFTER_SECS..=MAX_STALE_AFTER_SECS`:
+/// one minute to seven days.
+pub const MIN_STALE_AFTER_SECS: u32 = 60;
+pub const MAX_STALE_AFTER_SECS: u32 = 604_800;
+
+/// One check one add-on made, for Health on Home (protocol 4). Plain text only: the host
+/// draws it as plain text (no markdown, no links) under the sending add-on's own name, and
+/// cuts every field to the limits above. The host keeps findings in memory only; they are
+/// never written to disk, put in a report or sent anywhere.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    /// The add-on's own name for the check, stable across runs: `"memory-pressure"`,
+    /// `"drive-health-c"`. 1 to [`MAX_FINDING_ID_CHARS`] characters of `a-z`, `0-9`, `.` and
+    /// `-`, unique within the add-on (see [`Finding::valid_id`]).
+    pub id: String,
+    /// Plain words, one line, at most [`MAX_FINDING_TITLE_CHARS`]: "Memory is under pressure".
+    pub title: String,
+    /// What was observed, at most [`MAX_FINDING_TEXT_CHARS`]: "Available memory stayed under
+    /// 1.1 GB for 6 minutes and Windows read 900 pages a second from disk."
+    pub observation: String,
+    pub status: FindingStatus,
+    /// Used for ranking only when `status` is [`FindingStatus::Attention`]; ignored otherwise.
+    pub severity: Severity,
+    /// When the add-on measured it, Unix seconds. A time later than when the host received it
+    /// is taken as the receive time.
+    pub measured_at: u64,
+    /// After this many seconds the reading is out of date. Clamped to
+    /// [`MIN_STALE_AFTER_SECS`]..=[`MAX_STALE_AFTER_SECS`].
+    pub stale_after_secs: u32,
+    /// At most one action. None of them changes the system from Home.
+    pub action: Option<FindingAction>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FindingStatus {
+    /// What was measured is fine. Say what was measured ("No crashes recorded in the last 7
+    /// days"), never "healthy PC".
+    Ok,
+    /// Worth the user's attention; ranked by [`Severity`].
+    Attention,
+    /// The add-on could check but has not yet (first read still running, page never opened).
+    NotChecked,
+    /// The add-on cannot check on this PC; the observation says why ("Needs administrator
+    /// rights").
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Severity {
+    /// Slows the PC or is worth a look (memory pressure, throttling, XMP off).
+    Watch,
+    /// Harm to the PC or its data now or soon (a drive "Replace soon", blue screens).
+    Problem,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FindingAction {
+    /// Opens a page of the same add-on. `route` is what `NativeAddon::navigate` receives; its
+    /// first segment (before '/') must be one of the add-on's catalog `pages`, or the host
+    /// drops the finding. `label` at most [`MAX_FINDING_LABEL_CHARS`]: "Open drive health".
+    OpenPage { label: String, route: String },
+    /// A short instruction for something only the user can do (BIOS, Windows Settings), at
+    /// most [`MAX_FINDING_TEXT_CHARS`].
+    Instruction { text: String },
+}
+
+impl Finding {
+    fn build(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        observation: impl Into<String>,
+        status: FindingStatus,
+        severity: Severity,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            observation: observation.into(),
+            status,
+            severity,
+            measured_at: unix_now(),
+            stale_after_secs: MIN_STALE_AFTER_SECS,
+            action: None,
+        }
+    }
+
+    /// What was measured is fine. Measured now; out of date after a minute unless
+    /// [`Self::stale_after`] says otherwise.
+    pub fn ok(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        observation: impl Into<String>,
+    ) -> Self {
+        Self::build(id, title, observation, FindingStatus::Ok, Severity::Watch)
+    }
+
+    /// Something needs attention, at `severity`.
+    pub fn attention(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        observation: impl Into<String>,
+        severity: Severity,
+    ) -> Self {
+        Self::build(id, title, observation, FindingStatus::Attention, severity)
+    }
+
+    /// The add-on cannot check this on this PC; `reason` says why.
+    pub fn unavailable(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self::build(
+            id,
+            title,
+            reason,
+            FindingStatus::Unavailable,
+            Severity::Watch,
+        )
+    }
+
+    /// The add-on can check this but has not yet.
+    pub fn not_checked(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        observation: impl Into<String>,
+    ) -> Self {
+        Self::build(
+            id,
+            title,
+            observation,
+            FindingStatus::NotChecked,
+            Severity::Watch,
+        )
+    }
+
+    /// How long the reading stays current, in seconds.
+    pub fn stale_after(mut self, secs: u32) -> Self {
+        self.stale_after_secs = secs;
+        self
+    }
+
+    /// When it was measured, Unix seconds (the builders use the current time).
+    pub fn measured_at(mut self, unix_secs: u64) -> Self {
+        self.measured_at = unix_secs;
+        self
+    }
+
+    /// Adds an action that opens `route` in this add-on.
+    pub fn open_page(mut self, label: impl Into<String>, route: impl Into<String>) -> Self {
+        self.action = Some(FindingAction::OpenPage {
+            label: label.into(),
+            route: route.into(),
+        });
+        self
+    }
+
+    /// Adds an instruction for something only the user can do.
+    pub fn instruction(mut self, text: impl Into<String>) -> Self {
+        self.action = Some(FindingAction::Instruction { text: text.into() });
+        self
+    }
+
+    /// True for an id the host accepts: 1 to [`MAX_FINDING_ID_CHARS`] characters of `a-z`,
+    /// `0-9`, `.` and `-`.
+    pub fn valid_id(id: &str) -> bool {
+        (1..=MAX_FINDING_ID_CHARS).contains(&id.len())
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogLevel {
     Error,
@@ -448,5 +670,82 @@ impl ProtocolError {
     /// True for a clean end of the connection (the other side quit or the pipe was dropped).
     pub fn is_closed(&self) -> bool {
         matches!(self, Self::Closed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_are_ordered() {
+        assert_eq!(MIN_PROTOCOL_VERSION, 3);
+        assert_eq!(PROTOCOL_VERSION, 4);
+        assert!((MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&FINDINGS_PROTOCOL_VERSION));
+        let hello = Hello::with_version("a.b", "1.0.0", 3);
+        assert_eq!(hello.protocol_version, 3);
+        assert_eq!(hello.addon_id, "a.b");
+        assert_eq!(Hello::new("a.b", "1").protocol_version, PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn finding_builders_fill_status_time_and_action() {
+        let before = unix_now();
+        let ok = Finding::ok("memory-pressure", "Memory", "No pressure");
+        assert_eq!(ok.status, FindingStatus::Ok);
+        assert!(ok.measured_at >= before && ok.measured_at <= unix_now());
+        assert_eq!(ok.stale_after_secs, MIN_STALE_AFTER_SECS);
+        assert_eq!(ok.action, None);
+        let attention = Finding::attention("a", "T", "O", Severity::Problem)
+            .stale_after(300)
+            .open_page("Open", "Home");
+        assert_eq!(attention.status, FindingStatus::Attention);
+        assert_eq!(attention.severity, Severity::Problem);
+        assert_eq!(attention.stale_after_secs, 300);
+        assert_eq!(
+            attention.action,
+            Some(FindingAction::OpenPage {
+                label: "Open".into(),
+                route: "Home".into()
+            })
+        );
+        let unavailable =
+            Finding::unavailable("a", "T", "Needs administrator rights").instruction("Do it");
+        assert_eq!(unavailable.status, FindingStatus::Unavailable);
+        assert_eq!(unavailable.observation, "Needs administrator rights");
+        assert_eq!(
+            unavailable.action,
+            Some(FindingAction::Instruction {
+                text: "Do it".into()
+            })
+        );
+        let not_checked = Finding::not_checked("a", "T", "O").measured_at(5);
+        assert_eq!(not_checked.status, FindingStatus::NotChecked);
+        assert_eq!(not_checked.measured_at, 5);
+    }
+
+    #[test]
+    fn finding_ids_follow_the_pattern() {
+        for good in [
+            "a",
+            "memory-pressure",
+            "drive-health-c",
+            "x.y-2",
+            &"a".repeat(48),
+        ] {
+            assert!(Finding::valid_id(good), "{good}");
+        }
+        for bad in [
+            "",
+            &"a".repeat(49),
+            "Memory",
+            "drive_c",
+            "drive c",
+            "a/b",
+            "\u{e5}",
+            "a\n",
+        ] {
+            assert!(!Finding::valid_id(bad), "{bad:?}");
+        }
     }
 }

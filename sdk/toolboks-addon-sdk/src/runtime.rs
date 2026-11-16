@@ -5,7 +5,9 @@
 //! [`toolboks_addon_proto`] (see `docs/ADDON-PROTOCOL.md`).
 //!
 //! The loop:
-//! - answers the host's `Hello`, refusing a protocol mismatch in plain words;
+//! - answers the host's `Hello` at the host's version when it is one this SDK speaks
+//!   (`MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION`), refusing any other in plain words, and
+//!   never sends a message newer than the agreed version;
 //! - renders exactly one frame per `Input` batch (messages the batch caused, such as
 //!   changed preferences, are sent before the frame that acknowledges it), with the add-on's own clock (the host
 //!   sends no time), tessellates it and sends cached meshes plus texture deltas;
@@ -16,6 +18,8 @@
 //!   calls to the add-on and sends back host requests, status items and log lines;
 //! - sends the add-on's tray entries when they change and forwards the entry the user
 //!   chose; reports the rectangle of the tour anchor the host asked for;
+//! - at protocol 4 or later, sends the add-on's health findings when they change (also from
+//!   background ticks while suspended) and forwards the host's `CheckNow`;
 //! - answers heartbeat pings from the main loop, so a stuck `ui` call shows as stalled;
 //! - while suspended with background work, calls `tick_background` every 200 ms;
 //! - returns `Ok(())` on `Quit` or when the host closes the connection, and an error for
@@ -33,7 +37,7 @@
 //!
 //! [`run_addon_on`] takes any `Read` and `Write` pair and is what tests use.
 
-use crate::{tutorial, Capability, HostRequest, NativeAddon, StatusItem, TrayItem};
+use crate::{tutorial, Capability, Finding, HostRequest, NativeAddon, StatusItem, TrayItem};
 use proto::mesh::MeshEncoder;
 use proto::{
     AddonMessage, Frame, FrameWriter, Hello, HostMessage, ImeOutput, InputBatch, InputEvent,
@@ -246,7 +250,8 @@ where
         ));
     }
     let (mut reader, mut writer) = transport.split();
-    proto::addon_handshake(&mut reader, &mut writer, &Hello::new(addon_id, SDK_VERSION))?;
+    let version =
+        proto::addon_handshake(&mut reader, &mut writer, &Hello::new(addon_id, SDK_VERSION))?;
     let (tx, rx) = mpsc::channel();
     let host_tx = tx.clone();
     let queued = Arc::new(AtomicUsize::new(0));
@@ -294,6 +299,8 @@ where
         theme: None,
         status: Vec::new(),
         tray: Vec::new(),
+        findings: Vec::new(),
+        version,
         tour: None,
         anchor_sent: None,
     };
@@ -320,6 +327,11 @@ struct Runtime<W> {
     theme: Option<Theme>,
     status: Vec<StatusItem>,
     tray: Vec<TrayItem>,
+    /// The findings last sent to the host.
+    findings: Vec<Finding>,
+    /// The protocol version agreed with the host in the handshake. No message newer than it
+    /// is ever sent.
+    version: u32,
     /// The tour anchor the host asked for, and whether it still has to be scrolled into view.
     tour: Option<(String, bool)>,
     /// The anchor rectangle last reported to the host.
@@ -467,8 +479,22 @@ impl<W: Write> Runtime<W> {
                 self.tour = target.map(|target| (target, reveal));
                 self.anchor_sent = None;
             }
+            HostMessage::CheckNow => {
+                // A host at an older version cannot send it: the message does not exist there.
+                if !self.findings_allowed() {
+                    return Err(ProtocolError::Unexpected(
+                        "CheckNow on a protocol 3 connection",
+                    ));
+                }
+                addon.check_now();
+            }
         }
         Ok(true)
+    }
+
+    /// True when the agreed protocol has [`AddonMessage::Findings`] and `CheckNow`.
+    fn findings_allowed(&self) -> bool {
+        self.version >= proto::FINDINGS_PROTOCOL_VERSION
     }
 
     fn send_preferences(&mut self, changed: bool) -> Result<(), ProtocolError> {
@@ -477,7 +503,8 @@ impl<W: Write> Runtime<W> {
         self.send(&AddonMessage::Preferences { json, changed })
     }
 
-    /// Host requests, status items and log lines, sent after every handled message.
+    /// Host requests, status items, tray entries, findings and log lines, sent after every
+    /// handled message and every background tick.
     fn flush_side_channels<A: NativeAddon>(&mut self, addon: &mut A) -> Result<(), ProtocolError> {
         while let Some(request) = addon.take_host_request() {
             let request = match request {
@@ -513,6 +540,13 @@ impl<W: Write> Runtime<W> {
                 .collect();
             self.tray = tray;
             self.send(&AddonMessage::TrayItems(items))?;
+        }
+        if self.findings_allowed() {
+            let findings = addon.findings();
+            if findings != self.findings {
+                self.findings = findings.clone();
+                self.send(&AddonMessage::Findings(findings))?;
+            }
         }
         let lines = LOG
             .lock()

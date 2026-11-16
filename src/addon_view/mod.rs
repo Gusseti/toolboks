@@ -109,6 +109,15 @@ impl AddonLink {
         self.sender.clone()
     }
 
+    /// The next message for the view (a frame or a repaint request), for tests without a view.
+    #[cfg(test)]
+    pub(crate) fn recv_timeout(
+        &self,
+        wait: Duration,
+    ) -> Result<Result<AddonMessage, ProtocolError>, mpsc::RecvTimeoutError> {
+        self.inbox.recv_timeout(wait)
+    }
+
     fn send(&self, message: &HostMessage) -> Result<(), ProtocolError> {
         self.sender
             .lock()
