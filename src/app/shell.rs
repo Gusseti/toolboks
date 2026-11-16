@@ -770,6 +770,9 @@ impl Crumb {
 impl App {
     pub(super) fn shell_ui(&mut self, ui: &mut egui::Ui) {
         self.poll_marketplace(ui.ctx());
+        if self.screen != Screen::Settings {
+            self.own_usage.reset();
+        }
         self.prepare_tutorial(ui.ctx());
         if self.tour.is_some() {
             ui.disable();
@@ -1671,6 +1674,10 @@ impl App {
                         ui,
                         format!("Version {} · Add-on API 1", env!("CARGO_PKG_VERSION")),
                     );
+                    // Read only while this page is drawn, and again every few seconds.
+                    let usage = self.own_usage.poll(std::time::Instant::now());
+                    caption(ui, crate::own_usage::text(usage));
+                    ui.request_repaint_after(crate::own_usage::EVERY);
                     ui.add_space(look::SPACE_XS);
                     self.update_ui(ui);
                 });

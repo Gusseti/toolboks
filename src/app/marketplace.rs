@@ -167,8 +167,12 @@ impl App {
                 );
             }
         }
-        if !self.views.is_empty() {
-            ctx.request_repaint_after(Duration::from_millis(100));
+        let shown = match &self.screen {
+            Screen::External(id) if !self.hidden => self.views.get(id).map(|view| view.state()),
+            _ => None,
+        };
+        if let Some(after) = crate::addon_view::poll_after(shown) {
+            ctx.request_repaint_after(after);
         }
     }
 

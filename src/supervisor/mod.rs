@@ -261,6 +261,11 @@ enum Phase {
 
 const LOG_LINES: usize = 50;
 
+/// How soon a running add-on is looked at again when its pipe has closed but Windows does not
+/// report the process as ended yet (nothing else may wake the host, for example for a background
+/// add-on, which gets no heartbeat).
+pub(crate) const EXIT_POLL: Duration = Duration::from_millis(100);
+
 struct Managed {
     spec: LaunchSpec,
     phase: Phase,
@@ -908,7 +913,16 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
             ..
         } => {
             let mut heard = false;
-            while let Ok(message) = side.try_recv() {
+            let mut closed = false;
+            loop {
+                let message = match side.try_recv() {
+                    Ok(message) => message,
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        closed = true;
+                        break;
+                    }
+                };
                 heard = true;
                 match message {
                     AddonMessage::Pong { nonce } => heartbeat.on_pong(nonce, now),
@@ -956,28 +970,34 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
                 } else {
                     Next::Crash(Some(code), format!("it ended with exit code {code}"))
                 };
-            } else if managed.visible {
-                match heartbeat.poll(now) {
-                    Heartbeat::SendPing(nonce) => {
-                        send(sender, &HostMessage::Ping { nonce });
-                    }
-                    Heartbeat::Stalled { .. } if stalled_since.is_none() => {
-                        *stalled_since = Some(now);
-                        events.push(Event::Stalled {
-                            id: id.clone(),
-                            stalled: true,
-                        });
-                    }
-                    _ => {}
+            } else {
+                if closed {
+                    // The pipe closed first: come back soon to see the process end.
+                    shared.ctx.request_repaint_after(EXIT_POLL);
                 }
-                if stalled_since
-                    .is_some_and(|at| now.saturating_duration_since(at) >= shared.timing.stall_kill)
-                {
-                    process.kill();
-                    next = Next::Crash(None, "it stopped answering and was ended".into());
+                if managed.visible {
+                    match heartbeat.poll(now) {
+                        Heartbeat::SendPing(nonce) => {
+                            send(sender, &HostMessage::Ping { nonce });
+                        }
+                        Heartbeat::Stalled { .. } if stalled_since.is_none() => {
+                            *stalled_since = Some(now);
+                            events.push(Event::Stalled {
+                                id: id.clone(),
+                                stalled: true,
+                            });
+                        }
+                        _ => {}
+                    }
+                    if stalled_since.is_some_and(|at| {
+                        now.saturating_duration_since(at) >= shared.timing.stall_kill
+                    }) {
+                        process.kill();
+                        next = Next::Crash(None, "it stopped answering and was ended".into());
+                    }
+                    // Come back for the next ping even when nothing else repaints.
+                    shared.ctx.request_repaint_after(PING_INTERVAL);
                 }
-                // Come back for the next ping even when nothing else repaints.
-                shared.ctx.request_repaint_after(PING_INTERVAL);
             }
         }
         Phase::Stopping {

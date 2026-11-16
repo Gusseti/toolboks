@@ -17,6 +17,7 @@ mod elevation;
 mod installer;
 mod instance;
 mod marketplace;
+mod own_usage;
 mod supervisor;
 mod tray;
 mod update;
