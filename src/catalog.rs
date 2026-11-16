@@ -15,8 +15,9 @@ pub use toolboks_catalog::{
     check_bytes, Channel, DownloadMismatch, Entry, Hidden, Host, Index, Kind, Refused,
 };
 
-/// Add-on protocol versions this build can talk to.
-pub const PROTOCOL_VERSIONS: &[u32] = &[toolboks_addon_proto::PROTOCOL_VERSION];
+/// Add-on protocol versions this build can talk to. The supervisor speaks the version of the
+/// installed entry, and only one of these. Protocol 4 adds health findings.
+pub const PROTOCOL_VERSIONS: &[u32] = &[3, 4];
 
 pub const URL: &str =
     "https://raw.githubusercontent.com/fredhakon/toolboks-addons/main/catalog/index.json";
@@ -279,14 +280,27 @@ mod tests {
         assert_eq!(entry.check_download(b"hello"), Ok(()));
     }
     #[test]
-    fn this_host_accepts_protocol_three_and_hides_protocol_two() {
-        assert_eq!(PROTOCOL_VERSIONS, &[3]);
+    fn this_host_accepts_protocols_three_and_four_and_hides_the_others() {
+        assert_eq!(PROTOCOL_VERSIONS, &[3, 4]);
+        // Every version this build lists is one the protocol crate speaks.
+        assert!(PROTOCOL_VERSIONS.iter().all(|v| {
+            (toolboks_addon_proto::MIN_PROTOCOL_VERSION..=toolboks_addon_proto::PROTOCOL_VERSION)
+                .contains(v)
+        }));
         let mut index: Index = serde_json::from_slice(&index()).unwrap();
         let entry = &mut index.entries[0];
         entry.channel = Channel::Stable;
-        entry.protocol_version = 2;
-        assert_eq!(entry.check(&host()), Err(Hidden::UnknownProtocol));
-        entry.protocol_version = 3;
-        assert_eq!(entry.check(&host()), Ok(()));
+        for hidden in [0, 1, 2, 5, 99] {
+            entry.protocol_version = hidden;
+            assert_eq!(
+                entry.check(&host()),
+                Err(Hidden::UnknownProtocol),
+                "{hidden}"
+            );
+        }
+        for shown in [3, 4] {
+            entry.protocol_version = shown;
+            assert_eq!(entry.check(&host()), Ok(()), "{shown}");
+        }
     }
 }

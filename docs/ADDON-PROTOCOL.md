@@ -2,9 +2,11 @@
 
 An out-of-process add-on is a separate executable that runs its egui page headless and sends
 the host tessellated meshes. The host forwards input and paints those meshes inside the add-on's
-page rectangle. This document describes protocol version **3**
-(version 2 plus per-operation administrator helpers). Version 2 binaries must be rebuilt;
-`Hello` and `Refuse` remain frozen so old peers receive a plain update message.
+page rectangle. This document describes protocol version **4** (version 3 plus health findings:
+`AddonMessage::Findings` and `HostMessage::CheckNow`). Version 3 add-ons keep working: the host
+speaks the version recorded for the installed add-on (see "Handshake and versions"). Version 2
+binaries must be rebuilt; `Hello` and `Refuse` remain frozen so old peers receive a plain update
+message.
 
 - New to this? Start with the [add-on author guide](ADDON-AUTHOR-GUIDE.md).
 - Messages and framing: crate `sdk/toolboks-addon-proto` (`toolboks-addon-proto`).
@@ -52,16 +54,43 @@ then never print to stdout.
 
 ## Handshake and versions
 
-1. The host sends `Hello { protocol_version, addon_id, software_version }`.
-2. The add-on checks the version. On a mismatch it sends `Refuse { protocol_version, reason }` and
-   exits with `ProtocolError::VersionMismatch`.
-3. Otherwise it answers with its own `Hello` (its id and the SDK version).
-4. The host checks version and id the same way and refuses with `Refuse` on a mismatch.
+The host chooses the version. Each installed add-on's catalog entry records its
+`protocol_version`; the host speaks that version, so an add-on built for an older protocol keeps
+working on a newer host.
+
+1. Before the exe is started, the host checks that the entry's version is one it speaks
+   (`catalog::PROTOCOL_VERSIONS`, today `[3, 4]`). Any other version is refused in the plain
+   words below and the exe is never started.
+2. The host sends `Hello { protocol_version, addon_id, software_version }` at the entry's version
+   (`Hello::with_version`).
+3. The add-on accepts a version from `MIN_PROTOCOL_VERSION` (3) up to its own `PROTOCOL_VERSION`
+   (4). Any other version is refused: it sends `Refuse { protocol_version, reason }` with its own
+   newest version and exits with `ProtocolError::VersionMismatch`.
+4. Otherwise it answers with its own `Hello` (its id and the SDK version) **at the host's
+   version**. `addon_handshake` returns that agreed version.
+5. The host refuses (`Refuse`) an answer at any other version than the one it sent, or with
+   another id.
+
+The agreed version is the connection's. Neither side ever sends a message newer than it: the
+SDK runtime sends `Findings` only at 4 or later, and the supervisor keeps the version per add-on
+(`Supervisor::protocol_version`), sends `CheckNow` only at 4 or later (`Supervisor::send` returns
+false otherwise) and ignores `Findings` arriving on a version 3 connection (one line in the
+add-on's report log). A version 4 runtime that receives `CheckNow` on a version 3 connection
+ends with `ProtocolError::Unexpected`, as a real version 3 add-on would fail to read it.
+
+| Add-on | Host | Result |
+|---|---|---|
+| version 3 (released before protocol 4) | speaks 3 and 4 | Entry says 3: the host sends `Hello` 3, it runs as before, no findings. |
+| version 4 | speaks 3 and 4 | Entry says 4: findings flow. |
+| version 4 | speaks only 3 | The older host's catalog filter hides entries at 4, so it keeps the version 3 add-on it has. A version 4 exe that does meet a version 3 host agrees on 3 and sends no findings. |
+| version 3 exe under an entry that says 4 | any | The add-on refuses `Hello` 4: "Add-on speaks protocol 3, Toolboks speaks 4. …" |
 
 The refusal text is the same on both sides: "Add-on speaks protocol X, Toolboks speaks Y. Update
 the add-on or Toolboks." `Hello` (variant 0) and `Refuse` (variant 1) are frozen in both
 directions, so any two versions can refuse each other in plain words. Any other change to a
-message bumps `PROTOCOL_VERSION`.
+message bumps `PROTOCOL_VERSION`. New messages are appended at the end of the enums, so every
+older message keeps its variant index and its bytes; `sdk/toolboks-addon-proto/tests/golden.rs`
+holds the version 3 bytes of every message and fails if one changes.
 
 ## Messages
 
@@ -83,6 +112,7 @@ Host to add-on (`HostMessage`):
 | `AdminResult { id, outcome }` | Informational helper result for `NativeAddon::admin_result`; never authorizes a write. |
 | `AdminOperation { request, capabilities }` | Dedicated helper connection only (see below); rejected by the drawing runtime. |
 | `TutorialTarget { target, reveal }` | The tour anchor to highlight, or none. `reveal` scrolls it into view once. |
+| `CheckNow` | Version 4. The user asked Home to check again; calls `NativeAddon::check_now`. Optional to honour. Never sent on a version 3 connection. |
 
 Input events (`InputEvent`): pointer moved, pointer button, pointer left, drag released outside,
 scroll (unit, phase, source), zoom, key (logical and physical key, repeat, modifiers), text,
@@ -109,6 +139,7 @@ Add-on to host (`AddonMessage`):
 | `TrayItems(items)` | The full set of entries (`id`, `label`, `enabled`) the add-on offers in the host's tray menu; sent when it changes. Optional. |
 | `AdminResult { id, outcome }` | Dedicated helper result only; the host ignores this on a drawing connection. |
 | `TutorialAnchor { target, rect }` | The rectangle of the anchor asked for with `TutorialTarget`, in the view's points, or none while it is not visible. Sent before the frame it belongs to, when it changes. |
+| `Findings(findings)` | Version 4. The full set of the add-on's health findings (see "Host services"); replaces the previous set. Sent when it changes, also from background ticks while suspended. Never sent on a version 3 connection; the host ignores it there. |
 
 A `Frame` holds the meshes (see below), texture uploads (`TextureUpdate { id, delta }`) and frees,
 a repaint-after hint, the cursor icon, copied text, URLs to open, the IME output rectangle, whether
@@ -332,4 +363,18 @@ add-on sends is cut to fixed limits before the host keeps or shows it.
   into `config.json` under the add-on's id only (`Effect::SaveConfig`); the host asks a background
   add-on with `SavePreferences`. At most 256 KiB.
 - **Installed entries.** The installer keeps the catalog entry beside each installed version
-  (`entry.json`), so the title, pages, capabilities and the background mark are known offline.
+  (`entry.json`), so the title, pages, capabilities, the background mark and the protocol version
+  are known offline.
+- **Health findings (version 4).** `NativeAddon::findings` → `Findings`; the runtime diffs it like
+  `status_items` and also sends it after background ticks, so a background add-on reports with its
+  page closed. A `Finding` is `id` (1 to 48 characters of `a-z`, `0-9`, `.`, `-`, unique within
+  the add-on), `title` (one line, at most 80 characters), `observation` (at most 240), `status`
+  (`Ok`, `Attention`, `NotChecked`, `Unavailable`), `severity` (`Watch` or `Problem`, used only for
+  `Attention`), `measured_at` (Unix seconds), `stale_after_secs` and at most one `action`:
+  `OpenPage { label, route }` (a page of the same add-on; label at most 40) or
+  `Instruction { text }` (at most 240). The limits are constants in `toolboks-addon-proto`
+  (`MAX_FINDINGS` = 16 per message, `MIN_STALE_AFTER_SECS` = 60, `MAX_STALE_AFTER_SECS` = 604 800).
+  The message carries no source: the host files every finding under the id of the connection it
+  came from. `CheckNow` asks the add-on to check again (`NativeAddon::check_now`). Today the host
+  accepts findings and hands them to `Services::on_findings`, which keeps nothing yet; validating,
+  keeping (in memory only, never on disk) and showing them on Home come in #181 and #182.

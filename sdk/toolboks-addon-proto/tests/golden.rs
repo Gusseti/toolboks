@@ -106,7 +106,14 @@ fn frame() -> Frame {
     mesh.indices.push(0);
     Frame {
         seq: 9,
-        meshes: vec![MeshRef::New { id: 5, clip: rect, mesh }, MeshRef::Cached { id: 6 }],
+        meshes: vec![
+            MeshRef::New {
+                id: 5,
+                clip: rect,
+                mesh,
+            },
+            MeshRef::Cached { id: 6 },
+        ],
         textures_set: vec![TextureUpdate {
             id: egui::TextureId::Managed(1),
             delta: egui::epaint::ImageDelta::full(
@@ -331,14 +338,21 @@ fn check<M: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fm
     assert_eq!(messages.len(), golden.len());
     for ((name, message), (golden_name, bytes)) in messages.into_iter().zip(golden) {
         assert_eq!(name, *golden_name);
-        assert_eq!(hex(&message), *bytes, "{name} encodes differently from protocol 3");
+        assert_eq!(
+            hex(&message),
+            *bytes,
+            "{name} encodes differently from protocol 3"
+        );
         // And protocol 3 bytes still decode to the same message.
         let raw: Vec<u8> = (0..bytes.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&bytes[i..i + 2], 16).unwrap())
             .collect();
         let decoded: M = FrameReader::new(&raw[..]).read().unwrap();
-        assert_eq!(decoded, message, "{name} decodes differently from protocol 3");
+        assert_eq!(
+            decoded, message,
+            "{name} decodes differently from protocol 3"
+        );
     }
 }
 
@@ -350,6 +364,29 @@ fn every_protocol_3_host_message_keeps_its_bytes() {
 #[test]
 fn every_protocol_3_addon_message_keeps_its_bytes() {
     check(addon_messages(), ADDON_V3);
+}
+
+#[test]
+fn protocol_4_messages_come_after_every_protocol_3_variant() {
+    // Variant indices: 19 host messages and 14 add-on messages existed in protocol 3.
+    assert_eq!(hex(&HostMessage::CheckNow), "0100000013");
+    let finding = Finding::attention(
+        "drive-health-c",
+        "Drive C: may fail soon",
+        "2 media errors",
+        Severity::Problem,
+    )
+    .measured_at(1_700_000_000)
+    .stale_after(86_400)
+    .open_page("Open drive health", "Optimization/C:");
+    let bytes = hex(&AddonMessage::Findings(vec![finding.clone()]));
+    assert_eq!(&bytes[8..10], "0e", "Findings is variant 14: {bytes}");
+    let raw: Vec<u8> = (0..bytes.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&bytes[i..i + 2], 16).unwrap())
+        .collect();
+    let decoded: AddonMessage = FrameReader::new(&raw[..]).read().unwrap();
+    assert_eq!(decoded, AddonMessage::Findings(vec![finding]));
 }
 
 /// Prints the current bytes; run with `-- --ignored --nocapture` to see them.

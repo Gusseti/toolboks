@@ -11,7 +11,7 @@ use toolboks_addon_sdk::runtime::proto::{
     InputEvent, ProtocolError, TabDirection, Theme, PROTOCOL_VERSION,
 };
 use toolboks_addon_sdk::runtime::{run_addon_on, MAX_QUEUED_HOST_MESSAGES};
-use toolboks_addon_sdk::{NativeAddon, StatusItem, TutorialStep};
+use toolboks_addon_sdk::{Finding, NativeAddon, Severity, StatusItem, TutorialStep};
 
 const WAIT: Duration = Duration::from_secs(10);
 const BUTTON: [f32; 2] = [60.0, 25.0];
@@ -64,12 +64,24 @@ struct TestHost {
 
 impl TestHost {
     fn connect(addon: impl NativeAddon + Send + 'static) -> Self {
+        Self::connect_at(addon, PROTOCOL_VERSION)
+    }
+
+    /// Connects as a host that speaks protocol `version`.
+    fn connect_at(addon: impl NativeAddon + Send + 'static, version: u32) -> Self {
         let (host, addon_side) = duplex();
         let addon = std::thread::spawn(move || run_addon_on(addon_side, addon, "counter"));
         let (mut reader, mut writer) = host.split();
-        let theirs =
-            proto::host_handshake(&mut reader, &mut writer, &Hello::new("counter", "test"))
-                .expect("handshake");
+        let theirs = proto::host_handshake(
+            &mut reader,
+            &mut writer,
+            &Hello::with_version("counter", "test", version),
+        )
+        .expect("handshake");
+        assert_eq!(
+            theirs.protocol_version, version,
+            "the add-on agrees on the host's version"
+        );
         assert_eq!(theirs.addon_id, "counter");
         assert_eq!(theirs.software_version, env!("CARGO_PKG_VERSION"));
         let (tx, inbox) = mpsc::channel();
@@ -499,4 +511,183 @@ fn drawing_runtime_refuses_a_helper_operation_without_running_the_addon() {
         host.addon.join().unwrap(),
         Err(ProtocolError::Unexpected(_))
     ));
+}
+
+/// Reports health findings: one that counts `check_now` calls, one that counts background ticks.
+#[derive(Default)]
+struct Health {
+    checks: u32,
+    ticks: u32,
+    background: bool,
+}
+
+impl NativeAddon for Health {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _preferences: &mut std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> bool {
+        ui.label("Health");
+        false
+    }
+
+    fn has_background_work(&self) -> bool {
+        self.background
+    }
+
+    fn tick_background(&mut self) {
+        self.ticks += 1;
+    }
+
+    fn check_now(&mut self) {
+        self.checks += 1;
+    }
+
+    fn status_items(&self) -> Vec<StatusItem> {
+        vec![StatusItem {
+            text: format!("{} checks", self.checks),
+            tooltip: None,
+        }]
+    }
+
+    fn findings(&self) -> Vec<Finding> {
+        vec![
+            Finding::attention(
+                "checks",
+                format!("Checked {} times", self.checks),
+                "Counted",
+                Severity::Watch,
+            )
+            .measured_at(1_700_000_000),
+            Finding::ok("ticks", format!("{} ticks", self.ticks), "Counted")
+                .measured_at(1_700_000_000),
+        ]
+    }
+}
+
+fn findings_in(messages: &[AddonMessage]) -> Vec<Vec<Finding>> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            AddonMessage::Findings(list) => Some(list.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Every message that arrives within `wait`.
+fn drain(host: &TestHost, wait: Duration) -> Vec<AddonMessage> {
+    let until = Instant::now() + wait;
+    let mut seen = Vec::new();
+    while let Some(left) = until.checked_duration_since(Instant::now()) {
+        match host.inbox.recv_timeout(left) {
+            Ok(message) => seen.push(message.expect("valid message")),
+            Err(_) => break,
+        }
+    }
+    seen
+}
+
+#[test]
+fn findings_reach_a_protocol_4_host_only_when_they_change() {
+    let mut host = TestHost::connect(Health::default());
+    let (_, first) = host.frame(vec![]);
+    let sent = findings_in(&first);
+    assert_eq!(sent.len(), 1, "{first:?}");
+    assert_eq!(sent[0][0].title, "Checked 0 times");
+    assert_eq!(sent[0][1].title, "0 ticks");
+    // Unchanged: nothing is sent again.
+    let (_, second) = host.frame(vec![]);
+    assert!(findings_in(&second).is_empty(), "{second:?}");
+    // CheckNow reaches the add-on, and the changed set follows without a frame.
+    host.send(HostMessage::CheckNow);
+    let after = loop {
+        match host.recv() {
+            AddonMessage::Findings(list) => break list,
+            AddonMessage::StatusItems(_) => {}
+            other => panic!("expected findings, got {other:?}"),
+        }
+    };
+    assert_eq!(after[0].title, "Checked 1 times");
+    host.quit().unwrap();
+}
+
+#[test]
+fn findings_are_sent_from_background_ticks_while_suspended() {
+    let mut host = TestHost::connect(Health {
+        background: true,
+        ..Default::default()
+    });
+    host.frame(vec![]);
+    host.send(HostMessage::Suspend);
+    // No input at all from here: only background ticks (every 200 ms) change the findings.
+    let seen = drain(&host, Duration::from_millis(1500));
+    let sent = findings_in(&seen);
+    assert!(sent.len() >= 2, "findings from background ticks: {seen:?}");
+    assert!(sent
+        .iter()
+        .all(|list| list.len() == 2 && list[1].title != "0 ticks"));
+    assert!(!seen.iter().any(|m| matches!(m, AddonMessage::Frame(_))));
+    host.quit().unwrap();
+}
+
+#[test]
+fn a_host_at_protocol_3_gets_no_findings() {
+    let mut host = TestHost::connect_at(
+        Health {
+            background: true,
+            ..Default::default()
+        },
+        3,
+    );
+    let (_, mut seen) = host.frame(vec![]);
+    assert!(
+        seen.iter()
+            .any(|m| matches!(m, AddonMessage::StatusItems(_))),
+        "the add-on runs as usual: {seen:?}"
+    );
+    host.frame(vec![]);
+    host.send(HostMessage::Suspend);
+    // Background ticks change the findings, but none may be sent at protocol 3.
+    seen.extend(drain(&host, Duration::from_millis(1000)));
+    host.send(HostMessage::Resume);
+    let (_, more) = host.frame(vec![]);
+    seen.extend(more);
+    assert!(findings_in(&seen).is_empty(), "{seen:?}");
+    host.quit().unwrap();
+}
+
+#[test]
+fn check_now_on_a_protocol_3_connection_ends_the_addon() {
+    // A protocol 3 host cannot send CheckNow (it does not exist there); a peer that does is
+    // broken, as a protocol 3 add-on would see it.
+    let mut host = TestHost::connect_at(Health::default(), 3);
+    host.frame(vec![]);
+    host.send(HostMessage::CheckNow);
+    let error = host.addon.join().unwrap().unwrap_err();
+    assert!(matches!(error, ProtocolError::Unexpected(_)), "{error:?}");
+}
+
+#[test]
+fn a_host_at_protocol_5_is_refused_in_plain_words() {
+    let (host, addon_side) = duplex();
+    let addon = std::thread::spawn(move || run_addon_on(addon_side, Health::default(), "counter"));
+    let (mut reader, mut writer) = host.split();
+    writer
+        .write(&HostMessage::Hello(Hello::with_version(
+            "counter", "9.0.0", 5,
+        )))
+        .unwrap();
+    let text = "Add-on speaks protocol 4, Toolboks speaks 5. Update the add-on or Toolboks.";
+    match reader.read::<AddonMessage>().unwrap() {
+        AddonMessage::Refuse {
+            protocol_version,
+            reason,
+        } => {
+            assert_eq!(protocol_version, 4);
+            assert_eq!(reason, text);
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert_eq!(addon.join().unwrap().unwrap_err().to_string(), text);
 }

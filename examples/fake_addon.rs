@@ -8,8 +8,17 @@
 //!   ends children too (the child's process id goes to `child.pid`);
 //! - `services`: a real add-on that uses every host service (status bar items, tray entries,
 //!   a tour with an anchor, preferences), for the host services tests;
+//! - `findings`: a real add-on (protocol 4) with background work that reports health findings:
+//!   one changes on every background tick, one counts `CheckNow`;
 //! - `wrong-token`: opens the pipes and presents a token that is not the one it was given;
 //! - `silent`: opens nothing and waits.
+//!
+//! `--protocol 3` after the mode (in `mode.txt` or on the command line) makes it a protocol 3
+//! add-on as released before protocol 4: it accepts only a host `Hello` at 3 and refuses any
+//! other in plain words, answers every input with a frame and sends a status item. A `CheckNow`
+//! is written to `checknow.txt` and ends it, as it would end a real protocol 3 add-on (it cannot
+//! read that message). With `findings`, it also sends a `Findings` message it should not send
+//! at protocol 3, to show the host ignores it.
 //!
 //! Every start appends a line to `starts.txt`, so a test can count launches, and every `Suspend`
 //! a line to `suspends.txt`.
@@ -19,8 +28,11 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use toolboks_addon_proto::{AddonMessage, FrameReader, FrameWriter, Hello, HostMessage};
 use toolboks_addon_sdk::runtime::run_addon;
-use toolboks_addon_sdk::{tutorial, NativeAddon, StatusItem, TrayItem, TutorialStep};
+use toolboks_addon_sdk::{
+    tutorial, Finding, NativeAddon, Severity, StatusItem, TrayItem, TutorialStep,
+};
 
 pub const ID: &str = "test.fake-addon";
 
@@ -121,6 +133,123 @@ impl NativeAddon for Services {
     }
 }
 
+/// Reports health findings from background ticks and on `CheckNow`.
+#[derive(Default)]
+struct Findings {
+    ticks: u32,
+    checks: u32,
+}
+
+impl NativeAddon for Findings {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut BTreeMap<String, serde_json::Value>) -> bool {
+        ui.label("Findings add-on");
+        false
+    }
+
+    fn has_background_work(&self) -> bool {
+        true
+    }
+
+    fn suspend(&mut self) {
+        append(&folder().join("suspends.txt"), "suspend");
+    }
+
+    fn tick_background(&mut self) {
+        self.ticks += 1;
+    }
+
+    fn check_now(&mut self) {
+        self.checks += 1;
+        append(&folder().join("checknow.txt"), "check");
+    }
+
+    fn findings(&self) -> Vec<Finding> {
+        vec![
+            Finding::ok("ticks", format!("{} ticks", self.ticks), "Counted").measured_at(1),
+            Finding::attention(
+                "checks",
+                format!("Checked {} times", self.checks),
+                "Counted",
+                Severity::Watch,
+            )
+            .measured_at(1),
+        ]
+    }
+}
+
+fn append(path: &Path, line: &str) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// A protocol 3 add-on as released before protocol 4, without the SDK runtime: only `Hello` 3,
+/// a frame for every input, one status item, pong for every ping.
+fn protocol_3(send_findings: bool) {
+    let folder = folder();
+    let input = std::fs::File::open(argument("--pipe-in").expect("--pipe-in")).expect("pipe-in");
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .open(argument("--pipe-out").expect("--pipe-out"))
+        .expect("pipe-out");
+    output
+        .write_all(argument("--token").expect("--token").as_bytes())
+        .expect("token");
+    let mut reader = FrameReader::new(input);
+    let mut writer = FrameWriter::new(output);
+    // Its newest and only version is 3: a host at 4 is refused in plain words.
+    if toolboks_addon_proto::addon_handshake(
+        &mut reader,
+        &mut writer,
+        &Hello::with_version(ID, "0.3.0", 3),
+    )
+    .is_err()
+    {
+        std::process::exit(1);
+    }
+    if send_findings {
+        // Not allowed at protocol 3. Sent before the status item, so a host that shows the
+        // status item has already dealt with this.
+        let finding = Finding::attention("rogue", "Rogue", "Not at 3", Severity::Problem);
+        let _ = writer.write(&AddonMessage::Findings(vec![finding]));
+    }
+    let _ = writer.write(&AddonMessage::StatusItems(vec![
+        toolboks_addon_proto::StatusItem {
+            text: "Fake v3".into(),
+            tooltip: None,
+        },
+    ]));
+    loop {
+        let sent = match reader.read::<HostMessage>() {
+            Ok(HostMessage::Input(batch)) => {
+                writer.write(&AddonMessage::Frame(toolboks_addon_proto::Frame {
+                    seq: batch.seq,
+                    ..Default::default()
+                }))
+            }
+            Ok(HostMessage::Ping { nonce }) => writer.write(&AddonMessage::Pong { nonce }),
+            Ok(HostMessage::Suspend) => {
+                append(&folder.join("suspends.txt"), "suspend");
+                Ok(())
+            }
+            Ok(HostMessage::CheckNow) => {
+                // A real protocol 3 add-on cannot read this message and ends with an error.
+                append(&folder.join("checknow.txt"), "check");
+                std::process::exit(7);
+            }
+            Ok(HostMessage::Quit) | Err(_) => return,
+            Ok(_) => Ok(()),
+        };
+        if sent.is_err() {
+            return;
+        }
+    }
+}
+
 fn folder() -> PathBuf {
     let exe = std::env::current_exe().expect("own path");
     exe.parent().map(Path::to_path_buf).expect("own folder")
@@ -180,8 +309,22 @@ fn main() {
     {
         let _ = writeln!(starts, "{}", std::process::id());
     }
-    let mode = std::fs::read_to_string(folder.join("mode.txt")).unwrap_or_default();
-    match mode.trim() {
+    let text = std::fs::read_to_string(folder.join("mode.txt")).unwrap_or_default();
+    let mut words: Vec<&str> = text.split_whitespace().collect();
+    let protocol = match words.iter().position(|word| *word == "--protocol") {
+        Some(at) => {
+            let version = words.get(at + 1).and_then(|v| v.parse::<u32>().ok());
+            words.drain(at..(at + 2).min(words.len()));
+            version
+        }
+        None => argument("--protocol").and_then(|v| v.parse().ok()),
+    };
+    let mode = words.first().copied().unwrap_or("normal");
+    if protocol == Some(3) {
+        protocol_3(mode == "findings");
+        return;
+    }
+    match mode {
         "silent" => std::thread::sleep(Duration::from_secs(120)),
         "drop-pipe" => {
             // Connects, closes its end of both pipes, and ends 3 s later: the host sees the pipe
@@ -240,6 +383,8 @@ fn main() {
                 let _ = run_addon(AdminRequester { sent: false }, ID);
             } else if mode == "services" {
                 let _ = run_addon(Services::default(), ID);
+            } else if mode == "findings" {
+                let _ = run_addon(Findings::default(), ID);
             } else {
                 let _ = run_addon(Fake, ID);
             }

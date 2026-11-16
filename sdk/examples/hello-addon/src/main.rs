@@ -1,4 +1,4 @@
-//! A protocol-3 sample Toolboks add-on that is its own program. Toolboks starts it, it draws its page with
+//! A protocol-4 sample Toolboks add-on that is its own program. Toolboks starts it, it draws its page with
 //! egui, and the SDK runtime sends the drawing to the Toolboks window and brings input back.
 //!
 //! Build and try it (see `docs/ADDON-AUTHOR-GUIDE.md`):
@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 use toolboks_addon_sdk::runtime::{log, proto::LogLevel, run_addon_with_admin};
-use toolboks_addon_sdk::{tutorial, NativeAddon, StatusItem, TutorialStep};
+use toolboks_addon_sdk::{tutorial, Finding, NativeAddon, Severity, StatusItem, TutorialStep};
 
 /// The id the host knows this add-on by. It must match the catalog entry.
 pub const ID: &str = "example.hello";
@@ -24,6 +24,30 @@ const COUNT: &str = "count";
 struct Hello {
     count: i64,
     styled: bool,
+    /// The last check, made when the count changes. Kept, not rebuilt in `findings`: a
+    /// finding built there would carry a new time every second and be sent again each time.
+    finding: Option<Finding>,
+}
+
+/// The sample's one health check, a pure function so it is tested without a host. A real
+/// add-on checks something it measured (memory, a drive, the event log).
+pub fn check(count: i64) -> Finding {
+    if count >= 10 {
+        Finding::attention(
+            "hello-count",
+            "The count is high",
+            format!("Add one was pressed {count} times."),
+            Severity::Watch,
+        )
+        .open_page("Open Hello", "main")
+    } else {
+        Finding::ok(
+            "hello-count",
+            "The count is low",
+            format!("Add one was pressed {count} times."),
+        )
+    }
+    .stale_after(3600)
 }
 
 impl NativeAddon for Hello {
@@ -33,6 +57,7 @@ impl NativeAddon for Hello {
             .get(COUNT)
             .and_then(serde_json::Value::as_i64)
             .unwrap_or(0);
+        self.finding = Some(check(self.count));
     }
 
     /// Draws the page. Return true when a saved preference changed.
@@ -55,6 +80,7 @@ impl NativeAddon for Hello {
             ui.horizontal(|ui| {
                 if ui.button("Add one").clicked() {
                     self.count += 1;
+                    self.finding = Some(check(self.count));
                     preferences.insert(COUNT.into(), self.count.into());
                     changed = true;
                     log(LogLevel::Info, format!("count is now {}", self.count));
@@ -71,6 +97,11 @@ impl NativeAddon for Hello {
             text: format!("Hello {}", self.count),
             tooltip: Some("How often Add one was pressed".into()),
         }]
+    }
+
+    /// Health findings for Home (protocol 4). Sent when they change, never to an older host.
+    fn findings(&self) -> Vec<Finding> {
+        self.finding.iter().cloned().collect()
     }
 
     /// The guided tour. The host draws the overlay and its buttons; a step only navigates.
@@ -95,5 +126,26 @@ fn main() {
     }) {
         eprintln!("hello-addon stopped: {error}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use toolboks_addon_sdk::{FindingAction, FindingStatus};
+
+    #[test]
+    fn the_check_says_what_was_counted() {
+        let low = check(3);
+        assert_eq!(low.status, FindingStatus::Ok);
+        assert_eq!(low.observation, "Add one was pressed 3 times.");
+        assert_eq!(low.action, None);
+        let high = check(10);
+        assert_eq!(high.status, FindingStatus::Attention);
+        assert_eq!(high.severity, Severity::Watch);
+        assert!(
+            matches!(high.action, Some(FindingAction::OpenPage { ref route, .. }) if route == "main")
+        );
+        assert!(Finding::valid_id(&high.id));
     }
 }
