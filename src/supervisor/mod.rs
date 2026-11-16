@@ -478,6 +478,13 @@ impl Supervisor {
         }
     }
 
+    /// Adds a line to the add-on's report log (see [`Self::report`]).
+    pub fn note(&mut self, id: &str, line: String) {
+        if let Some(managed) = self.addons.get_mut(id) {
+            managed.note(line);
+        }
+    }
+
     /// A short plain-text report about the add-on, for the clipboard. Nothing is sent anywhere.
     pub fn report(&self, id: &str) -> Option<String> {
         let managed = self.addons.get(id)?;

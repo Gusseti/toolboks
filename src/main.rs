@@ -14,6 +14,9 @@ mod app;
 mod catalog;
 mod crash;
 mod elevation;
+// Home draws the health view from #182 (H3) on; until then only the tests read it.
+#[allow(dead_code)]
+mod health;
 mod installer;
 mod instance;
 mod marketplace;

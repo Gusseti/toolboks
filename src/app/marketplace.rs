@@ -115,13 +115,21 @@ impl App {
         }
         let supervisor = self.supervisor.as_mut().unwrap();
         for event in supervisor.tick(std::time::Instant::now()) {
-            if let Some(crate::addon_services::Effect::SaveConfig) = self.services.apply(
+            match self.services.apply(
                 &event,
                 supervisor,
                 &self.registry.root,
                 &mut self.registry.config,
             ) {
-                self.preferences_dirty = Some(std::time::Instant::now());
+                Some(crate::addon_services::Effect::SaveConfig) => {
+                    self.preferences_dirty = Some(std::time::Instant::now());
+                }
+                Some(crate::addon_services::Effect::FindingsDropped { id, lines }) => {
+                    for line in lines {
+                        supervisor.note(&id, line);
+                    }
+                }
+                _ => {}
             }
             match event {
                 crate::supervisor::Event::Connected { id } => {
@@ -1110,6 +1118,7 @@ impl App {
                                 if let Some(supervisor) = &mut self.supervisor {
                                     supervisor.forget(&id);
                                 }
+                                self.services.health.remove(&id);
                                 self.views.remove(&id);
                                 self.market.dismiss(&id);
                                 self.message =

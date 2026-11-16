@@ -14,8 +14,10 @@
 //!   turned on ([`background`]).
 //! - **Preferences.** The add-on gets its namespaced preferences after it connects and sends
 //!   changes back; the host writes them to `config.json`.
-//! - **Health findings** (protocol 4). The add-on sends its checks for Home; they are handed
-//!   to [`Services::on_findings`]. The supervisor drops them on a protocol 3 connection.
+//! - **Health findings** (protocol 4). The add-on sends its checks for Home; they are
+//!   validated and kept in memory only in [`Services::health`] (see `crate::health`), filed
+//!   under the connection's id, and kept after it stops until it is turned off or removed. The
+//!   supervisor drops them on a protocol 3 connection.
 //!
 //! Everything is optional for an add-on. What an add-on sends is cut to fixed limits before
 //! the host keeps or shows it.
@@ -30,8 +32,7 @@ use eframe::egui::{Pos2, Rect};
 use std::collections::BTreeMap;
 use std::path::Path;
 use toolboks_addon_proto::{
-    AddonMessage, Finding, HostMessage, HostRequest, StatusItem, TrayItem, TutorialStep,
-    MAX_FINDINGS,
+    AddonMessage, HostMessage, HostRequest, StatusItem, TrayItem, TutorialStep,
 };
 use toolboks_catalog::{Entry, Kind};
 
@@ -51,13 +52,21 @@ const MAX_STEP_TITLE_BYTES: usize = 120;
 const MAX_STEP_TEXT_BYTES: usize = 4000;
 
 /// Cuts text from an add-on to `max` characters on one line.
-fn clip(text: &str, max: usize) -> String {
+pub(crate) fn clip(text: &str, max: usize) -> String {
     text.chars()
         .filter(|c| !c.is_control())
         .take(max)
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+/// The time now in Unix seconds, for the health findings' receive time.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
 }
 
 /// What the supervisor starts for an installed native add-on.
@@ -184,12 +193,17 @@ pub enum Effect {
     TourReady { id: String },
     /// A request the host handles itself (the package review).
     Request { id: String, request: HostRequest },
+    /// Some of the add-on's findings were dropped; one line each for its report log
+    /// (`Supervisor::note`). The lines never carry the findings' text.
+    FindingsDropped { id: String, lines: Vec<String> },
 }
 
 /// The host's record of what each running add-on has registered.
 #[derive(Default)]
 pub struct Services {
     addons: BTreeMap<String, State>,
+    /// Health findings for Home, memory only.
+    pub health: crate::health::Store,
 }
 
 impl Services {
@@ -205,6 +219,7 @@ impl Services {
             Event::Connected { id } => {
                 // A fresh process knows nothing: start from an empty record.
                 self.addons.insert(id.clone(), State::default());
+                self.health.set_running(id, true);
                 if let Some(entry) = installer::installed_entry(root, id) {
                     supervisor.send(id, &HostMessage::Capabilities(entry.capabilities));
                 }
@@ -214,17 +229,25 @@ impl Services {
                 }
                 None
             }
-            // Not running: its status items, tray entries and tour go away.
+            // Not running: its status items, tray entries and tour go away. Its findings stay
+            // (Home shows their age and that it is not running).
             Event::Restarting { id } | Event::Stopped { id, .. } => {
                 self.addons.remove(id);
+                self.health.set_running(id, false);
                 None
             }
             Event::Stalled { .. } => None,
-            Event::Message { id, message } => self.message(id, message, config),
+            Event::Message { id, message } => self.message(id, message, root, config),
         }
     }
 
-    fn message(&mut self, id: &str, message: &AddonMessage, config: &mut Config) -> Option<Effect> {
+    fn message(
+        &mut self,
+        id: &str,
+        message: &AddonMessage,
+        root: &Path,
+        config: &mut Config,
+    ) -> Option<Effect> {
         let state = self.addons.entry(id.to_string()).or_default();
         match message {
             AddonMessage::StatusItems(items) => {
@@ -296,25 +319,25 @@ impl Services {
                 id: id.to_string(),
                 request: request.clone(),
             }),
+            // Protocol 4 only: the supervisor drops them on a protocol 3 connection. Filed under
+            // the connection's id; the message has no source field.
             AddonMessage::Findings(findings) => {
-                // Only the first ones are ever kept; the rest are not even copied.
-                let findings = findings.iter().take(MAX_FINDINGS).cloned().collect();
-                self.on_findings(id, findings);
-                None
+                // Turned off: Home shows nothing of it, so nothing is kept.
+                if config.disabled.iter().any(|disabled| disabled == id) {
+                    self.health.remove(id);
+                    return None;
+                }
+                let pages = installer::installed_entry(root, id)
+                    .map(|entry| entry.pages)
+                    .unwrap_or_default();
+                let lines = self.health.replace(id, findings, &pages, unix_now());
+                (!lines.is_empty()).then(|| Effect::FindingsDropped {
+                    id: id.to_string(),
+                    lines,
+                })
             }
             _ => None,
         }
-    }
-
-    /// The add-on `id` sent its full set of health findings (protocol 4 only: the supervisor
-    /// drops them on a protocol 3 connection). `id` is the connection's own id, never a field
-    /// of the message.
-    ///
-    /// TODO(#181): validate them and keep them in memory only in `health::Store` (cut to the
-    /// limits in `toolboks_addon_proto`, routes checked against the entry's `pages`). Until
-    /// then nothing is kept.
-    pub fn on_findings(&mut self, id: &str, findings: Vec<Finding>) {
-        let _ = (id, findings);
     }
 
     /// Status bar items of the running add-ons that are turned on, in add-on id order.
@@ -432,7 +455,7 @@ mod tests {
     use crate::supervisor::{StopReason, Timing};
     use eframe::egui::pos2;
     use std::time::{Duration, Instant};
-    use toolboks_addon_proto::{InputBatch, Theme};
+    use toolboks_addon_proto::{Finding, InputBatch, Theme};
 
     fn entry(id: &str, title: &str, pages: &[&str]) -> Entry {
         serde_json::from_value(serde_json::json!({
@@ -715,8 +738,39 @@ mod tests {
         assert_eq!(launch_spec(root, &new).protocol_version, 4);
     }
 
+    /// A data folder with `entry` installed (only the records `installed_entry` reads).
+    fn installed(test: &str, entry: &Entry) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("toolboks-services-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = installer::addon_dir(&root, &entry.id);
+        let version = dir.join(&entry.version);
+        std::fs::create_dir_all(&version).unwrap();
+        std::fs::write(
+            version.join("entry.json"),
+            serde_json::to_vec(entry).unwrap(),
+        )
+        .unwrap();
+        let active = installer::Active {
+            version: entry.version.clone(),
+            confirmed: true,
+            ..Default::default()
+        };
+        std::fs::write(
+            dir.join("active.json"),
+            serde_json::to_vec(&active).unwrap(),
+        )
+        .unwrap();
+        assert!(installer::installed_entry(&root, &entry.id).is_some());
+        root
+    }
+
+    fn titled(id: &str) -> Option<String> {
+        Some(format!("Title of {id}"))
+    }
+
     #[test]
-    fn findings_are_accepted_and_change_nothing_else() {
+    fn findings_are_kept_under_the_senders_id_and_change_nothing_else() {
         let (supervisor, root, mut config) = idle();
         let mut services = Services::default();
         let many = (0..40)
@@ -728,9 +782,109 @@ mod tests {
             &root,
             &mut config,
         );
-        assert_eq!(effect, None);
+        assert_eq!(
+            effect,
+            Some(Effect::FindingsDropped {
+                id: "a".into(),
+                lines: vec!["dropped 24 findings over the limit of 16".into()],
+            })
+        );
+        let view = services.health.view(unix_now(), &titled);
+        assert_eq!(view.checked.len(), 16);
+        assert!(view
+            .checked
+            .iter()
+            .all(|row| row.source == "a" && row.running));
         assert!(services.status_items(|_| true).is_empty());
         assert!(config.preferences.is_empty());
+        // A clean set gives no effect.
+        let clean = vec![Finding::ok("one", "Title", "Seen")];
+        let effect = services.apply(
+            &message("a", AddonMessage::Findings(clean)),
+            &supervisor,
+            &root,
+            &mut config,
+        );
+        assert_eq!(effect, None);
+    }
+
+    #[test]
+    fn an_open_page_must_lead_to_a_page_of_the_installed_entry() {
+        let (supervisor, _, mut config) = idle();
+        let root = installed(
+            "pages",
+            &entry("toolboks.disk", "Disk Manager", &["Home", "Optimization"]),
+        );
+        let mut services = Services::default();
+        let list = vec![
+            Finding::ok("own", "Own page", "Seen").open_page("Open", "Optimization/C:"),
+            Finding::ok("other", "Other page", "Seen").open_page("Open", "Crashes"),
+        ];
+        let effect = services.apply(
+            &message("toolboks.disk", AddonMessage::Findings(list.clone())),
+            &supervisor,
+            &root,
+            &mut config,
+        );
+        let Some(Effect::FindingsDropped { id, lines }) = effect else {
+            panic!("{effect:?}");
+        };
+        assert_eq!(id, "toolboks.disk");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let view = services.health.view(unix_now(), &titled);
+        assert_eq!(view.checked.len(), 1);
+        assert_eq!(view.checked[0].finding.id, "own");
+        // Another add-on cannot borrow those pages: they are looked up by the sender's id.
+        services.apply(
+            &message("toolboks.other", AddonMessage::Findings(list)),
+            &supervisor,
+            &root,
+            &mut config,
+        );
+        let view = services.health.view(unix_now(), &titled);
+        assert!(!view
+            .checked
+            .iter()
+            .any(|row| row.source == "toolboks.other"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn findings_stay_after_a_stop_or_restart_and_go_when_turned_off() {
+        let (supervisor, root, mut config) = idle();
+        let mut services = Services::default();
+        let report = |services: &mut Services, config: &mut Config| {
+            services.apply(
+                &message(
+                    "a",
+                    AddonMessage::Findings(vec![Finding::ok("x", "X", "Seen")]),
+                ),
+                &supervisor,
+                &root,
+                config,
+            );
+        };
+        let rows = |services: &Services| services.health.view(unix_now(), &titled).checked;
+        report(&mut services, &mut config);
+        for event in [
+            Event::Stopped {
+                id: "a".into(),
+                reason: StopReason::Closed,
+            },
+            Event::Restarting { id: "a".into() },
+        ] {
+            services.apply(&event, &supervisor, &root, &mut config);
+            let rows = rows(&services);
+            assert_eq!(rows.len(), 1, "kept after {event:?}");
+            assert!(!rows[0].running);
+        }
+        report(&mut services, &mut config);
+        assert!(rows(&services)[0].running);
+        // Turned off: removed, and what it still sends is not kept either.
+        config.disabled.push("a".into());
+        services.health.remove("a");
+        report(&mut services, &mut config);
+        assert!(rows(&services).is_empty());
     }
 
     /// Ticks the supervisor and applies every event until `done`. Returns the effects seen.
@@ -851,5 +1005,61 @@ mod tests {
         );
         assert!(services.tray_items(|_| true).is_empty());
         assert!(!services.tray_action(&supervisor, ID, "bump"));
+    }
+
+    #[test]
+    fn findings_from_a_running_add_on_reach_the_store_and_stay_after_it_stops() {
+        let (_dir, mut spec) = fake("services-findings", "findings");
+        spec.background = true;
+        let mut supervisor = supervisor(Timing::default());
+        let mut services = Services::default();
+        let mut config = Config::default();
+        // Started hidden: its background ticks report the findings.
+        supervisor.start_background(spec, Instant::now());
+        run(
+            &mut supervisor,
+            &mut services,
+            &mut config,
+            |services, _, _| {
+                !services
+                    .health
+                    .view(unix_now(), &titled)
+                    .attention
+                    .is_empty()
+            },
+        );
+        let view = services.health.view(unix_now(), &titled);
+        assert_eq!(view.attention[0].source, ID);
+        assert!(view.attention[0].running);
+        supervisor.stop(ID, Instant::now());
+        run(
+            &mut supervisor,
+            &mut services,
+            &mut config,
+            |services, _, _| !services.health.view(unix_now(), &titled).attention[0].running,
+        );
+        assert_eq!(services.health.view(unix_now(), &titled).checked.len(), 1);
+    }
+
+    #[test]
+    fn findings_from_a_protocol_3_add_on_never_reach_the_store() {
+        let (_dir, mut spec) = fake("services-protocol-3", "findings --protocol 3");
+        spec.protocol_version = 3;
+        let mut supervisor = supervisor(Timing::default());
+        let mut services = Services::default();
+        let mut config = Config::default();
+        supervisor.open(spec, Instant::now());
+        // It sends Findings before its status item; once the status item is here, the
+        // findings were handled.
+        run(
+            &mut supervisor,
+            &mut services,
+            &mut config,
+            |services, _, _| !services.status_items(|_| true).is_empty(),
+        );
+        assert_eq!(
+            services.health.view(unix_now(), &titled),
+            crate::health::View::default()
+        );
     }
 }

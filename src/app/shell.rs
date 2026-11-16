@@ -1373,8 +1373,12 @@ impl App {
             self.message = Some(e);
             return false;
         }
-        if !enabled && self.help.as_deref() == Some(id) {
-            self.help = None;
+        if !enabled {
+            if self.help.as_deref() == Some(id) {
+                self.help = None;
+            }
+            // Its health findings leave Home with it.
+            self.services.health.remove(id);
         }
         true
     }

@@ -375,6 +375,10 @@ add-on sends is cut to fixed limits before the host keeps or shows it.
   `Instruction { text }` (at most 240). The limits are constants in `toolboks-addon-proto`
   (`MAX_FINDINGS` = 16 per message, `MIN_STALE_AFTER_SECS` = 60, `MAX_STALE_AFTER_SECS` = 604 800).
   The message carries no source: the host files every finding under the id of the connection it
-  came from. `CheckNow` asks the add-on to check again (`NativeAddon::check_now`). Today the host
-  accepts findings and hands them to `Services::on_findings`, which keeps nothing yet; validating,
-  keeping (in memory only, never on disk) and showing them on Home come in #181 and #182.
+  came from. `CheckNow` asks the add-on to check again (`NativeAddon::check_now`). The host keeps
+  findings in memory only, never on disk (`src/health.rs`): each message replaces the add-on's
+  set; a finding with a bad or repeated id (the first wins), an empty title or an `OpenPage`
+  route whose first segment is not one of the add-on's catalog `pages` is dropped with a line in
+  the add-on's report log; text is cleaned like status items, a `measured_at` in the future is
+  taken as the receive time and `stale_after_secs` is clamped. Findings stay after the add-on
+  stops and go when it is turned off or removed. Showing them on Home comes in #182.
