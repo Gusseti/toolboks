@@ -38,6 +38,7 @@ pub(super) fn manifest_of(entry: &crate::catalog::Entry) -> Manifest {
         license: None,
         screenshots: entry.screenshots.clone(),
         capabilities: Vec::new(),
+        data_note: entry.data_note.clone(),
     }
 }
 
@@ -441,7 +442,7 @@ const PAGE_ROW_H: f32 = 28.0;
 const LABEL_X: f32 = 40.0;
 
 /// Paints the keyboard focus ring over a custom-drawn control.
-fn focus_ring(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response) {
+pub(super) fn focus_ring(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response) {
     if response.has_focus() {
         ui.painter().rect_stroke(
             rect,
@@ -576,7 +577,16 @@ fn nav(
     if expanded {
         response.clicked()
     } else {
+        focus_tip(&response, label);
         response.on_hover_text(label).clicked()
+    }
+}
+
+/// With the rail collapsed a row has no visible name. Hover already shows it as a tooltip; this
+/// shows the same tooltip while the row has keyboard focus, so Tab users can read it too.
+pub(super) fn focus_tip(response: &egui::Response, text: &str) {
+    if response.has_focus() && !response.hovered() {
+        egui::Tooltip::for_widget(response).show(|ui| ui.label(text));
     }
 }
 
@@ -610,6 +620,71 @@ pub(super) fn page_row(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
         .clicked()
 }
 
+/// Space between sidebar rows.
+const ROW_GAP: f32 = 2.0;
+/// The hairline above the fixed entries at the foot of the sidebar.
+const BOTTOM_RULE_H: f32 = 9.0;
+
+/// Height of the group at the foot of the sidebar: the hairline, Settings, Add-ons and, while the
+/// Add-ons entry is open in the wide sidebar, its "Pick your tools" page row.
+fn bottom_group_height(show_pick: bool) -> f32 {
+    let (rows, gaps) = if show_pick {
+        (BOTTOM_RULE_H + 2.0 * ROW_H + PAGE_ROW_H, 3.0)
+    } else {
+        (BOTTOM_RULE_H + 2.0 * ROW_H, 2.0)
+    };
+    rows + gaps * ROW_GAP
+}
+
+/// The fixed entries at the foot of the sidebar. They are created top to bottom, in the order they
+/// appear (hairline, Settings, Add-ons, then the Add-ons page row), because that creation order is
+/// the Tab order. The group is placed against the bottom edge by its known height.
+fn bottom_group(ui: &mut egui::Ui, screen: &mut Screen, expanded: bool) {
+    let browser_on = matches!(*screen, Screen::Browser | Screen::Pick);
+    let show_pick = expanded && browser_on;
+    let area = ui.max_rect();
+    let top = (area.bottom() - bottom_group_height(show_pick)).max(area.top());
+    let rect = egui::Rect::from_min_max(egui::pos2(area.left(), top), area.right_bottom());
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+        |ui| {
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            // A hairline between the tools and the fixed entries at the bottom.
+            let (line, _) = ui.allocate_exact_size(
+                Vec2::new(ui.available_width(), BOTTOM_RULE_H),
+                egui::Sense::hover(),
+            );
+            ui.painter().hline(
+                line.x_range(),
+                line.center().y,
+                egui::Stroke::new(1.0, look::BORDER),
+            );
+            if nav(
+                ui,
+                "Settings",
+                "gear",
+                *screen == Screen::Settings,
+                expanded,
+                Tag::None,
+            ) {
+                *screen = Screen::Settings;
+            }
+            if toolboks_addon_sdk::tutorial::region(ui, "browser-sidebar", |ui| {
+                nav(ui, "Add-ons", "grid", browser_on, expanded, Tag::None)
+            }) {
+                *screen = Screen::Browser;
+            }
+            // The one extra page of the Add-ons entry, shown only while that entry is open, like
+            // the pages of any other entry.
+            if show_pick && page_row(ui, "Pick your tools", *screen == Screen::Pick) {
+                *screen = Screen::Pick;
+            }
+        },
+    );
+}
+
 /// What the header shows for the current screen.
 struct Crumb {
     root: String,
@@ -619,6 +694,63 @@ struct Crumb {
     page: usize,
     help: Option<String>,
     verified: bool,
+}
+
+/// Width of a row of header buttons with these labels, in points. Slightly generous, so the
+/// header switches to a menu before anything can touch or be cut off.
+fn buttons_width(ui: &egui::Ui, labels: &[&str], extra_each: f32) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let spacing = ui.spacing();
+    let text: f32 = labels
+        .iter()
+        .map(|label| {
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), TEXT)
+                .size()
+                .x
+                + 2.0 * spacing.button_padding.x
+                + extra_each
+        })
+        .sum();
+    text + spacing.item_spacing.x * labels.len().saturating_sub(1) as f32 + 8.0
+}
+
+/// Width of the add-on browser's header actions (see `market_header`), in points.
+fn market_actions_width(ui: &egui::Ui, browser: bool) -> f32 {
+    if browser {
+        let spacing = ui.spacing();
+        let box_w = spacing.icon_width + spacing.icon_spacing;
+        buttons_width(
+            ui,
+            &[
+                "Show me around",
+                "View details",
+                "Refresh list",
+                "Install from file",
+                "Pick your tools",
+            ],
+            0.0,
+        ) + buttons_width(ui, &["Installed only"], box_w)
+            + spacing.item_spacing.x
+    } else {
+        buttons_width(ui, &["Show me around"], 0.0)
+    }
+}
+
+/// Width of one page pill per name, in points (matches `ui::pill`: text plus 18).
+fn pills_width(ui: &egui::Ui, names: &[String]) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let text: f32 = names
+        .iter()
+        .map(|name| {
+            ui.painter()
+                .layout_no_wrap(name.clone(), font.clone(), TEXT)
+                .size()
+                .x
+                + 18.0
+        })
+        .sum();
+    text + ui.spacing().item_spacing.x * names.len().saturating_sub(1) as f32 + 8.0
 }
 
 impl Crumb {
@@ -638,6 +770,9 @@ impl Crumb {
 impl App {
     pub(super) fn shell_ui(&mut self, ui: &mut egui::Ui) {
         self.poll_marketplace(ui.ctx());
+        if self.screen != Screen::Settings {
+            self.own_usage.reset();
+        }
         self.prepare_tutorial(ui.ctx());
         if self.tour.is_some() {
             ui.disable();
@@ -685,11 +820,15 @@ impl App {
                         TEXT,
                     );
                 }
+                if !expanded {
+                    focus_tip(&response, tip);
+                }
                 if response.on_hover_text(tip).clicked() {
                     self.sidebar_expanded = !expanded;
                 }
                 ui.add_space(look::GAP);
 
+                let browser_open = matches!(self.screen, Screen::Browser | Screen::Pick);
                 let installed: Vec<_> = self
                     .registry
                     .packages
@@ -708,7 +847,12 @@ impl App {
                     .collect();
                 egui::ScrollArea::vertical()
                     .id_salt("sidebar-nav")
-                    .max_height((ui.available_height() - 2.0 * ROW_H - 8.0).max(50.0))
+                    .max_height(
+                        (ui.available_height()
+                            - bottom_group_height(expanded && browser_open)
+                            - 4.0)
+                            .max(50.0),
+                    )
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         if nav(
@@ -727,7 +871,7 @@ impl App {
                             if nav(ui, &title, sidebar_icon(&id, &icon), on, expanded, tag) {
                                 self.open_addon(&id);
                             }
-                            self.market_sidebar_status(ui, &id, expanded);
+                            self.market_sidebar_status(ui, &id, &title, expanded);
                             if on && expanded && pages.len() > 1 {
                                 for (p, name) in pages.iter().enumerate() {
                                     if page_row(ui, name, self.addon_page == p) {
@@ -740,37 +884,7 @@ impl App {
                             self.market_sidebar(ui, expanded)
                         });
                     });
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    let browser_on = matches!(self.screen, Screen::Browser | Screen::Pick);
-                    // The one extra page of the Add-ons entry, shown only while that entry is open,
-                    // like the pages of any other entry.
-                    if expanded
-                        && browser_on
-                        && page_row(ui, "Pick your tools", self.screen == Screen::Pick)
-                    {
-                        self.screen = Screen::Pick;
-                    }
-                    if toolboks_addon_sdk::tutorial::region(ui, "browser-sidebar", |ui| {
-                        nav(ui, "Add-ons", "grid", browser_on, expanded, Tag::None)
-                    }) {
-                        self.screen = Screen::Browser;
-                    }
-                    let settings_on = self.screen == Screen::Settings;
-                    if nav(ui, "Settings", "gear", settings_on, expanded, Tag::None) {
-                        self.screen = Screen::Settings;
-                    }
-                    // A hairline between the tools and the fixed entries at the bottom.
-                    let (line, _) = ui.allocate_exact_size(
-                        Vec2::new(ui.available_width(), 9.0),
-                        egui::Sense::hover(),
-                    );
-                    ui.painter().hline(
-                        line.x_range(),
-                        line.center().y,
-                        egui::Stroke::new(1.0, look::BORDER),
-                    );
-                });
+                bottom_group(ui, &mut self.screen, expanded);
             });
 
         // The header: breadcrumb at the left, page controls at the right.
@@ -840,8 +954,11 @@ impl App {
                         verified_mark(ui);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let room = ui.available_width();
                         if matches!(self.screen, Screen::Browser | Screen::Pick) {
-                            if ui.ctx().content_rect().width() < 850.0 {
+                            let need =
+                                market_actions_width(ui, matches!(self.screen, Screen::Browser));
+                            if room < need {
                                 ui.menu_button("Add-on actions", |ui| self.market_header(ui));
                             } else {
                                 self.market_header(ui);
@@ -853,21 +970,31 @@ impl App {
                             }
                         }
                         // With the rail collapsed the nested pages are out of sight, so the
-                        // pages stay reachable here.
-                        if !expanded && crumb.byline.is_some() && crumb.pages.len() > 1 {
-                            egui::ComboBox::from_id_salt("addon-page-selector")
-                                .selected_text("Pages")
-                                .show_ui(ui, |ui| {
-                                    for (i, name) in crumb.pages.iter().enumerate() {
-                                        if ui.selectable_label(crumb.page == i, name).clicked() {
-                                            chosen_page = Some(i);
+                        // pages stay reachable here: one pill per page when they all fit beside
+                        // Help, otherwise a menu.
+                        if !expanded && crumb.pages.len() > 1 {
+                            let help = if crumb.help.is_some() {
+                                buttons_width(ui, &["Help"], 0.0)
+                            } else {
+                                0.0
+                            };
+                            if crumb.byline.is_some() || pills_width(ui, &crumb.pages) + help > room
+                            {
+                                egui::ComboBox::from_id_salt("addon-page-selector")
+                                    .selected_text("Pages")
+                                    .show_ui(ui, |ui| {
+                                        for (i, name) in crumb.pages.iter().enumerate() {
+                                            if ui.selectable_label(crumb.page == i, name).clicked()
+                                            {
+                                                chosen_page = Some(i);
+                                            }
                                         }
+                                    });
+                            } else {
+                                for (i, name) in crumb.pages.iter().enumerate().rev() {
+                                    if look::pill(ui, name, crumb.page == i).clicked() {
+                                        chosen_page = Some(i);
                                     }
-                                });
-                        } else if !expanded && crumb.pages.len() > 1 {
-                            for (i, name) in crumb.pages.iter().enumerate().rev() {
-                                if look::pill(ui, name, crumb.page == i).clicked() {
-                                    chosen_page = Some(i);
                                 }
                             }
                         }
@@ -1009,6 +1136,25 @@ impl App {
             });
             ui.add_space(look::GAP);
         }
+        let updates = self.pending_updates();
+        if !updates.is_empty() && self.market.review.is_none() {
+            // Updates are found from the list the app fetches; say so here, not only in the browser.
+            panel().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    let titles: Vec<String> = updates.iter().map(|u| u.title.clone()).collect();
+                    ui.label(
+                        RichText::new(crate::marketplace::update_line(&titles))
+                            .color(look::AMBER)
+                            .strong(),
+                    );
+                    if primary(ui, "Update").clicked() {
+                        self.review_updates(updates.clone());
+                    }
+                });
+            });
+            ui.add_space(look::GAP);
+        }
         if self.registry.packages.is_empty()
             && crate::installer::installed(&self.registry.root).is_empty()
         {
@@ -1076,7 +1222,13 @@ impl App {
                                 } else {
                                     MUTED
                                 };
-                                if list_row(ui, &e.m, e.status(), tint, i == selected, accent(&e.m))
+                                // An add-on with an update says "Update" where it said "On".
+                                let (status, tint) = if updates.iter().any(|u| u.id == e.m.id) {
+                                    ("Update", look::AMBER)
+                                } else {
+                                    (e.status(), tint)
+                                };
+                                if list_row(ui, &e.m, status, tint, i == selected, accent(&e.m))
                                     .clicked()
                                 {
                                     self.home_selected = Some(e.m.id.clone());
@@ -1096,6 +1248,10 @@ impl App {
     }
     /// The right side of Home: the chosen add-on, what it does, and the one thing to do next.
     fn addon_detail_card(&mut self, ui: &mut egui::Ui, e: &Entry) {
+        let update = self
+            .pending_updates()
+            .into_iter()
+            .find(|entry| entry.id == e.m.id);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -1125,11 +1281,27 @@ impl App {
                 },
                 false,
             );
+            if let Some(update) = &update {
+                ui.add_space(look::SPACE_XS);
+                badge(
+                    ui,
+                    &format!("Update available: v{}", update.version),
+                    look::AMBER,
+                    false,
+                );
+            }
             ui.add_space(look::GAP);
             ui.label(&e.m.description);
             ui.add_space(look::SPACE_L);
             ui.horizontal_wrapped(|ui| {
-                if primary(ui, e.action()).clicked() {
+                if let Some(update) = &update {
+                    if primary(ui, "Update").clicked() {
+                        self.review_updates(vec![update.clone()]);
+                    }
+                    if ui.button(e.action()).clicked() {
+                        self.run_action(e);
+                    }
+                } else if primary(ui, e.action()).clicked() {
                     self.run_action(e);
                 }
                 if ui.button("View details").clicked() {
@@ -1502,6 +1674,10 @@ impl App {
                         ui,
                         format!("Version {} · Add-on API 1", env!("CARGO_PKG_VERSION")),
                     );
+                    // Read only while this page is drawn, and again every few seconds.
+                    let usage = self.own_usage.poll(std::time::Instant::now());
+                    caption(ui, crate::own_usage::text(usage));
+                    ui.request_repaint_after(crate::own_usage::EVERY);
                     ui.add_space(look::SPACE_XS);
                     self.update_ui(ui);
                 });
@@ -1557,18 +1733,15 @@ impl App {
                     muted(ui, "This package uses Toolboks-rendered pages. It cannot run native code, open windows, or change system settings.");
                     ui.add_space(look::SPACE_M);
                     section(ui, "It asks to");
-                    for c in &p.manifest.capabilities {
-                        muted(ui, match c {
-                            toolboks_addon_sdk::Capability::Administrator => "Make administrator changes only after you confirm in a separate window",
-                            toolboks_addon_sdk::Capability::HostMetrics => "Read basic memory and uptime readings",
-                            toolboks_addon_sdk::Capability::LocalPreferences => "Save its own preferences locally",
-                            toolboks_addon_sdk::Capability::FilesystemRead => "Read file and folder metadata for locations you select",
-                            toolboks_addon_sdk::Capability::UserExports => "Save reports to a destination you choose",
-                            toolboks_addon_sdk::Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
-                            toolboks_addon_sdk::Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
-                            toolboks_addon_sdk::Capability::SystemTuning => "Back up and change the Windows settings and power plan you select",
-                            toolboks_addon_sdk::Capability::InputAutomation => "Record keyboard and mouse input and replay it only when you start a macro",
-                        });
+                    for line in crate::marketplace::package_access_text(&p.manifest) {
+                        match line {
+                            crate::marketplace::AccessLine::Data(note) => {
+                                ui.add_space(look::GAP);
+                                muted(ui, "Data on this PC");
+                                ui.label(note);
+                            }
+                            line => muted(ui, line.text()),
+                        }
                     }
                     ui.add_space(look::SPACE_L);
                     ui.horizontal(|ui| {
@@ -1634,6 +1807,14 @@ impl App {
                             .max_height((ctx.content_rect().height() - 260.0).clamp(120.0, 380.0))
                             .show(ui, |ui| {
                                 ui.label(&m.long_description);
+                                if let Some(note) =
+                                    crate::marketplace::shown_data_note(m.data_note.as_deref())
+                                {
+                                    ui.add_space(look::SPACE_M);
+                                    muted(ui, "Data on this PC");
+                                    ui.add_space(look::SPACE_XS);
+                                    ui.label(note);
+                                }
                                 ui.add_space(look::SPACE_M);
                                 egui::Grid::new("addon-metadata")
                                     .spacing([look::SPACE_L, look::SPACE_XS])
@@ -1722,5 +1903,205 @@ fn metric(binding: Metric) -> String {
         Metric::MemoryAvailable => format!("{:.1} GiB", m.ullAvailPhys as f64 / 1073741824.0),
         Metric::MemoryTotal => format!("{:.1} GiB", m.ullTotalPhys as f64 / 1073741824.0),
         Metric::Uptime => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(ctx: &egui::Context, events: Vec<egui::Event>, add: impl FnMut(&mut egui::Ui)) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(400.0, 600.0),
+            )),
+            events,
+            focused: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, add);
+        output.textures_delta.clear();
+    }
+
+    fn tab() -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: Some(egui::Key::Tab),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    /// Draws the sidebar's foot the way the shell does: in a panel the width of the sidebar.
+    fn draw_bottom(ui: &mut egui::Ui, screen: &mut Screen, expanded: bool) {
+        egui::Panel::left("test-sidebar")
+            .exact_size(if expanded { SIDEBAR_W } else { RAIL_W })
+            .show(ui, |ui| bottom_group(ui, screen, expanded));
+    }
+
+    /// The top edge of the widget that has keyboard focus.
+    fn focused_top(ctx: &egui::Context) -> Option<f32> {
+        let id = ctx.memory(|m| m.focused())?;
+        Some(ctx.read_response(id)?.rect.top())
+    }
+
+    #[test]
+    fn tab_goes_down_the_foot_of_the_sidebar_in_the_order_shown() {
+        for (expanded, screen) in [
+            (true, Screen::Browser),
+            (true, Screen::Home),
+            (false, Screen::Browser),
+        ] {
+            let ctx = egui::Context::default();
+            let mut screen = screen;
+            run(&ctx, vec![], |ui| draw_bottom(ui, &mut screen, expanded));
+            let mut tops = Vec::new();
+            for _ in 0..4 {
+                run(&ctx, tab(), |ui| draw_bottom(ui, &mut screen, expanded));
+                run(&ctx, vec![], |ui| draw_bottom(ui, &mut screen, expanded));
+                tops.extend(focused_top(&ctx));
+            }
+            let rows = if expanded && screen == Screen::Browser {
+                3
+            } else {
+                2
+            };
+            assert!(tops.len() >= rows, "{tops:?}");
+            let tops = &tops[..rows];
+            assert!(
+                tops.windows(2).all(|pair| pair[0] < pair[1]),
+                "Tab must go top to bottom, got {tops:?} (expanded {expanded})"
+            );
+        }
+    }
+
+    #[test]
+    fn bottom_group_sits_on_the_bottom_edge_and_matches_its_height() {
+        for show_pick in [false, true] {
+            let ctx = egui::Context::default();
+            let mut screen = if show_pick {
+                Screen::Pick
+            } else {
+                Screen::Home
+            };
+            let mut seen = None;
+            run(&ctx, vec![], |ui| {
+                egui::Panel::left("test-sidebar")
+                    .exact_size(SIDEBAR_W)
+                    .show(ui, |ui| {
+                        let full = ui.max_rect();
+                        let before = ui.min_rect().bottom();
+                        bottom_group(ui, &mut screen, true);
+                        let used = ui.min_rect().bottom();
+                        seen = Some((full.bottom(), before, used));
+                    });
+            });
+            let (edge, _, used) = seen.unwrap();
+            assert!(
+                (used - edge).abs() < 0.5,
+                "the group ends at the bottom edge: {used} vs {edge}"
+            );
+        }
+        assert_eq!(bottom_group_height(false), 77.0);
+        assert_eq!(bottom_group_height(true), 77.0 + PAGE_ROW_H + ROW_GAP);
+    }
+
+    #[test]
+    fn collapsed_rail_row_shows_its_name_while_it_has_keyboard_focus() {
+        let ctx = egui::Context::default();
+        let draw = |ui: &mut egui::Ui| {
+            egui::Panel::left("test-sidebar")
+                .exact_size(RAIL_W)
+                .show(ui, |ui| {
+                    nav(ui, "Home", "home", false, false, Tag::None);
+                });
+        };
+        let tooltip_open = |ctx: &egui::Context| {
+            ctx.memory(|m| {
+                m.areas()
+                    .visible_layer_ids()
+                    .iter()
+                    .any(|layer| layer.order == egui::Order::Tooltip)
+            })
+        };
+        crate::ui::apply_style(&ctx);
+        let away = vec![egui::Event::PointerMoved(egui::pos2(300.0, 300.0))];
+        run(&ctx, away.clone(), draw);
+        run(&ctx, vec![], draw);
+        assert!(!tooltip_open(&ctx), "no tooltip without focus or hover");
+        run(&ctx, tab(), draw);
+        run(&ctx, vec![], draw);
+        run(&ctx, vec![], draw);
+        assert!(ctx.memory(|m| m.focused()).is_some(), "the row took focus");
+        assert!(tooltip_open(&ctx), "the focused row shows its name");
+        let rect = ctx.memory(|m| {
+            m.areas()
+                .visible_layer_ids()
+                .iter()
+                .find(|layer| layer.order == egui::Order::Tooltip)
+                .and_then(|layer| m.area_rect(layer.id))
+        });
+        assert!(rect.is_some_and(|r| r.width() > 10.0 && r.height() > 10.0));
+    }
+
+    #[test]
+    fn shell_fits_the_minimum_window() {
+        let [width, height] = MIN_INNER_SIZE;
+        // The content next to the widest sidebar keeps room for the header and the stacked Home.
+        assert!(width - SIDEBAR_W >= 760.0, "{}", width - SIDEBAR_W);
+        // The sidebar's own column: menu row, a few rows of the scrolling list, and the foot with
+        // its page row.
+        let column = 16.0 + ROW_H + look::GAP + 4.0 * ROW_H + bottom_group_height(true) + 4.0;
+        assert!(column <= height - STATUS_H, "{column}");
+    }
+
+    /// The estimates behind the header's switch to a menu must never be smaller than the real
+    /// widgets, or the header could still overlap just before it switches.
+    #[test]
+    fn header_estimates_are_not_smaller_than_the_widgets() {
+        let ctx = egui::Context::default();
+        let mut checked = false;
+        run(&ctx, vec![], |ui| {
+            let labels = [
+                "Show me around",
+                "View details",
+                "Refresh list",
+                "Install from file",
+                "Pick your tools",
+            ];
+            let real = ui
+                .horizontal(|ui| {
+                    for label in labels {
+                        let _ = ui.button(label);
+                    }
+                    let _ = ui.checkbox(&mut false, "Installed only");
+                })
+                .response
+                .rect
+                .width();
+            let need = market_actions_width(ui, true);
+            assert!(need >= real, "{need} < {real}");
+            let names: Vec<String> = ["Overview", "Processes", "Connections", "Details"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let real = ui
+                .horizontal(|ui| {
+                    for name in &names {
+                        let _ = look::pill(ui, name, false);
+                    }
+                })
+                .response
+                .rect
+                .width();
+            let need = pills_width(ui, &names);
+            assert!(need >= real, "pills {need} < {real}");
+            let real = ui.button("Help").rect.width();
+            assert!(buttons_width(ui, &["Help"], 0.0) >= real);
+            checked = true;
+        });
+        assert!(checked);
     }
 }

@@ -10,6 +10,7 @@ use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
 #[cfg(feature = "preview")]
 pub mod addon_check;
+mod addon_tick;
 #[cfg(feature = "preview")]
 pub mod disk_manager_check;
 mod marketplace;
@@ -22,6 +23,10 @@ pub(crate) mod store;
 mod tutorial;
 use crate::addons::{self, Registry};
 use shell::Screen;
+
+/// The smallest window Toolboks supports, in points: width, height. `main.rs` sets it as the
+/// window's minimum and DESIGN.md states it. Nothing in the shell is laid out for less.
+pub const MIN_INNER_SIZE: [f32; 2] = [1060.0, 720.0];
 
 /// Results sent back from the update worker thread.
 enum UpdateMsg {
@@ -69,6 +74,10 @@ pub struct App {
     silent_check: bool,
     /// Show the "update available" prompt window.
     prompt_open: bool,
+    /// When the add-on work last ran, and whether `logic` ran it in this pass (#176).
+    addon_tick: addon_tick::AddonTick,
+    /// The window lost focus after it was hidden in the tray; see [`back_without_tray`].
+    focus_lost_while_hidden: bool,
     /// Start update cleanup only after the first frame has rendered successfully.
     first_frame: Option<std::time::Instant>,
     update_cleanup_done: bool,
@@ -79,6 +88,8 @@ pub struct App {
     hidden: bool,
     /// The tray's Quit was chosen: the next close request really closes.
     quitting: bool,
+    /// Toolboks's own CPU and memory, read only while the Settings page is drawn.
+    own_usage: crate::own_usage::OwnUsage,
 }
 
 impl Drop for App {
@@ -203,12 +214,15 @@ impl App {
             launch_check_started: false,
             silent_check: false,
             prompt_open: false,
+            addon_tick: Default::default(),
+            focus_lost_while_hidden: false,
             first_frame: None,
             update_cleanup_done: cfg!(feature = "preview"),
             keep_in_tray,
             tray: None,
             hidden: false,
             quitting: false,
+            own_usage: Default::default(),
         }
     }
 
@@ -350,6 +364,20 @@ impl App {
     }
 }
 
+/// For a window hidden in the tray: true when it was brought back without the tray (another launch
+/// shows and focuses it, see `instance::bring_forward`), which is when it has focus again after
+/// losing it while hidden. The focus it still has in the pass it is hidden in (the X was clicked on
+/// a focused window) does not count: that made the window count as shown again at once, so a page
+/// add-on kept running in the tray (#176).
+fn back_without_tray(focus_lost: &mut bool, focused: Option<bool>) -> bool {
+    if focused == Some(true) {
+        *focus_lost
+    } else {
+        *focus_lost = true;
+        false
+    }
+}
+
 /// Starts the freshly installed exe. It inherits this process's rights, admin included.
 fn restart() -> std::io::Result<()> {
     std::process::Command::new(std::env::current_exe()?)
@@ -378,6 +406,7 @@ impl eframe::App for App {
         }
         self.poll_update(ctx);
         self.tray_tick(ctx);
+        self.addons_logic(ctx);
         if self
             .preferences_dirty
             .is_some_and(|t| t.elapsed() > Duration::from_millis(500))
@@ -401,6 +430,21 @@ impl eframe::App for App {
 impl App {
     fn install_in_progress(&self) -> bool {
         update::is_installing()
+    }
+
+    /// The add-on work from `logic` (#176): eframe runs no `ui` for a minimized window (and may not
+    /// for one hidden in the tray), so without this the supervisor would not tick there (no
+    /// restart of a crashed background add-on, no hiding of a page add-on). Once a second at
+    /// most, and never in the same pass as the `ui` run; see `addon_tick`.
+    fn addons_logic(&mut self, ctx: &egui::Context) {
+        let now = std::time::Instant::now();
+        if self.addon_tick.logic_due(now) {
+            self.tick_addons(ctx);
+        }
+        let minimized = ctx.input(|i| i.viewport().minimized) == Some(true);
+        if addon_tick::wake_for_tick(self.hidden, minimized) {
+            ctx.request_repaint_after(self.addon_tick.wait(now));
+        }
     }
     /// Tray mode: icon, menu, hiding on close, and keeping the app ticking while hidden.
     /// eframe 0.37 calls `logic` (and repaints every ~100 ms when asked) for a hidden window,
@@ -429,9 +473,10 @@ impl App {
         tray.set_visible(true);
         tray.refresh();
         let actions = tray.actions();
+        // The percentage is polled, so wake up when the next refresh is due even if nothing else
+        // asks (every 2 s; clicks on the icon wake the app at once by themselves).
+        ctx.request_repaint_after(tray.refresh_in(std::time::Instant::now()));
         let installing = self.install_in_progress();
-        // The percentage is polled, so wake up regularly even if nothing else asks.
-        ctx.request_repaint_after(Duration::from_secs(if self.hidden { 1 } else { 2 }));
 
         for action in actions {
             match action {
@@ -456,13 +501,22 @@ impl App {
             self.hide_window(ctx);
         }
         // Another launch (or the user) brought the window back without the tray.
-        if self.hidden && ctx.input(|i| i.viewport().focused) == Some(true) {
+        if self.hidden
+            && back_without_tray(
+                &mut self.focus_lost_while_hidden,
+                ctx.input(|i| i.viewport().focused),
+            )
+        {
             self.hidden = false;
         }
     }
 
     fn hide_window(&mut self, ctx: &egui::Context) {
         self.hidden = true;
+        self.focus_lost_while_hidden = false;
+        // The Settings figure starts fresh when the window is back, instead of averaging over
+        // the whole time it was hidden.
+        self.own_usage.reset();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 
@@ -563,7 +617,22 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_spec, open_target};
+    use super::{back_without_tray, open_spec, open_target};
+
+    #[test]
+    fn a_hidden_window_counts_as_back_only_when_focus_returns_after_it_was_lost() {
+        // Hidden while focused (the X clicked): still hidden, however long the old focus is seen.
+        let mut lost = false;
+        assert!(!back_without_tray(&mut lost, Some(true)));
+        assert!(!back_without_tray(&mut lost, Some(true)));
+        // The focus goes, then another launch brings the window forward.
+        assert!(!back_without_tray(&mut lost, Some(false)));
+        assert!(back_without_tray(&mut lost, Some(true)));
+        // Unknown focus counts as not focused.
+        let mut lost = false;
+        assert!(!back_without_tray(&mut lost, None));
+        assert!(back_without_tray(&mut lost, Some(true)));
+    }
     use crate::addons::Registry;
 
     fn args(list: &[&str]) -> Vec<String> {

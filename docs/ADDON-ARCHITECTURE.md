@@ -133,9 +133,8 @@ Disk Manager follows DESIGN.md (tokens in its `theme.rs`, inline stats bar, hair
 cards, sentence-case table headers). It uses background scanning and export workers, a packed clickable map,
 folder browsing, largest-file rankings, filters, type totals and coverage reports.
 Drive optimization uses Windows numeric analysis and retained success history.
-HDD defrag, SSD TRIM and Windows-selected fallback actions are gated in the executable
-until #132 supplies its elevated helper and confirmation. The pilot remains on protocol 2;
-after #132 merges, the add-on must be repinned and rebuilt for protocol 3. See
+Analysis, HDD defrag, SSD TRIM and Windows-selected fallback actions run through the
+separate administrator helper and its own Confirm/Cancel window (protocol 3). See
 [DISK-MANAGER.md](DISK-MANAGER.md) and [DRIVE-OPTIMIZATION.md](DRIVE-OPTIMIZATION.md).
 
 The `preview` feature isolates the app's data/instance identity and disables all

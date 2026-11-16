@@ -2,6 +2,8 @@
 
 This is the permanent testing record. Each testing request has its own numbered report below.
 
+The step-by-step checklist for the features that change the system, to run on a VM and then on a real PC, is [RISKY-FEATURES-TEST.md](RISKY-FEATURES-TEST.md) (issue #49).
+
 # Test-1: 🔵 [INFO] Toolboks backend security testing
 
 On 12 November 2026, I ran a **Light test** of Toolboks 0.12.3 on staging commit `327f1388e04ebec6f324b05b9dec91b8dca9381f`.

@@ -22,8 +22,9 @@ The external runtime supports declarative packages and catalog-installed native 
 **Disk Manager by stratum** now lives in [toolboks-addons](https://github.com/fredhakon/toolboks-addons/tree/main/addons/disk-manager)
 as an independent executable, with the same scan pages and saved preferences. It is no longer
 compiled into Toolboks. Its first catalog publication is still required before users can install it.
-Drive-changing optimization is gated on #132's elevated helper and confirmation window, followed
-by a dependency repin and rebuild. See [Disk Manager](docs/DISK-MANAGER.md).
+Analysis and drive optimization (defrag, TRIM) run through a separate administrator helper with
+its own Confirm/Cancel window; Disk Manager itself never runs as administrator.
+See [Disk Manager](docs/DISK-MANAGER.md).
 
 Help offers full and current-tab walkthroughs with purple highlights and cancellation.
 See [Guided tours](docs/GUIDED-TOURS.md) and [Drive optimization](docs/DRIVE-OPTIMIZATION.md).

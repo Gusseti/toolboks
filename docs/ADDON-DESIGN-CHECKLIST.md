@@ -13,7 +13,7 @@ An add-on built from the SDK gets most of this for free: the host draws the side
 5. **Keyboard focus is visible.** Every control can be reached and used with the keyboard, and the focus ring is not removed or hidden.
 6. **Contrast of at least 4.5:1** for text (3:1 for large text). Muted text is never darker than the muted token. Colour is never the only signal: lines and tiles are labelled, status has a word.
 7. **Changes to the system show a preview, ask once and offer undo.** Show what will change before it happens, confirm with a button that says what it does, and offer undo or say plainly when a change cannot be undone. Never claim a safety guarantee the add-on does not give.
-8. **Nothing is written to disk** except through the host's local preferences (and a file the person asked for, such as an exported report, which never overwrites an existing file). No network unless the manifest declares it.
+8. **Write to disk only what DESIGN.md allows:** the host's local preferences, a file the person asked for (an exported report never overwrites an existing file), safety data that undoes your own changes, and data kept for a feature the person can switch off and delete. It lives in your own data folder (`addon-data/<id>`), is described in the manifest `data_note` so the install review shows it, and has a delete button. No network unless the manifest declares it.
 
 ## Page types
 

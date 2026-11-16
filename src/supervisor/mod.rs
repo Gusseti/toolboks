@@ -261,6 +261,11 @@ enum Phase {
 
 const LOG_LINES: usize = 50;
 
+/// How soon a running add-on is looked at again when its pipe has closed but Windows does not
+/// report the process as ended yet (nothing else may wake the host, for example for a background
+/// add-on, which gets no heartbeat).
+pub(crate) const EXIT_POLL: Duration = Duration::from_millis(100);
+
 struct Managed {
     spec: LaunchSpec,
     phase: Phase,
@@ -365,12 +370,17 @@ impl Supervisor {
     }
 
     /// A background add-on suspends; every other add-on exits when its page is left.
+    /// Called on every tick for each add-on whose page is not on screen, so a background add-on
+    /// is told `Suspend` only when it goes from shown to hidden (one that connects hidden is
+    /// told on connect). Telling it again every tick would wake it, and the host, each time.
     pub fn hide(&mut self, id: &str) {
         if let Some(managed) = self.addons.get_mut(id) {
-            managed.visible = false;
+            let was_visible = std::mem::replace(&mut managed.visible, false);
             if managed.spec.background {
                 if let Phase::Running { sender, .. } = &managed.phase {
-                    send(sender, &HostMessage::Suspend);
+                    if was_visible {
+                        send(sender, &HostMessage::Suspend);
+                    }
                 }
             } else {
                 begin_stop(&self.shared, managed, Then::Stay, Instant::now());
@@ -908,7 +918,16 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
             ..
         } => {
             let mut heard = false;
-            while let Ok(message) = side.try_recv() {
+            let mut closed = false;
+            loop {
+                let message = match side.try_recv() {
+                    Ok(message) => message,
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        closed = true;
+                        break;
+                    }
+                };
                 heard = true;
                 match message {
                     AddonMessage::Pong { nonce } => heartbeat.on_pong(nonce, now),
@@ -956,28 +975,34 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
                 } else {
                     Next::Crash(Some(code), format!("it ended with exit code {code}"))
                 };
-            } else if managed.visible {
-                match heartbeat.poll(now) {
-                    Heartbeat::SendPing(nonce) => {
-                        send(sender, &HostMessage::Ping { nonce });
-                    }
-                    Heartbeat::Stalled { .. } if stalled_since.is_none() => {
-                        *stalled_since = Some(now);
-                        events.push(Event::Stalled {
-                            id: id.clone(),
-                            stalled: true,
-                        });
-                    }
-                    _ => {}
+            } else {
+                if closed {
+                    // The pipe closed first: come back soon to see the process end.
+                    shared.ctx.request_repaint_after(EXIT_POLL);
                 }
-                if stalled_since
-                    .is_some_and(|at| now.saturating_duration_since(at) >= shared.timing.stall_kill)
-                {
-                    process.kill();
-                    next = Next::Crash(None, "it stopped answering and was ended".into());
+                if managed.visible {
+                    match heartbeat.poll(now) {
+                        Heartbeat::SendPing(nonce) => {
+                            send(sender, &HostMessage::Ping { nonce });
+                        }
+                        Heartbeat::Stalled { .. } if stalled_since.is_none() => {
+                            *stalled_since = Some(now);
+                            events.push(Event::Stalled {
+                                id: id.clone(),
+                                stalled: true,
+                            });
+                        }
+                        _ => {}
+                    }
+                    if stalled_since.is_some_and(|at| {
+                        now.saturating_duration_since(at) >= shared.timing.stall_kill
+                    }) {
+                        process.kill();
+                        next = Next::Crash(None, "it stopped answering and was ended".into());
+                    }
+                    // Come back for the next ping even when nothing else repaints.
+                    shared.ctx.request_repaint_after(PING_INTERVAL);
                 }
-                // Come back for the next ping even when nothing else repaints.
-                shared.ctx.request_repaint_after(PING_INTERVAL);
             }
         }
         Phase::Stopping {

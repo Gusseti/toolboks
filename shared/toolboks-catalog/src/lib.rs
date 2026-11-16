@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fmt;
-use toolboks_addon_sdk::{valid_id, version};
+use toolboks_addon_sdk::{valid_data_note, valid_id, version};
 
 /// The only index format this build understands. Additive fields do not bump it (unknown fields are
 /// ignored); a change in meaning does, and older hosts then refuse the whole index.
@@ -120,6 +120,11 @@ pub struct Entry {
     /// The add-on keeps working while hidden: the host starts it at launch while it is on.
     #[serde(default)]
     pub background: bool,
+    /// One plain-language line about data the add-on keeps on this PC, copied from its manifest
+    /// and shown in the install review and the details. Same rule as the manifest field
+    /// (`toolboks_addon_sdk::valid_data_note`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_note: Option<String>,
     pub kind: Kind,
     pub version: String,
     pub min_toolboks_version: String,
@@ -242,6 +247,10 @@ impl Entry {
                     .iter()
                     .all(|page| text(page, 1, 40, false) && !page.contains('/')),
             "pages",
+        )?;
+        ok(
+            self.data_note.as_deref().is_none_or(valid_data_note),
+            "data_note",
         )?;
         ok(version(&self.version).is_some(), "version")?;
         ok(
@@ -373,6 +382,7 @@ mod tests {
             capabilities: vec!["read_system_info".into()],
             pages: vec![],
             background: false,
+            data_note: None,
             kind: Kind::Declarative,
             version: version.into(),
             min_toolboks_version: "0.12.0".into(),
@@ -507,6 +517,56 @@ mod tests {
         }
         entry.pages = (0..17).map(|i| format!("Page {i}")).collect();
         assert_eq!(entry.validate(), Err("pages"));
+    }
+
+    #[test]
+    fn data_note_is_optional_one_short_line() {
+        let mut entry = entry("toolboks.sample", "1.0.0");
+        // Old indexes have no data note, and none is written when it is absent.
+        let json = serde_json::to_value(&entry).unwrap();
+        assert!(json.get("data_note").is_none());
+        let old: Entry = serde_json::from_value(json).unwrap();
+        assert_eq!(old.data_note, None);
+        let mut with_note = index();
+        with_note.entries[0].data_note =
+            Some("Keeps your last scan of each drive on this PC (file and folder names).".into());
+        assert_eq!(Index::parse(&bytes(&with_note)), Ok(with_note));
+        // The limit counts characters, not bytes.
+        for good in ["a".repeat(160), "\u{e5}".repeat(160)] {
+            entry.data_note = Some(good);
+            assert_eq!(entry.validate(), Ok(()));
+        }
+        for bad in [
+            "a".repeat(161),
+            String::new(),
+            "  ".into(),
+            " Keeps scans.".into(),
+            "Keeps scans.\n".into(),
+            "Keeps\nscans.".into(),
+            "Keeps\u{1b}[31mscans.".into(),
+            // Format characters (Cf) and line/paragraph separators: the same rule as the SDK.
+            "Keeps \u{202e}snacs.".into(),
+            "Keeps\u{2066}scans\u{2069}.".into(),
+            "Keeps\u{200b}scans.".into(),
+            "Keeps\u{200d}scans.".into(),
+            "\u{feff}Keeps scans.".into(),
+            "Keeps scans.\u{e0041}".into(),
+            "Keeps\u{ad}scans.".into(),
+            "Keeps\u{2028}scans.".into(),
+            "Keeps\u{2029}scans.".into(),
+        ] {
+            entry.data_note = Some(bad);
+            assert_eq!(entry.validate(), Err("data_note"));
+        }
+        // A bad note refuses the index, like any other bad field.
+        for note in ["x".repeat(161), "Keeps \u{202e}snacs.".into()] {
+            let mut bad = index();
+            bad.entries[0].data_note = Some(note);
+            assert!(matches!(
+                Index::parse(&bytes(&bad)),
+                Err(Refused::Malformed(_))
+            ));
+        }
     }
 
     #[test]

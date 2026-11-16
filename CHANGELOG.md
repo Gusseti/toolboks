@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-16
+
+### Added
+
+- **Updates are shown on Home.** When an add-on has a newer version, the top of Home says "Update available: Audio Gainer" (or "2 updates available: ...") with an **Update** button that opens the normal access review. The add-on's row says "Update" instead of "On", and its card shows the new version with an **Update** button.
+- **The install review says what data an add-on keeps on your PC.** An add-on can declare one short plain line about it (for example "Keeps your last scan of each drive on this PC (file and folder names)."). It is shown under what the add-on can do when you review an install (also for a package installed from a file), and in its details. It comes from the reviewed add-on list or package, at most 160 characters of plain text. For add-on makers: a package manifest with `data_note` is refused by Toolboks versions older than this release, so an add-on that sets it must raise its `min_toolboks_version` to this release.
+
+### Changed
+
+- **Keyboard use of the sidebar and header.** Tab now goes down the foot of the sidebar in the order shown (Settings, Add-ons, Pick your tools), a collapsed sidebar shows a row's name while it has keyboard focus, and the header switches to a menu whenever its buttons or page tabs would not fit, not at a fixed window width.
+- **Toolboks costs almost nothing while you are not using it.** Once any add-on had connected (also a background one), the open window redrew 10 times a second, about 0.2% of the whole PC on an 8-core PC; it now redraws only when something changes (0.01%). Hidden in the tray it stays at about 0.002%. Settings shows the live figure: "Toolboks uses about X% CPU and Y MB". Numbers and method are in `docs/OVERHEAD.md`.
+
+### Fixed
+
+- **Add-ons are looked after while Toolboks is in the tray or minimized.** A background add-on that stops unexpectedly is now restarted within about a second even when the window is hidden, and a tool whose page was open when you closed the window to the tray is now closed instead of left running. Before, both waited until the window was shown again.
+- **Keyboard use of the add-on status in the sidebar.** The small status pill (for example "Could not install") and the dot on the collapsed sidebar can now be reached with Tab, show a focus ring, and are named for screen readers and in a tooltip, for example "Disk Manager, could not install".
+
 ## [0.13.2] - 2026-11-15
 
 ### Fixed

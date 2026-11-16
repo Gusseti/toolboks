@@ -75,7 +75,10 @@ and the exact Audio Gainer, Macro Manager and System Profiles packages. Disk Man
 moved to `toolboks-addons`: it is an executable installed through the catalog, whose
 entry supplies verification, page names, capabilities and background behavior.
 
-API 2 adds the optional `byline` and `native_provider` manifest fields. `native-ui`
+API 2 adds the optional `byline` and `native_provider` manifest fields. The optional `data_note`
+manifest field is one plain line (at most 160 characters) about data the add-on keeps on this PC;
+the app shows it in the install review and the details. Apps older than the release that adds it
+refuse a package that has it, so a package that sets it needs that `min_toolboks_version`. `native-ui`
 exposes the `NativeAddon` Rust trait; `runtime::run_addon` runs it in a separate process.
 Local activation packages must match a provider still compiled into the host; they cannot
 start executables. Catalog installation uses the existing installer and supervisor.
@@ -129,8 +132,8 @@ remain compatible; the app release version is unchanged during local development
 storage optimization. Source providers receive the installed package capabilities
 through `set_capabilities` and must gate actions accordingly. The host trusts only
 its exact first-party providers; adding a capability to a manifest does not grant it.
-Disk Manager keeps this capability in its executable manifest. Its drive-changing actions
-are gated on #132; analysis retains the existing elevation request.
+Disk Manager keeps this capability in its executable manifest. Its analysis and drive-changing
+actions each go through the administrator helper.
 
 `live_audio` is a native-only capability for microphone monitoring and routing to
 user-selected outputs. Audio Gainer opens audio streams only after an explicit action.

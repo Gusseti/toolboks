@@ -440,6 +440,36 @@ fn reopening_while_hidden_addon_is_quitting_restarts_after_exit() {
 }
 
 #[test]
+fn a_pipe_that_closes_before_the_process_ends_is_looked_at_again_soon() {
+    // A background add-on gets no heartbeat, so without this nothing would wake the host until
+    // some other timer fires, and a crash would wait that long to be noticed and restarted.
+    let (_dir, mut spec) = fake("drop-pipe", "drop-pipe");
+    spec.background = true;
+    let ctx = egui::Context::default();
+    let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = asked.clone();
+    ctx.set_repaint_observer(move |info| seen.lock().unwrap().push(info.delay));
+    let mut supervisor = Supervisor::with_timing(&ctx, Timing::default()).unwrap();
+    supervisor.start_background(spec, Instant::now());
+    run_until(&mut supervisor, connected);
+    // The add-on has closed its pipes and lives on for about 3 s more.
+    let give_up = Instant::now() + Duration::from_secs(2);
+    loop {
+        asked.lock().unwrap().clear();
+        supervisor.tick(Instant::now());
+        if asked.lock().unwrap().contains(&EXIT_POLL) {
+            break;
+        }
+        assert!(
+            Instant::now() < give_up,
+            "the closed pipe never asked to be looked at again"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(supervisor.is_running(ID), "the process has not ended yet");
+}
+
+#[test]
 fn hidden_background_addon_keeps_its_process() {
     let (dir, mut spec) = fake("hide-background", "normal");
     spec.background = true;
@@ -452,6 +482,40 @@ fn hidden_background_addon_keeps_its_process() {
     supervisor.tick(Instant::now());
     assert_eq!(supervisor.pid(ID), Some(pid));
     supervisor.open(spec, Instant::now());
+    assert_eq!(starts(&dir), 1);
+}
+
+fn suspends(dir: &Path) -> usize {
+    fs::read_to_string(dir.join("suspends.txt"))
+        .map(|text| text.lines().count())
+        .unwrap_or(0)
+}
+
+/// `hide` runs on every tick (also from the hidden-window path, #176): a background add-on is
+/// told `Suspend` once per change from shown to hidden, not on every call.
+#[test]
+fn a_hidden_background_addon_is_told_suspend_once_per_hide() {
+    let (dir, mut spec) = fake("suspend-once", "normal");
+    spec.background = true;
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.start_background(spec.clone(), Instant::now());
+    run_until(&mut supervisor, connected);
+    // Connected hidden: told on connect, and repeated hides add nothing.
+    let settle = |supervisor: &mut Supervisor| {
+        for _ in 0..30 {
+            supervisor.hide(ID);
+            supervisor.start_background(spec.clone(), Instant::now());
+            supervisor.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    settle(&mut supervisor);
+    assert_eq!(suspends(&dir), 1);
+    // Its page is opened and left: one more, however often hide is called after.
+    supervisor.open(spec.clone(), Instant::now());
+    supervisor.tick(Instant::now());
+    settle(&mut supervisor);
+    assert_eq!(suspends(&dir), 2);
     assert_eq!(starts(&dir), 1);
 }
 
