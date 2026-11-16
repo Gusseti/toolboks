@@ -38,6 +38,7 @@ pub(super) fn manifest_of(entry: &crate::catalog::Entry) -> Manifest {
         license: None,
         screenshots: entry.screenshots.clone(),
         capabilities: Vec::new(),
+        data_note: entry.data_note.clone(),
     }
 }
 
@@ -769,6 +770,9 @@ impl Crumb {
 impl App {
     pub(super) fn shell_ui(&mut self, ui: &mut egui::Ui) {
         self.poll_marketplace(ui.ctx());
+        if self.screen != Screen::Settings {
+            self.own_usage.reset();
+        }
         self.prepare_tutorial(ui.ctx());
         if self.tour.is_some() {
             ui.disable();
@@ -1670,6 +1674,10 @@ impl App {
                         ui,
                         format!("Version {} · Add-on API 1", env!("CARGO_PKG_VERSION")),
                     );
+                    // Read only while this page is drawn, and again every few seconds.
+                    let usage = self.own_usage.poll(std::time::Instant::now());
+                    caption(ui, crate::own_usage::text(usage));
+                    ui.request_repaint_after(crate::own_usage::EVERY);
                     ui.add_space(look::SPACE_XS);
                     self.update_ui(ui);
                 });
@@ -1725,18 +1733,15 @@ impl App {
                     muted(ui, "This package uses Toolboks-rendered pages. It cannot run native code, open windows, or change system settings.");
                     ui.add_space(look::SPACE_M);
                     section(ui, "It asks to");
-                    for c in &p.manifest.capabilities {
-                        muted(ui, match c {
-                            toolboks_addon_sdk::Capability::Administrator => "Make administrator changes only after you confirm in a separate window",
-                            toolboks_addon_sdk::Capability::HostMetrics => "Read basic memory and uptime readings",
-                            toolboks_addon_sdk::Capability::LocalPreferences => "Save its own preferences locally",
-                            toolboks_addon_sdk::Capability::FilesystemRead => "Read file and folder metadata for locations you select",
-                            toolboks_addon_sdk::Capability::UserExports => "Save reports to a destination you choose",
-                            toolboks_addon_sdk::Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
-                            toolboks_addon_sdk::Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
-                            toolboks_addon_sdk::Capability::SystemTuning => "Back up and change the Windows settings and power plan you select",
-                            toolboks_addon_sdk::Capability::InputAutomation => "Record keyboard and mouse input and replay it only when you start a macro",
-                        });
+                    for line in crate::marketplace::package_access_text(&p.manifest) {
+                        match line {
+                            crate::marketplace::AccessLine::Data(note) => {
+                                ui.add_space(look::GAP);
+                                muted(ui, "Data on this PC");
+                                ui.label(note);
+                            }
+                            line => muted(ui, line.text()),
+                        }
                     }
                     ui.add_space(look::SPACE_L);
                     ui.horizontal(|ui| {
@@ -1802,6 +1807,14 @@ impl App {
                             .max_height((ctx.content_rect().height() - 260.0).clamp(120.0, 380.0))
                             .show(ui, |ui| {
                                 ui.label(&m.long_description);
+                                if let Some(note) =
+                                    crate::marketplace::shown_data_note(m.data_note.as_deref())
+                                {
+                                    ui.add_space(look::SPACE_M);
+                                    muted(ui, "Data on this PC");
+                                    ui.add_space(look::SPACE_XS);
+                                    ui.label(note);
+                                }
                                 ui.add_space(look::SPACE_M);
                                 egui::Grid::new("addon-metadata")
                                     .spacing([look::SPACE_L, look::SPACE_XS])

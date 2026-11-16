@@ -254,6 +254,95 @@ mod tests {
     }
 
     #[test]
+    fn review_text_lists_the_data_note_under_the_capabilities() {
+        let note = "Keeps your last scan of each drive on this PC (file and folder names).";
+        let mut sample = entry("test.disk");
+        sample.capabilities = vec!["filesystem_read".into(), "local_preferences".into()];
+        sample.kind = catalog::Kind::Native;
+        // Without a note nothing extra is shown.
+        assert_eq!(
+            access_text(&sample),
+            [
+                AccessLine::Can(access("filesystem_read")),
+                AccessLine::Can(access("local_preferences")),
+                AccessLine::Native,
+            ]
+        );
+        sample.data_note = Some(note.into());
+        let lines = access_text(&sample);
+        assert_eq!(
+            lines,
+            [
+                AccessLine::Can(access("filesystem_read")),
+                AccessLine::Can(access("local_preferences")),
+                AccessLine::Data(note.into()),
+                AccessLine::Native,
+            ]
+        );
+        assert_eq!(lines[2].text(), note);
+        // An add-on with no capabilities still shows its note.
+        sample.capabilities.clear();
+        sample.kind = catalog::Kind::Declarative;
+        assert_eq!(
+            access_text(&sample),
+            [AccessLine::Nothing, AccessLine::Data(note.into())]
+        );
+        // A note that breaks the rule (only possible in a file changed on disk) is not shown.
+        for bad in ["", "  ", "two\nlines"] {
+            sample.data_note = Some(bad.into());
+            assert_eq!(access_text(&sample), [AccessLine::Nothing]);
+        }
+        sample.data_note = Some("x".repeat(161));
+        assert_eq!(access_text(&sample), [AccessLine::Nothing]);
+        assert_eq!(shown_data_note(Some(note)), Some(note));
+        assert_eq!(shown_data_note(None), None);
+    }
+
+    #[test]
+    fn local_package_review_shows_the_data_note_after_the_capabilities() {
+        let note = "Keeps a list of recent files on this PC.";
+        let mut package = toolboks_addon_sdk::Package::parse(
+            crate::addons::SDK_EXAMPLE.as_bytes(),
+            env!("CARGO_PKG_VERSION"),
+        )
+        .unwrap();
+        let capabilities: Vec<AccessLine> = package_access_text(&package.manifest);
+        assert_eq!(capabilities.len(), package.manifest.capabilities.len());
+        assert!(capabilities
+            .iter()
+            .all(|line| matches!(line, AccessLine::Can(_))));
+        // A package that passed validation with a note shows it, after the capabilities.
+        package.manifest.data_note = Some(note.into());
+        let bytes = serde_json::to_vec(&package).unwrap();
+        let package =
+            toolboks_addon_sdk::Package::parse(&bytes, env!("CARGO_PKG_VERSION")).unwrap();
+        let mut expected = capabilities.clone();
+        expected.push(AccessLine::Data(note.into()));
+        assert_eq!(package_access_text(&package.manifest), expected);
+        // No capabilities: only the note.
+        let mut bare = package.manifest.clone();
+        bare.capabilities.clear();
+        assert_eq!(package_access_text(&bare), [AccessLine::Data(note.into())]);
+        // A note that breaks the rule is never shown.
+        bare.data_note = Some("Keeps \u{202e}selif".into());
+        assert!(package_access_text(&bare).is_empty());
+    }
+
+    #[test]
+    fn a_catalog_entry_with_a_data_note_reads_and_old_ones_still_do() {
+        let old = entry("test.old");
+        assert_eq!(old.data_note, None);
+        let mut json = serde_json::to_value(&old).unwrap();
+        json["data_note"] = "Keeps a list of recent files on this PC.".into();
+        let new: Entry = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            new.data_note.as_deref(),
+            Some("Keeps a list of recent files on this PC.")
+        );
+        assert_eq!(new.validate(), Ok(()));
+    }
+
+    #[test]
     fn removing_a_local_package_keeps_data_unless_explicitly_requested() {
         for delete_data in [false, true] {
             let root = root(if delete_data {
@@ -437,6 +526,81 @@ pub fn access(name: &str) -> String {
         _ => return format!("Unrecognized access: {name}. Update Toolboks before installing."),
     }
     .into()
+}
+/// One line under "It can" in the install review and the add-on details.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AccessLine {
+    /// A capability, in plain words (drawn with a check).
+    Can(String),
+    /// The add-on asks for no capabilities.
+    Nothing,
+    /// The add-on's own note about data it keeps on this PC (drawn with a drive).
+    Data(String),
+    /// A native add-on runs a program on the PC.
+    Native,
+}
+impl AccessLine {
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Can(text) | Self::Data(text) => text,
+            Self::Nothing => "No extra host access requested.",
+            Self::Native => "Runs a program on your PC, not in a security sandbox.",
+        }
+    }
+}
+/// A data note as it may be shown: only one that passes the catalog and manifest rule. The
+/// catalog and packages are checked when they are read, so this only drops a note in a file that
+/// was changed on disk afterwards.
+pub fn shown_data_note(note: Option<&str>) -> Option<&str> {
+    note.filter(|note| toolboks_addon_sdk::valid_data_note(note))
+}
+/// What the install review and the details list under "It can", in order: the capabilities, then
+/// the add-on's data note when it has one, then the native-program line.
+pub fn access_text(entry: &Entry) -> Vec<AccessLine> {
+    let mut lines: Vec<AccessLine> = entry
+        .capabilities
+        .iter()
+        .map(|name| AccessLine::Can(access(name)))
+        .collect();
+    if lines.is_empty() {
+        lines.push(AccessLine::Nothing);
+    }
+    if let Some(note) = shown_data_note(entry.data_note.as_deref()) {
+        lines.push(AccessLine::Data(note.into()));
+    }
+    if entry.kind == catalog::Kind::Native {
+        lines.push(AccessLine::Native);
+    }
+    lines
+}
+/// What the review before installing a local `.tbaddon` lists under "It asks to": one line per
+/// capability (none when it asks for none), then the package's data note when it has one.
+pub fn package_access_text(manifest: &toolboks_addon_sdk::Manifest) -> Vec<AccessLine> {
+    use toolboks_addon_sdk::Capability;
+    let mut lines: Vec<AccessLine> = manifest
+        .capabilities
+        .iter()
+        .map(|capability| {
+            AccessLine::Can(
+                match capability {
+                    Capability::Administrator => "Make administrator changes only after you confirm in a separate window",
+                    Capability::HostMetrics => "Read basic memory and uptime readings",
+                    Capability::LocalPreferences => "Save its own preferences locally",
+                    Capability::FilesystemRead => "Read file and folder metadata for locations you select",
+                    Capability::UserExports => "Save reports to a destination you choose",
+                    Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
+                    Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
+                    Capability::SystemTuning => "Back up and change the Windows settings and power plan you select",
+                    Capability::InputAutomation => "Record keyboard and mouse input and replay it only when you start a macro",
+                }
+                .into(),
+            )
+        })
+        .collect();
+    if let Some(note) = shown_data_note(manifest.data_note.as_deref()) {
+        lines.push(AccessLine::Data(note.into()));
+    }
+    lines
 }
 pub fn can_install(entry: &Entry) -> bool {
     entry.check(&catalog::host()).is_ok()

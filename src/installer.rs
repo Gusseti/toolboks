@@ -977,6 +977,43 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A catalog add-on (such as Disk Manager) is removed with `remove` directly, the call the
+    /// Remove dialog makes for an add-on that is not a local package. Its saved scans live in a
+    /// subfolder of `addon-data/<id>`: "Also delete its data" deletes them, otherwise they stay.
+    /// Another add-on's data is never touched.
+    #[test]
+    fn removing_a_catalog_addon_deletes_its_saved_scans_only_when_asked() {
+        let id = "toolboks.disk-manager";
+        let other = "toolboks.resource-monitor";
+        for delete_data in [false, true] {
+            let root = root(if delete_data {
+                "scans-delete"
+            } else {
+                "scans-keep"
+            });
+            let installed = addon_dir(&root, id).join("1.0.0");
+            fs::create_dir_all(&installed).unwrap();
+            fs::write(installed.join("addon.exe"), b"exe").unwrap();
+            let scans = data_dir(&root, id).join("scans");
+            fs::create_dir_all(&scans).unwrap();
+            fs::write(scans.join("C.json"), b"{\"files\":[\"a.txt\"]}").unwrap();
+            fs::write(data_dir(&root, id).join("settings.json"), b"{}").unwrap();
+            let other_data = data_dir(&root, other).join("history");
+            fs::create_dir_all(&other_data).unwrap();
+
+            remove(&root, id, !delete_data).unwrap();
+
+            assert!(!addon_dir(&root, id).exists());
+            assert_eq!(scans.join("C.json").exists(), !delete_data);
+            assert_eq!(data_dir(&root, id).exists(), !delete_data);
+            assert!(other_data.exists(), "another add-on's data stays");
+            // Deleting again, or deleting data that is already gone, is not an error.
+            remove(&root, id, false).unwrap();
+            assert!(!data_dir(&root, id).exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn update_checks_at_launch_and_daily() {
         let root = root("check");

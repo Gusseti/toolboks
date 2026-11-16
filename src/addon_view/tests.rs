@@ -14,6 +14,20 @@ use toolboks_addon_sdk::NativeAddon;
 
 const WAIT: Duration = Duration::from_secs(10);
 
+#[test]
+fn only_a_waiting_view_on_screen_is_polled() {
+    assert_eq!(poll_after(None), None);
+    assert_eq!(poll_after(Some(&ViewState::Running)), None);
+    assert_eq!(poll_after(Some(&ViewState::Stopped("ended".into()))), None);
+    for waiting in [
+        ViewState::Connecting,
+        ViewState::Restarting,
+        ViewState::Stalled,
+    ] {
+        assert_eq!(poll_after(Some(&waiting)), Some(WAITING_POLL));
+    }
+}
+
 fn page() -> Rect {
     Rect::from_min_max(pos2(100.0, 50.0), pos2(500.0, 350.0))
 }

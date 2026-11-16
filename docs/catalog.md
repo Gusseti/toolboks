@@ -61,3 +61,9 @@ are ignored, so those indexes still read.
   a separate helper for one administrator action. The helper owns its native Confirm/Cancel
   window; the add-on UI stays unelevated. See [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md).
 - `byline` (optional, at most 60 characters) is the maker's credit shown in the details, such as "by stratum".
+- `data_note` (optional, 1 to 160 characters, one line, no control characters, no Unicode format
+  characters such as bidi overrides or zero-width characters, no line or paragraph separators, no
+  spaces at either end; `toolboks_addon_sdk::valid_data_note`) is one plain sentence about data the add-on keeps on this PC, such as "Keeps your last scan
+  of each drive on this PC (file and folder names)." It is shown under the capabilities in the
+  install review and in the details. Copy it from the add-on's manifest (`data_note`, same rule).
+  A bad note makes the whole index refused, like any other bad field. Older apps ignore it.

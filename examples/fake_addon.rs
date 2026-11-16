@@ -183,6 +183,31 @@ fn main() {
     let mode = std::fs::read_to_string(folder.join("mode.txt")).unwrap_or_default();
     match mode.trim() {
         "silent" => std::thread::sleep(Duration::from_secs(120)),
+        "drop-pipe" => {
+            // Connects, closes its end of both pipes, and ends 3 s later: the host sees the pipe
+            // close well before the process ends.
+            {
+                let input = std::fs::File::open(argument("--pipe-in").expect("--pipe-in"))
+                    .expect("pipe-in");
+                let mut output = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(argument("--pipe-out").expect("--pipe-out"))
+                    .expect("pipe-out");
+                output
+                    .write_all(argument("--token").expect("--token").as_bytes())
+                    .expect("token");
+                let mut reader = toolboks_addon_proto::FrameReader::new(input);
+                let mut writer = toolboks_addon_proto::FrameWriter::new(output);
+                toolboks_addon_proto::addon_handshake(
+                    &mut reader,
+                    &mut writer,
+                    &toolboks_addon_proto::Hello::new(ID, "0.0.0"),
+                )
+                .expect("handshake");
+            }
+            std::thread::sleep(Duration::from_secs(3));
+            std::process::exit(3);
+        }
         "wrong-token" => {
             let (input, output) = (argument("--pipe-in"), argument("--pipe-out"));
             let _reader = std::fs::File::open(input.expect("--pipe-in"));

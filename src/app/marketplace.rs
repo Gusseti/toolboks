@@ -188,11 +188,15 @@ impl App {
         }
     }
 
-    /// Only from `ui`, and not while hidden in the tray: eframe still runs `ui` for a window hidden
-    /// with `Visible(false)` on Windows, and this would wake it ten times a second there.
+    /// Only from `ui`: the repaint an add-on view on screen needs. Not while hidden in the tray:
+    /// eframe still runs `ui` for a window hidden with `Visible(false)` on Windows.
     fn poll_views(&mut self, ctx: &egui::Context) {
-        if !self.hidden && !self.views.is_empty() {
-            ctx.request_repaint_after(Duration::from_millis(100));
+        let shown = match &self.screen {
+            Screen::External(id) if !self.hidden => self.views.get(id).map(|view| view.state()),
+            _ => None,
+        };
+        if let Some(after) = crate::addon_view::poll_after(shown) {
+            ctx.request_repaint_after(after);
         }
     }
 
