@@ -9,12 +9,12 @@ A new tool in toolboks (its own top tab): turn off Windows ads, suggestions and 
 | v1 scope | **Privacy and ads** toggles + **Apps** (curated list). Startup entries, scheduled tasks and services are a second step |
 | Apps | Curated consumer apps only; anything not on the list is shown greyed out as protected |
 | Admin | Runs without admin; items that need it are marked, and a "Restart as admin" button appears when such an item is ticked (with a warning that the undo history is lost). Never always-admin |
-| Undo | In-memory for the current session only (single exe, no files). Settings can always be flipped back on the page (current state is re-read from Windows on every launch). Removed apps are reinstalled from the Microsoft Store. "Copy undo steps" puts them on the clipboard (not a file) |
+| Undo | Saved (decision #52, add-ons #81): the undo list is kept in `addon-data/toolboks.debloater/undo/undo.jsonl` so undo survives closing Toolboks and restarting Windows. It holds only what undo needs (previous registry values, service start types, task switches, startup approvals, what Debloater set the item to, and catalog ids of removed apps), never user names, paths, startup commands or publishers. Written after every change and undo (temp file, flushed, renamed); removed when nothing is left to undo. A damaged file is never used or guessed at (moved aside to `undo-damaged-N.jsonl`, the page says so); a file from a newer Debloater is left untouched. Undo checks the current state right before writing and refuses a step with a plain reason when something else changed the item since (the step is dropped, and a refused step still blocks older steps of the same item). Each page's Undo panel says what is kept and where and has a **Delete saved undo** button; deleting the add-on's data removes the file. Settings can always be flipped back on the page (current state is re-read from Windows on every launch). Removed apps are reinstalled from the Microsoft Store. "Copy undo steps" puts them on the clipboard (not a file) |
 | State | The page always reads the real state from Windows; it never trusts a saved log (Windows updates can re-add or reset items) |
 
 ## Page layout
 
-Top tab "Debloater"; page strip: **Privacy and ads**, **Apps** (later **Startup**). Center: items grouped by risk (Safe, Careful), each row a tick box, name, risk tag, current state ("Now on", "Already off", "Needs admin"), reversibility. Right inspector **Review**: number of changes, how many are safe and how many need admin, "Create a restore point first" switch (when admin and System Protection is on), the **Apply N changes** button, **Undo last run**, and a plain note: "Undo works until you close toolboks. Removed apps come back from the Microsoft Store." A summary line after applying lists what worked, what failed and what needs a restart. Header shows the Windows edition and whether the app is elevated.
+Top tab "Debloater"; page strip: **Privacy and ads**, **Apps** (later **Startup**). Center: items grouped by risk (Safe, Careful), each row a tick box, name, risk tag, current state ("Now on", "Already off", "Needs admin"), reversibility. Right inspector **Review**: number of changes, how many are safe and how many need admin, "Create a restore point first" switch (when admin and System Protection is on), the **Apply N changes** button, **Undo last run**, and a plain note: "Undo works after you close Toolboks and after Windows restarts, unless something else changed the item in between. Removed apps come back from the Microsoft Store." A summary line after applying lists what worked, what failed and what needs a restart. Header shows the Windows edition and whether the app is elevated.
 
 ## Starter items (from the research; verify exact registry paths on this build, 26300, before shipping)
 
@@ -37,13 +37,13 @@ Top tab "Debloater"; page strip: **Privacy and ads**, **Apps** (later **Startup*
 
 1. Model, catalog, plan/undo engine, fakes and tests; page shell with the inspector; edition and elevation detection.
 2. Privacy and ads items: current-state detection, apply, undo, effective-value check.
-3. Apps: list, protected greyed out, remove for the current user, session undo, results summary.
+3. Apps: list, protected greyed out, remove for the current user, saved undo, results summary.
 4. (Next step) Startup entries, scheduled tasks, services; restore point and presets.
 5. Polish, copy review (plain language, no alarm), release.
 
 ## Rules and risks
 
-Single exe, nothing written, in-memory state. No "apply everything" button; Careful items are never pre-ticked. Every item has a plain "what changes / what could break" text. Top risks: removing a protected app (denylist and dependency checks, curated list only), undo of app removal not reliable, settings silently ignored or reverted (always re-read), restore point silently skipped (show its real status), antivirus flagging an unsigned exe that changes system settings, WinRT/COM threading mistakes. Checks by fmt, clippy -D warnings, unit tests on the fakes, read-only smoke tests on the real system, a release build; applying real changes is tested only on a scratch HKCU key in test code or with the owner's explicit say-so.
+Single exe; writes only its saved undo list (see Undo above), no other files. No "apply everything" button; Careful items are never pre-ticked. Every item has a plain "what changes / what could break" text. Top risks: removing a protected app (denylist and dependency checks, curated list only), undo of app removal not reliable, settings silently ignored or reverted (always re-read), restore point silently skipped (show its real status), antivirus flagging an unsigned exe that changes system settings, WinRT/COM threading mistakes. Checks by fmt, clippy -D warnings, unit tests on the fakes, read-only smoke tests on the real system, a release build; applying real changes is tested only on a scratch HKCU key in test code or with the owner's explicit say-so.
 
 ## Decisions after the research (docs/RESEARCH-debloat.md)
 
@@ -53,5 +53,5 @@ Single exe, nothing written, in-memory state. No "apply everything" button; Care
 | Careful items | Shown collapsed under "Advanced", never pre-ticked, one-line consequence, never in presets |
 | Services | Safe tier: Disabled; Careful tier: Manual only; never Disabled with active dependents |
 | Signing | Investigate SignPath Foundation first (open source), OV certificate as fallback |
-| Undo | In memory only plus "Copy undo steps"; no backup file (research suggestion rejected); re-read real state on every launch |
+| Undo | Saved undo list (add-ons #81, decided in #52) plus "Copy undo steps"; real state is re-read on every launch and a step is refused if the item changed since Debloater set it |
 | Still open | Compatibility Appraiser task, AI/Recall switches, presets, Home-edition badges, domain/MDM read-only mode, when to elevate (see report section 13) |
