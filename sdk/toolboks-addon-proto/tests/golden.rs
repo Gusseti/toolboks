@@ -370,7 +370,20 @@ fn every_protocol_3_addon_message_keeps_its_bytes() {
 fn protocol_4_messages_come_after_every_protocol_3_variant() {
     // Variant indices: 19 host messages and 14 add-on messages existed in protocol 3.
     assert_eq!(hex(&HostMessage::CheckNow), "0100000013");
-    let finding = Finding::attention(
+    let finding = FindingV4::from(&golden_finding());
+    let bytes = hex(&AddonMessage::Findings(vec![finding.clone()]));
+    assert_eq!(&bytes[8..10], "0e", "Findings is variant 14: {bytes}");
+    // Captured from the protocol 4 code (host 0.15.0), before protocol 5 added `FindingV4`.
+    assert_eq!(bytes, FINDINGS_V4);
+    let decoded: AddonMessage = FrameReader::new(&unhex(&bytes)[..]).read().unwrap();
+    assert_eq!(decoded, AddonMessage::Findings(vec![finding]));
+}
+
+/// `AddonMessage::Findings` with [`golden_finding`] as protocol 4 wrote it.
+const FINDINGS_V4: &str = "650000000e010e64726976652d6865616c74682d6316447269766520433a206d6179206661696c20736f6f6e0e32206d65646961206572726f7273010180e2cfaa0680a3050100114f70656e206472697665206865616c74680f4f7074696d697a6174696f6e2f433a";
+
+fn golden_finding() -> Finding {
+    Finding::attention(
         "drive-health-c",
         "Drive C: may fail soon",
         "2 media errors",
@@ -378,15 +391,46 @@ fn protocol_4_messages_come_after_every_protocol_3_variant() {
     )
     .measured_at(1_700_000_000)
     .stale_after(86_400)
-    .open_page("Open drive health", "Optimization/C:");
-    let bytes = hex(&AddonMessage::Findings(vec![finding.clone()]));
-    assert_eq!(&bytes[8..10], "0e", "Findings is variant 14: {bytes}");
-    let raw: Vec<u8> = (0..bytes.len())
+    .open_page("Open drive health", "Optimization/C:")
+}
+
+fn unhex(bytes: &str) -> Vec<u8> {
+    (0..bytes.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&bytes[i..i + 2], 16).unwrap())
-        .collect();
-    let decoded: AddonMessage = FrameReader::new(&raw[..]).read().unwrap();
-    assert_eq!(decoded, AddonMessage::Findings(vec![finding]));
+        .collect()
+}
+
+#[test]
+fn protocol_5_findings_come_after_every_protocol_4_variant() {
+    let finding = golden_finding()
+        .why("Windows slows down when a drive is almost full.")
+        .evidence(Evidence::bar(0.987, "470 GB used", "6 GB free"));
+    let bytes = hex(&AddonMessage::FindingsV5(vec![finding.clone()]));
+    assert_eq!(&bytes[8..10], "0f", "FindingsV5 is variant 15: {bytes}");
+    let decoded: AddonMessage = FrameReader::new(&unhex(&bytes)[..]).read().unwrap();
+    assert_eq!(decoded, AddonMessage::FindingsV5(vec![finding]));
+    // Without the new fields a v5 finding is the v4 bytes plus two `None` markers, under the
+    // new variant index: the extra fields are never optional on the wire (postcard).
+    let plain = hex(&AddonMessage::FindingsV5(vec![golden_finding()]));
+    let v4_body = &FINDINGS_V4[10..];
+    assert_eq!(&plain[10..], format!("{v4_body}0000"));
+    let series = golden_finding().evidence(Evidence::series(vec![0.0, 1.0], "10 min ago", "now"));
+    let decoded: AddonMessage =
+        FrameReader::new(&unhex(&hex(&AddonMessage::FindingsV5(vec![series.clone()])))[..])
+            .read()
+            .unwrap();
+    assert_eq!(decoded, AddonMessage::FindingsV5(vec![series]));
+}
+
+#[test]
+fn protocol_4_bytes_never_parse_as_protocol_5_findings() {
+    // The reason for protocol 5: an old peer that read the new layout would misread it. Here
+    // the protocol 4 body read as a v5 list is malformed, never silently wrong.
+    let mut raw = unhex(FINDINGS_V4);
+    raw[4] = 0x0f;
+    let read: Result<AddonMessage, _> = FrameReader::new(&raw[..]).read();
+    assert!(read.is_err(), "{read:?}");
 }
 
 /// Prints the current bytes; run with `-- --ignored --nocapture` to see them.

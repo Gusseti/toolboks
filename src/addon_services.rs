@@ -319,9 +319,15 @@ impl Services {
                 id: id.to_string(),
                 request: request.clone(),
             }),
-            // Protocol 4 only: the supervisor drops them on a protocol 3 connection. Filed under
-            // the connection's id; the message has no source field.
-            AddonMessage::Findings(findings) => {
+            // Protocol 4 (`Findings`, without `why` and `evidence`) and 5 (`FindingsV5`): the
+            // supervisor drops each on a connection older than its version. Filed under the
+            // connection's id; the message has no source field.
+            AddonMessage::Findings(_) | AddonMessage::FindingsV5(_) => {
+                let findings: Vec<toolboks_addon_proto::Finding> = match message {
+                    AddonMessage::Findings(old) => old.iter().cloned().map(Into::into).collect(),
+                    AddonMessage::FindingsV5(list) => list.clone(),
+                    _ => Vec::new(),
+                };
                 // Turned off: Home shows nothing of it, so nothing is kept.
                 if config.disabled.iter().any(|disabled| disabled == id) {
                     self.health.remove(id);
@@ -330,7 +336,7 @@ impl Services {
                 let pages = installer::installed_entry(root, id)
                     .map(|entry| entry.pages)
                     .unwrap_or_default();
-                let lines = self.health.replace(id, findings, &pages, unix_now());
+                let lines = self.health.replace(id, &findings, &pages, unix_now());
                 (!lines.is_empty()).then(|| Effect::FindingsDropped {
                     id: id.to_string(),
                     lines,
@@ -455,7 +461,7 @@ mod tests {
     use crate::supervisor::{StopReason, Timing};
     use eframe::egui::pos2;
     use std::time::{Duration, Instant};
-    use toolboks_addon_proto::{Finding, InputBatch, Theme};
+    use toolboks_addon_proto::{Evidence, Finding, InputBatch, Severity, Theme};
 
     fn entry(id: &str, title: &str, pages: &[&str]) -> Entry {
         serde_json::from_value(serde_json::json!({
@@ -733,9 +739,12 @@ mod tests {
         let mut old = entry("toolboks.old", "Old", &[]);
         old.protocol_version = 3;
         assert_eq!(launch_spec(root, &old).protocol_version, 3);
+        let mut four = entry("toolboks.four", "Four", &[]);
+        four.protocol_version = 4;
+        assert_eq!(launch_spec(root, &four).protocol_version, 4);
         let new = entry("toolboks.new", "New", &[]);
-        assert_eq!(new.protocol_version, 4);
-        assert_eq!(launch_spec(root, &new).protocol_version, 4);
+        assert_eq!(new.protocol_version, 5);
+        assert_eq!(launch_spec(root, &new).protocol_version, 5);
     }
 
     /// A data folder with `entry` installed (only the records `installed_entry` reads).
@@ -777,7 +786,7 @@ mod tests {
             .map(|i| Finding::ok(format!("check-{i}"), "Title", "Seen"))
             .collect();
         let effect = services.apply(
-            &message("a", AddonMessage::Findings(many)),
+            &message("a", AddonMessage::FindingsV5(many)),
             &supervisor,
             &root,
             &mut config,
@@ -800,12 +809,49 @@ mod tests {
         // A clean set gives no effect.
         let clean = vec![Finding::ok("one", "Title", "Seen")];
         let effect = services.apply(
-            &message("a", AddonMessage::Findings(clean)),
+            &message("a", AddonMessage::FindingsV5(clean)),
             &supervisor,
             &root,
             &mut config,
         );
         assert_eq!(effect, None);
+    }
+
+    #[test]
+    fn protocol_4_findings_are_kept_without_why_and_evidence() {
+        let (supervisor, root, mut config) = idle();
+        let mut services = Services::default();
+        let finding = Finding::attention("disk", "Drive C:", "Low", Severity::Problem)
+            .why("Updates fail.")
+            .evidence(Evidence::bar(0.9, "90 GB used", "10 GB free"));
+        services.apply(
+            &message(
+                "a",
+                AddonMessage::Findings(vec![toolboks_addon_proto::FindingV4::from(&finding)]),
+            ),
+            &supervisor,
+            &root,
+            &mut config,
+        );
+        let view = services.health.view(unix_now(), &titled);
+        assert_eq!(view.attention[0].finding.title, "Drive C:");
+        assert_eq!(view.attention[0].finding.why, None);
+        assert_eq!(view.attention[0].finding.evidence, None);
+        services.apply(
+            &message("a", AddonMessage::FindingsV5(vec![finding])),
+            &supervisor,
+            &root,
+            &mut config,
+        );
+        let view = services.health.view(unix_now(), &titled);
+        assert_eq!(
+            view.attention[0].finding.why.as_deref(),
+            Some("Updates fail.")
+        );
+        assert_eq!(
+            view.attention[0].finding.evidence,
+            Some(Evidence::bar(0.9, "90 GB used", "10 GB free"))
+        );
     }
 
     #[test]
@@ -821,7 +867,7 @@ mod tests {
             Finding::ok("other", "Other page", "Seen").open_page("Open", "Crashes"),
         ];
         let effect = services.apply(
-            &message("toolboks.disk", AddonMessage::Findings(list.clone())),
+            &message("toolboks.disk", AddonMessage::FindingsV5(list.clone())),
             &supervisor,
             &root,
             &mut config,
@@ -836,7 +882,7 @@ mod tests {
         assert_eq!(view.checked[0].finding.id, "own");
         // Another add-on cannot borrow those pages: they are looked up by the sender's id.
         services.apply(
-            &message("toolboks.other", AddonMessage::Findings(list)),
+            &message("toolboks.other", AddonMessage::FindingsV5(list)),
             &supervisor,
             &root,
             &mut config,
@@ -857,7 +903,7 @@ mod tests {
             services.apply(
                 &message(
                     "a",
-                    AddonMessage::Findings(vec![Finding::ok("x", "X", "Seen")]),
+                    AddonMessage::FindingsV5(vec![Finding::ok("x", "X", "Seen")]),
                 ),
                 &supervisor,
                 &root,

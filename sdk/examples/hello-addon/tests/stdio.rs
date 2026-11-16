@@ -11,9 +11,16 @@ use toolboks_addon_proto::{
 fn the_sample_add_on_draws_and_quits() {
     let (status, findings) = run_sample(PROTOCOL_VERSION);
     assert_eq!(status.expect("a status item").text, "Hello 41");
-    let findings = findings.expect("findings at protocol 4");
+    let findings = findings.expect("findings at protocol 5");
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].status, FindingStatus::Attention);
+    assert_eq!(findings[0].observation, "Add one was pressed 41 times.");
+}
+
+#[test]
+fn the_sample_sends_the_old_layout_to_a_protocol_4_host() {
+    let (_, findings) = run_sample(4);
+    let findings = findings.expect("findings at protocol 4");
     assert_eq!(findings[0].observation, "Add one was pressed 41 times.");
 }
 
@@ -67,7 +74,14 @@ fn run_sample(
     let frame = loop {
         match reader.read::<AddonMessage>().expect("a message") {
             AddonMessage::StatusItems(items) => status = items.into_iter().next(),
-            AddonMessage::Findings(list) => findings = Some(list),
+            AddonMessage::Findings(list) => {
+                assert!(version < 5, "protocol 5 uses FindingsV5");
+                findings = Some(list.into_iter().map(Into::into).collect());
+            }
+            AddonMessage::FindingsV5(list) => {
+                assert!(version >= 5, "FindingsV5 at protocol {version}");
+                findings = Some(list);
+            }
             AddonMessage::Frame(frame) => break frame,
             _ => {}
         }
@@ -100,7 +114,7 @@ fn the_sample_refuses_protocol_two_with_a_plain_update_message() {
             assert_eq!(protocol_version, PROTOCOL_VERSION);
             assert_eq!(
                 reason,
-                "Add-on speaks protocol 4, Toolboks speaks 2. Update the add-on or Toolboks."
+                format!("Add-on speaks protocol {PROTOCOL_VERSION}, Toolboks speaks 2. Update the add-on or Toolboks.")
             );
         }
         other => panic!("expected refusal, got {other:?}"),

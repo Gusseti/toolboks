@@ -545,7 +545,14 @@ impl<W: Write> Runtime<W> {
             let findings = addon.findings();
             if findings != self.findings {
                 self.findings = findings.clone();
-                self.send(&AddonMessage::Findings(findings))?;
+                // Protocol 4 peers read the old layout: the same findings without `why` and
+                // `evidence`.
+                let message = if self.version >= proto::EVIDENCE_PROTOCOL_VERSION {
+                    AddonMessage::FindingsV5(findings)
+                } else {
+                    AddonMessage::Findings(findings.iter().map(proto::FindingV4::from).collect())
+                };
+                self.send(&message)?;
             }
         }
         let lines = LOG

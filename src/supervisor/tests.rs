@@ -707,6 +707,10 @@ fn findings_and_status(events: &[Event]) -> (Vec<Vec<toolboks_addon_proto::Findi
             Event::Message {
                 message: AddonMessage::Findings(list),
                 ..
+            } => findings.push(list.iter().cloned().map(Into::into).collect()),
+            Event::Message {
+                message: AddonMessage::FindingsV5(list),
+                ..
             } => findings.push(list.clone()),
             Event::Message {
                 message: AddonMessage::StatusItems(_),
@@ -828,14 +832,41 @@ fn findings_on_a_protocol_3_connection_are_ignored() {
 }
 
 #[test]
-fn a_protocol_4_addon_sends_findings_also_while_hidden_and_gets_check_now() {
-    let (dir, mut spec) = fake("protocol-4-findings", "findings");
+fn an_addon_under_a_protocol_4_entry_sends_the_old_findings_layout() {
+    let (_dir, mut spec) = fake("protocol-4-layout", "findings");
+    spec.protocol_version = 4;
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec, Instant::now());
+    let events = run_until(&mut supervisor, |events, _| {
+        !findings_and_status(events).0.is_empty()
+    });
+    assert_eq!(supervisor.protocol_version(ID), Some(4));
+    let layouts: Vec<bool> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Message { message, .. } => match message {
+                AddonMessage::Findings(_) => Some(true),
+                AddonMessage::FindingsV5(_) => Some(false),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !layouts.is_empty() && layouts.iter().all(|old| *old),
+        "{layouts:?}"
+    );
+}
+
+#[test]
+fn a_protocol_5_addon_sends_findings_also_while_hidden_and_gets_check_now() {
+    let (dir, mut spec) = fake("protocol-5-findings", "findings");
     spec.background = true;
     let mut supervisor = supervisor(Timing::default());
     // Started hidden: suspended on connect, so only background ticks run from then on.
     supervisor.start_background(spec, Instant::now());
     run_until(&mut supervisor, connected);
-    assert_eq!(supervisor.protocol_version(ID), Some(4));
+    assert_eq!(supervisor.protocol_version(ID), Some(5));
     let events = run_until(&mut supervisor, |events, _| {
         findings_and_status(events).0.len() >= 3
     });
@@ -848,7 +879,7 @@ fn a_protocol_4_addon_sends_findings_also_while_hidden_and_gets_check_now() {
         "each set differs from the last: {findings:?}"
     );
     assert!(findings.last().unwrap()[0].title != "0 ticks");
-    // CheckNow goes out at protocol 4, and the changed findings come back.
+    // CheckNow goes out at protocol 5, and the changed findings come back.
     assert!(supervisor.send(ID, &HostMessage::CheckNow));
     run_until(&mut supervisor, |events, _| {
         findings_and_status(events)
@@ -863,12 +894,12 @@ fn a_protocol_4_addon_sends_findings_also_while_hidden_and_gets_check_now() {
 fn an_installed_entry_at_a_protocol_this_build_does_not_speak_is_never_started() {
     for (version, text) in [
         (
-            5,
-            "Add-on speaks protocol 5, Toolboks speaks 4. Update the add-on or Toolboks.",
+            6,
+            "Add-on speaks protocol 6, Toolboks speaks 5. Update the add-on or Toolboks.",
         ),
         (
             2,
-            "Add-on speaks protocol 2, Toolboks speaks 4. Update the add-on or Toolboks.",
+            "Add-on speaks protocol 2, Toolboks speaks 5. Update the add-on or Toolboks.",
         ),
     ] {
         let (dir, mut spec) = fake(&format!("protocol-{version}"), "normal");
@@ -890,17 +921,17 @@ fn an_installed_entry_at_a_protocol_this_build_does_not_speak_is_never_started()
 }
 
 #[test]
-fn an_entry_at_4_for_a_protocol_3_exe_is_refused_in_plain_words() {
-    // The entry says 4, but the exe speaks only 3: it refuses the host's Hello 4.
+fn an_entry_at_5_for_a_protocol_3_exe_is_refused_in_plain_words() {
+    // The entry says 5, but the exe speaks only 3: it refuses the host's Hello 5.
     let (dir, spec) = fake("protocol-mismatch", "normal --protocol 3");
-    assert_eq!(spec.protocol_version, 4);
+    assert_eq!(spec.protocol_version, 5);
     let mut supervisor = supervisor(Timing::default());
     supervisor.open(spec, Instant::now());
     let events = run_until(&mut supervisor, stopped);
     assert_eq!(
         stop_reason(&events),
         &StopReason::Refused(
-            "Add-on speaks protocol 3, Toolboks speaks 4. Update the add-on or Toolboks.".into()
+            "Add-on speaks protocol 3, Toolboks speaks 5. Update the add-on or Toolboks.".into()
         )
     );
     assert_eq!(starts(&dir), 1, "refused, not restarted");
@@ -909,15 +940,25 @@ fn an_entry_at_4_for_a_protocol_3_exe_is_refused_in_plain_words() {
 #[test]
 fn messages_newer_than_the_connection_are_held_back_both_ways() {
     use toolboks_addon_proto::Finding;
-    let finding = AddonMessage::Findings(vec![Finding::ok("a", "A", "B")]);
+    let plain = Finding::ok("a", "A", "B");
+    let finding = AddonMessage::Findings(vec![(&plain).into()]);
+    let finding_v5 = AddonMessage::FindingsV5(vec![plain]);
     assert!(!host_message_allowed(&HostMessage::CheckNow, 3));
     assert!(host_message_allowed(&HostMessage::CheckNow, 4));
     assert!(host_message_allowed(&HostMessage::Suspend, 3));
     assert!(!addon_message_allowed(&finding, 3));
     assert!(addon_message_allowed(&finding, 4));
+    assert!(
+        addon_message_allowed(&finding, 5),
+        "a protocol 4 set is read at 5 too"
+    );
+    assert!(!addon_message_allowed(&finding_v5, 3));
+    assert!(!addon_message_allowed(&finding_v5, 4));
+    assert!(addon_message_allowed(&finding_v5, 5));
     assert!(addon_message_allowed(&AddonMessage::Bye, 3));
     assert_eq!(unsupported_protocol(3), None);
     assert_eq!(unsupported_protocol(4), None);
-    assert!(unsupported_protocol(5).is_some());
+    assert_eq!(unsupported_protocol(5), None);
+    assert!(unsupported_protocol(6).is_some());
     assert!(unsupported_protocol(0).is_some());
 }

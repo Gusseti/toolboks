@@ -2805,7 +2805,7 @@ checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "toolboks"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "eframe",
  "egui_extras",
@@ -2829,6 +2829,7 @@ dependencies = [
  "egui",
  "postcard",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

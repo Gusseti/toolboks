@@ -63,8 +63,10 @@ fn main() -> eframe::Result {
             // The screenshot check runs at the width its reference captures were taken at.
             [1120.0, 760.0]
         } else if let Some(scale) = health_check_scale(&args) {
-            // 1060 x 720 points at the check's scale (the zoom factor is set to match below).
-            [1060.0 * scale, 720.0 * scale]
+            // 1060 x 720 points (or the size asked for) at the check's scale (the zoom factor is
+            // set to match below).
+            let [width, height] = health_check_size(&args);
+            [width * scale, height * scale]
         } else {
             [1540.0, 960.0]
         })
@@ -142,7 +144,10 @@ fn main() -> eframe::Result {
                 std::fs::create_dir_all(&output).expect("create screenshot folder");
                 cc.egui_ctx
                     .set_zoom_factor(health_check_scale(&args).unwrap_or(1.0));
-                return Ok(Box::new(app::health_check::Check::new(output)));
+                return Ok(Box::new(app::health_check::Check::new(
+                    output,
+                    health_check_size(&args),
+                )));
             }
             #[cfg(feature = "preview")]
             if let Some(index) = args.iter().position(|arg| arg == "--marketplace-check") {
@@ -170,7 +175,23 @@ fn main() -> eframe::Result {
     )
 }
 
-/// The scale of a `--health-check <out> [scale]` run (preview builds only), else `None`.
+/// The window size in points of a `--health-check <out> [scale] [width height]` run: 1060 x 720
+/// (the supported minimum) unless both are given.
+fn health_check_size(args: &[String]) -> [f32; 2] {
+    let Some(index) = args.iter().position(|arg| arg == "--health-check") else {
+        return [1060.0, 720.0];
+    };
+    match (args.get(index + 3), args.get(index + 4)) {
+        (Some(width), Some(height)) => [
+            width.parse().expect("width"),
+            height.parse().expect("height"),
+        ],
+        _ => [1060.0, 720.0],
+    }
+}
+
+/// The scale of a `--health-check <out> [scale] [width height]` run (preview builds only), else
+/// `None`.
 fn health_check_scale(args: &[String]) -> Option<f32> {
     if !cfg!(feature = "preview") {
         return None;

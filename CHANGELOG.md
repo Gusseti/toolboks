@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-16
+
+### Changed
+
+- **Home's health view starts with one thing to look at.** The most important finding (the first problem, else the first thing to watch) now has its own card: what it is, what was measured, a small picture of the measurement where the add-on gives one (a filled bar such as "470 GB used / 6 GB free", or a strip of the last readings), why it matters, what to do, and the button to fix it. Other things worth a look follow as smaller cards, and everything that was checked and found fine is grouped by add-on, each with its value ("Good", "61% free"). Checks without a current result (not checked, unavailable, out of date) still show with their reason. Still no score and no "your PC is healthy": Toolboks only shows what your add-ons measured.
+
+### Added
+
+- **For add-on makers: protocol 5.** A finding can say why it matters (`.why(text)`) and carry a small picture of what was measured (`.evidence(Evidence::bar(..))` or `.evidence(Evidence::series(..))`), with labels that carry the numbers. Add-ons built for protocol 3 and 4 keep working unchanged; a protocol 4 add-on's findings show without the picture. See `docs/ADDON-PROTOCOL.md` and `docs/ADDON-AUTHOR-GUIDE.md`.
+
 ## [0.15.0] - 2026-11-16
 
 ### Added

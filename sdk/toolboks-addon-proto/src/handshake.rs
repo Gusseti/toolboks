@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn addon_refuses_a_newer_or_older_host_in_plain_words() {
         let newest = crate::PROTOCOL_VERSION;
-        for host in [newest + 1, 5, 99, MIN_PROTOCOL_VERSION - 1, 0] {
+        for host in [newest + 1, 6, 99, MIN_PROTOCOL_VERSION - 1, 0] {
             let (agreed, answer) = addon_meets(
                 Hello::new("probe", "0.5.0"),
                 Hello::with_version("probe", "0.14.0", host),
