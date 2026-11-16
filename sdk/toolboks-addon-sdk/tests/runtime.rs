@@ -11,7 +11,7 @@ use toolboks_addon_sdk::runtime::proto::{
     InputEvent, ProtocolError, TabDirection, Theme, PROTOCOL_VERSION,
 };
 use toolboks_addon_sdk::runtime::{run_addon_on, MAX_QUEUED_HOST_MESSAGES};
-use toolboks_addon_sdk::{Finding, NativeAddon, Severity, StatusItem, TutorialStep};
+use toolboks_addon_sdk::{Evidence, Finding, NativeAddon, Severity, StatusItem, TutorialStep};
 
 const WAIT: Duration = Duration::from_secs(10);
 const BUTTON: [f32; 2] = [60.0, 25.0];
@@ -558,18 +558,23 @@ impl NativeAddon for Health {
                 "Counted",
                 Severity::Watch,
             )
-            .measured_at(1_700_000_000),
+            .measured_at(1_700_000_000)
+            .why("Counting matters.")
+            .evidence(Evidence::bar(0.5, "1 used", "1 free")),
             Finding::ok("ticks", format!("{} ticks", self.ticks), "Counted")
                 .measured_at(1_700_000_000),
         ]
     }
 }
 
+/// The findings among `messages`, from either layout (protocol 4 sets read back without `why`
+/// and `evidence`).
 fn findings_in(messages: &[AddonMessage]) -> Vec<Vec<Finding>> {
     messages
         .iter()
         .filter_map(|message| match message {
-            AddonMessage::Findings(list) => Some(list.clone()),
+            AddonMessage::Findings(list) => Some(list.iter().cloned().map(Finding::from).collect()),
+            AddonMessage::FindingsV5(list) => Some(list.clone()),
             _ => None,
         })
         .collect()
@@ -589,12 +594,21 @@ fn drain(host: &TestHost, wait: Duration) -> Vec<AddonMessage> {
 }
 
 #[test]
-fn findings_reach_a_protocol_4_host_only_when_they_change() {
+fn findings_reach_a_protocol_5_host_with_why_and_evidence_only_when_they_change() {
     let mut host = TestHost::connect(Health::default());
     let (_, first) = host.frame(vec![]);
+    assert!(
+        !first.iter().any(|m| matches!(m, AddonMessage::Findings(_))),
+        "{first:?}"
+    );
     let sent = findings_in(&first);
     assert_eq!(sent.len(), 1, "{first:?}");
     assert_eq!(sent[0][0].title, "Checked 0 times");
+    assert_eq!(sent[0][0].why.as_deref(), Some("Counting matters."));
+    assert_eq!(
+        sent[0][0].evidence,
+        Some(Evidence::bar(0.5, "1 used", "1 free"))
+    );
     assert_eq!(sent[0][1].title, "0 ticks");
     // Unchanged: nothing is sent again.
     let (_, second) = host.frame(vec![]);
@@ -603,12 +617,45 @@ fn findings_reach_a_protocol_4_host_only_when_they_change() {
     host.send(HostMessage::CheckNow);
     let after = loop {
         match host.recv() {
-            AddonMessage::Findings(list) => break list,
+            AddonMessage::FindingsV5(list) => break list,
             AddonMessage::StatusItems(_) => {}
             other => panic!("expected findings, got {other:?}"),
         }
     };
     assert_eq!(after[0].title, "Checked 1 times");
+    host.quit().unwrap();
+}
+
+#[test]
+fn a_host_at_protocol_4_gets_the_old_layout_without_why_and_evidence() {
+    let mut host = TestHost::connect_at(Health::default(), 4);
+    let (_, first) = host.frame(vec![]);
+    assert!(
+        !first
+            .iter()
+            .any(|m| matches!(m, AddonMessage::FindingsV5(_))),
+        "{first:?}"
+    );
+    let old: Vec<_> = first
+        .iter()
+        .filter_map(|m| match m {
+            AddonMessage::Findings(list) => Some(list.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(old.len(), 1, "{first:?}");
+    assert_eq!(old[0][0].title, "Checked 0 times");
+    host.send(HostMessage::CheckNow);
+    loop {
+        match host.recv() {
+            AddonMessage::Findings(list) => {
+                assert_eq!(list[0].title, "Checked 1 times");
+                break;
+            }
+            AddonMessage::StatusItems(_) => {}
+            other => panic!("expected protocol 4 findings, got {other:?}"),
+        }
+    }
     host.quit().unwrap();
 }
 
@@ -669,22 +716,22 @@ fn check_now_on_a_protocol_3_connection_ends_the_addon() {
 }
 
 #[test]
-fn a_host_at_protocol_5_is_refused_in_plain_words() {
+fn a_host_at_protocol_6_is_refused_in_plain_words() {
     let (host, addon_side) = duplex();
     let addon = std::thread::spawn(move || run_addon_on(addon_side, Health::default(), "counter"));
     let (mut reader, mut writer) = host.split();
     writer
         .write(&HostMessage::Hello(Hello::with_version(
-            "counter", "9.0.0", 5,
+            "counter", "9.0.0", 6,
         )))
         .unwrap();
-    let text = "Add-on speaks protocol 4, Toolboks speaks 5. Update the add-on or Toolboks.";
+    let text = "Add-on speaks protocol 5, Toolboks speaks 6. Update the add-on or Toolboks.";
     match reader.read::<AddonMessage>().unwrap() {
         AddonMessage::Refuse {
             protocol_version,
             reason,
         } => {
-            assert_eq!(protocol_version, 4);
+            assert_eq!(protocol_version, 5);
             assert_eq!(reason, text);
         }
         other => panic!("expected a refusal, got {other:?}"),

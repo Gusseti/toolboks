@@ -1059,7 +1059,14 @@ impl App {
             .show(ui, |ui| self.home_content(ui));
     }
     fn home_content(&mut self, ui: &mut egui::Ui) {
+        // Health replaces the "Your toolkit" list (#182): the sidebar and the Add-ons page list
+        // the add-ons; Home says what they found. The banners sit under its "Home" header.
+        self.health(ui, |app, ui| app.home_banners(ui));
+    }
+    /// The restore and update banners and the "Pick your tools" prompt, each with space above.
+    fn home_banners(&mut self, ui: &mut egui::Ui) {
         if self.restore_pending() {
+            ui.add_space(look::SPACE_M);
             panel().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
@@ -1076,11 +1083,11 @@ impl App {
                     }
                 });
             });
-            ui.add_space(look::GAP);
         }
         let updates = self.pending_updates();
         if !updates.is_empty() && self.market.review.is_none() {
             // Updates are found from the list the app fetches; say so here, not only in the browser.
+            ui.add_space(look::SPACE_M);
             panel().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
@@ -1095,22 +1102,18 @@ impl App {
                     }
                 });
             });
-            ui.add_space(look::GAP);
         }
         if self.registry.packages.is_empty()
             && crate::installer::installed(&self.registry.root).is_empty()
         {
+            ui.add_space(look::SPACE_M);
             ui.horizontal(|ui| {
                 muted(ui, "Pick the tools you want to add to your sidebar.");
                 if ui.button("Pick your tools").clicked() {
                     self.screen = Screen::Pick;
                 }
             });
-            ui.add_space(look::GAP);
         }
-        // Health replaces the "Your toolkit" list (#182): the sidebar and the Add-ons page list
-        // the add-ons; Home says what they found.
-        self.health(ui);
     }
     /// The primary action of an add-on: install it, turn it on, or open it.
     fn run_action(&mut self, e: &Entry) {
