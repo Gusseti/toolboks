@@ -29,8 +29,11 @@ pub use egui;
 /// always refuse each other in plain words. New messages are appended at the end of the
 /// enums, so every older message keeps its bytes (see `tests/golden.rs`).
 ///
-/// Protocol 4 adds [`AddonMessage::Findings`] and [`HostMessage::CheckNow`].
-pub const PROTOCOL_VERSION: u32 = 4;
+/// Protocol 4 adds [`AddonMessage::Findings`] and [`HostMessage::CheckNow`]. Protocol 5 adds
+/// [`AddonMessage::FindingsV5`]: the same findings with an optional [`Finding::why`] and
+/// [`Finding::evidence`]. Postcard is not self-describing, so a field added to a message
+/// changes its bytes; the protocol 4 layout stays as [`FindingV4`].
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// The oldest wire protocol version this crate still speaks. A connection runs at the version
 /// the host chose in its `Hello` when it lies in `MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION`;
@@ -39,6 +42,10 @@ pub const MIN_PROTOCOL_VERSION: u32 = 3;
 
 /// The first protocol version with [`AddonMessage::Findings`] and [`HostMessage::CheckNow`].
 pub const FINDINGS_PROTOCOL_VERSION: u32 = 4;
+
+/// The first protocol version with [`AddonMessage::FindingsV5`] ([`Finding::why`] and
+/// [`Finding::evidence`]).
+pub const EVIDENCE_PROTOCOL_VERSION: u32 = 5;
 
 /// The first message in both directions. Its layout and its variant index 0 never change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,8 +203,12 @@ pub enum AddonMessage {
     },
     /// Protocol 4. The full set of this add-on's health findings; replaces the previous set.
     /// Sent when it changes, also while suspended. Never sent on a protocol 3 connection, and
-    /// a host ignores it there.
-    Findings(Vec<Finding>),
+    /// a host ignores it there. On a protocol 5 connection the SDK sends [`Self::FindingsV5`]
+    /// instead; a host still accepts this one there.
+    Findings(Vec<FindingV4>),
+    /// Protocol 5. Like [`Self::Findings`], with each finding's optional `why` and `evidence`.
+    /// Never sent on a protocol 3 or 4 connection, and a host ignores it there.
+    FindingsV5(Vec<Finding>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -403,6 +414,12 @@ pub const MAX_FINDING_LABEL_CHARS: usize = 40;
 /// one minute to seven days.
 pub const MIN_STALE_AFTER_SECS: u32 = 60;
 pub const MAX_STALE_AFTER_SECS: u32 = 604_800;
+/// [`Finding::why`]: at most this many characters.
+pub const MAX_FINDING_WHY_CHARS: usize = 200;
+/// The `left` and `right` labels of an [`Evidence`]: at most this many characters each.
+pub const MAX_EVIDENCE_LABEL_CHARS: usize = 40;
+/// [`Evidence::Series`]: at most this many values; the host keeps the newest (the last ones).
+pub const MAX_EVIDENCE_VALUES: usize = 24;
 
 /// One check one add-on made, for Health on Home (protocol 4). Plain text only: the host
 /// draws it as plain text (no markdown, no links) under the sending add-on's own name, and
@@ -430,6 +447,149 @@ pub struct Finding {
     pub stale_after_secs: u32,
     /// At most one action. None of them changes the system from Home.
     pub action: Option<FindingAction>,
+    /// Protocol 5. Why it matters, in plain words, at most [`MAX_FINDING_WHY_CHARS`]:
+    /// "Windows slows down and updates can fail when a drive drops below about 10 GB free."
+    /// Home shows it on the finding it puts first. Not sent on a protocol 4 connection.
+    #[serde(default)]
+    pub why: Option<String>,
+    /// Protocol 5. A small picture of what was measured: a filled bar or a strip of columns,
+    /// always with two labels that carry the numbers. Not sent on a protocol 4 connection.
+    #[serde(default)]
+    pub evidence: Option<Evidence>,
+}
+
+/// A small picture of what a [`Finding`] measured. Home draws it in the finding's status colour
+/// (red for a Problem, amber for a Watch, green for OK), and the labels under it say the numbers,
+/// so the colour is never the only signal. Labels at most [`MAX_EVIDENCE_LABEL_CHARS`].
+///
+/// Equality compares the numbers bit for bit, so a value that is not a number still equals
+/// itself (the SDK sends a set again only when it changed).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Evidence {
+    /// A filled bar: `fraction` of it (0 to 1) is filled. "470 GB used" / "6 GB free".
+    Bar {
+        fraction: f32,
+        left: String,
+        right: String,
+    },
+    /// A strip of up to [`MAX_EVIDENCE_VALUES`] columns, oldest first, each 0 to 1 of the
+    /// strip's height. "10 min ago" / "now".
+    Series {
+        values: Vec<f32>,
+        left: String,
+        right: String,
+    },
+}
+
+impl Evidence {
+    /// A filled bar, `fraction` (0 to 1) of it filled, with a label under each end.
+    pub fn bar(fraction: f32, left: impl Into<String>, right: impl Into<String>) -> Self {
+        Self::Bar {
+            fraction,
+            left: left.into(),
+            right: right.into(),
+        }
+    }
+
+    /// A strip of columns, oldest first, each 0 to 1, with a label under each end.
+    pub fn series(values: Vec<f32>, left: impl Into<String>, right: impl Into<String>) -> Self {
+        Self::Series {
+            values,
+            left: left.into(),
+            right: right.into(),
+        }
+    }
+
+    /// The labels under the left and the right end.
+    pub fn labels(&self) -> (&str, &str) {
+        match self {
+            Self::Bar { left, right, .. } | Self::Series { left, right, .. } => (left, right),
+        }
+    }
+}
+
+impl PartialEq for Evidence {
+    fn eq(&self, other: &Self) -> bool {
+        let same = |a: &[f32], b: &[f32]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+        };
+        match (self, other) {
+            (
+                Self::Bar {
+                    fraction: a,
+                    left: a_left,
+                    right: a_right,
+                },
+                Self::Bar {
+                    fraction: b,
+                    left: b_left,
+                    right: b_right,
+                },
+            ) => same(&[*a], &[*b]) && a_left == b_left && a_right == b_right,
+            (
+                Self::Series {
+                    values: a,
+                    left: a_left,
+                    right: a_right,
+                },
+                Self::Series {
+                    values: b,
+                    left: b_left,
+                    right: b_right,
+                },
+            ) => same(a, b) && a_left == b_left && a_right == b_right,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Evidence {}
+
+/// A [`Finding`] in the protocol 4 layout, the body of [`AddonMessage::Findings`]. Frozen:
+/// protocol 4 peers read exactly these fields in this order. Convert with `From`; going to
+/// protocol 4 drops `why` and `evidence`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindingV4 {
+    pub id: String,
+    pub title: String,
+    pub observation: String,
+    pub status: FindingStatus,
+    pub severity: Severity,
+    pub measured_at: u64,
+    pub stale_after_secs: u32,
+    pub action: Option<FindingAction>,
+}
+
+impl From<FindingV4> for Finding {
+    fn from(old: FindingV4) -> Self {
+        Self {
+            id: old.id,
+            title: old.title,
+            observation: old.observation,
+            status: old.status,
+            severity: old.severity,
+            measured_at: old.measured_at,
+            stale_after_secs: old.stale_after_secs,
+            action: old.action,
+            why: None,
+            evidence: None,
+        }
+    }
+}
+
+impl From<&Finding> for FindingV4 {
+    fn from(finding: &Finding) -> Self {
+        Self {
+            id: finding.id.clone(),
+            title: finding.title.clone(),
+            observation: finding.observation.clone(),
+            status: finding.status,
+            severity: finding.severity,
+            measured_at: finding.measured_at,
+            stale_after_secs: finding.stale_after_secs,
+            action: finding.action.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -482,6 +642,8 @@ impl Finding {
             measured_at: unix_now(),
             stale_after_secs: MIN_STALE_AFTER_SECS,
             action: None,
+            why: None,
+            evidence: None,
         }
     }
 
@@ -559,6 +721,18 @@ impl Finding {
     /// Adds an instruction for something only the user can do.
     pub fn instruction(mut self, text: impl Into<String>) -> Self {
         self.action = Some(FindingAction::Instruction { text: text.into() });
+        self
+    }
+
+    /// Protocol 5: why it matters, in plain words ("Windows slows down when ...").
+    pub fn why(mut self, text: impl Into<String>) -> Self {
+        self.why = Some(text.into());
+        self
+    }
+
+    /// Protocol 5: a small picture of what was measured, with labels that carry the numbers.
+    pub fn evidence(mut self, evidence: Evidence) -> Self {
+        self.evidence = Some(evidence);
         self
     }
 
@@ -680,8 +854,10 @@ mod tests {
     #[test]
     fn versions_are_ordered() {
         assert_eq!(MIN_PROTOCOL_VERSION, 3);
-        assert_eq!(PROTOCOL_VERSION, 4);
+        assert_eq!(PROTOCOL_VERSION, 5);
         assert!((MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&FINDINGS_PROTOCOL_VERSION));
+        const { assert!(FINDINGS_PROTOCOL_VERSION < EVIDENCE_PROTOCOL_VERSION) };
+        const { assert!(EVIDENCE_PROTOCOL_VERSION <= PROTOCOL_VERSION) };
         let hello = Hello::with_version("a.b", "1.0.0", 3);
         assert_eq!(hello.protocol_version, 3);
         assert_eq!(hello.addon_id, "a.b");
@@ -722,6 +898,61 @@ mod tests {
         let not_checked = Finding::not_checked("a", "T", "O").measured_at(5);
         assert_eq!(not_checked.status, FindingStatus::NotChecked);
         assert_eq!(not_checked.measured_at, 5);
+    }
+
+    #[test]
+    fn why_and_evidence_builders_and_bitwise_equality() {
+        let finding = Finding::attention(
+            "disk-c",
+            "Drive C: is almost full",
+            "6 GB left",
+            Severity::Problem,
+        )
+        .why("Windows slows down.")
+        .evidence(Evidence::bar(0.987, "470 GB used", "6 GB free"));
+        assert_eq!(finding.why.as_deref(), Some("Windows slows down."));
+        assert_eq!(
+            finding.evidence.as_ref().map(Evidence::labels),
+            Some(("470 GB used", "6 GB free"))
+        );
+        // Bit for bit: a NaN equals itself, so the SDK does not resend an unchanged set.
+        let nan = Evidence::series(vec![f32::NAN, 0.5], "10 min ago", "now");
+        assert_eq!(nan, nan.clone());
+        assert_ne!(nan, Evidence::series(vec![0.0, 0.5], "10 min ago", "now"));
+        assert_ne!(
+            Evidence::bar(0.5, "a", "b"),
+            Evidence::series(vec![0.5], "a", "b")
+        );
+        // Going to protocol 4 drops the new fields; coming back leaves them empty.
+        let old = FindingV4::from(&finding);
+        let back = Finding::from(old);
+        assert_eq!(back.why, None);
+        assert_eq!(back.evidence, None);
+        assert_eq!(back.title, finding.title);
+        assert_eq!(back.action, finding.action);
+    }
+
+    #[test]
+    fn json_without_why_and_evidence_still_parses() {
+        // A protocol 4 finding written as JSON (fixtures, tools) reads with both fields empty.
+        let old = serde_json::json!({
+            "id": "memory-pressure",
+            "title": "Memory",
+            "observation": "No pressure",
+            "status": "Ok",
+            "severity": "Watch",
+            "measured_at": 5,
+            "stale_after_secs": 60,
+            "action": null
+        });
+        let finding: Finding = serde_json::from_value(old).unwrap();
+        assert_eq!(finding.why, None);
+        assert_eq!(finding.evidence, None);
+        let full = Finding::ok("a", "T", "O")
+            .why("Because")
+            .evidence(Evidence::series(vec![0.0, 1.0], "10 min ago", "now"));
+        let text = serde_json::to_string(&full).unwrap();
+        assert_eq!(serde_json::from_str::<Finding>(&text).unwrap(), full);
     }
 
     #[test]

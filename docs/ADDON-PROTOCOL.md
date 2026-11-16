@@ -2,9 +2,10 @@
 
 An out-of-process add-on is a separate executable that runs its egui page headless and sends
 the host tessellated meshes. The host forwards input and paints those meshes inside the add-on's
-page rectangle. This document describes protocol version **4** (version 3 plus health findings:
-`AddonMessage::Findings` and `HostMessage::CheckNow`). Version 3 add-ons keep working: the host
-speaks the version recorded for the installed add-on (see "Handshake and versions"). Version 2
+page rectangle. This document describes protocol version **5**: version 3, plus health findings
+in version 4 (`AddonMessage::Findings` and `HostMessage::CheckNow`), plus in version 5 a finding's
+optional `why` and `evidence` (`AddonMessage::FindingsV5`). Version 3 and 4 add-ons keep working:
+the host speaks the version recorded for the installed add-on (see "Handshake and versions"). Version 2
 binaries must be rebuilt; `Hello` and `Refuse` remain frozen so old peers receive a plain update
 message.
 
@@ -59,12 +60,12 @@ The host chooses the version. Each installed add-on's catalog entry records its
 working on a newer host.
 
 1. Before the exe is started, the host checks that the entry's version is one it speaks
-   (`catalog::PROTOCOL_VERSIONS`, today `[3, 4]`). Any other version is refused in the plain
+   (`catalog::PROTOCOL_VERSIONS`, today `[3, 4, 5]`). Any other version is refused in the plain
    words below and the exe is never started.
 2. The host sends `Hello { protocol_version, addon_id, software_version }` at the entry's version
    (`Hello::with_version`).
 3. The add-on accepts a version from `MIN_PROTOCOL_VERSION` (3) up to its own `PROTOCOL_VERSION`
-   (4). Any other version is refused: it sends `Refuse { protocol_version, reason }` with its own
+   (5). Any other version is refused: it sends `Refuse { protocol_version, reason }` with its own
    newest version and exits with `ProtocolError::VersionMismatch`.
 4. Otherwise it answers with its own `Hello` (its id and the SDK version) **at the host's
    version**. `addon_handshake` returns that agreed version.
@@ -72,16 +73,28 @@ working on a newer host.
    another id.
 
 The agreed version is the connection's. Neither side ever sends a message newer than it: the
-SDK runtime sends `Findings` only at 4 or later, and the supervisor keeps the version per add-on
-(`Supervisor::protocol_version`), sends `CheckNow` only at 4 or later (`Supervisor::send` returns
-false otherwise) and ignores `Findings` arriving on a version 3 connection (one line in the
-add-on's report log). A version 4 runtime that receives `CheckNow` on a version 3 connection
-ends with `ProtocolError::Unexpected`, as a real version 3 add-on would fail to read it.
+SDK runtime sends findings only at 4 or later (`Findings` at 4, `FindingsV5` at 5 or later), and
+the supervisor keeps the version per add-on (`Supervisor::protocol_version`), sends `CheckNow`
+only at 4 or later (`Supervisor::send` returns false otherwise) and ignores `Findings` arriving on
+a version 3 connection and `FindingsV5` on a version 3 or 4 connection (one line in the add-on's
+report log). A runtime at 4 or later that receives `CheckNow` on a version 3 connection ends with
+`ProtocolError::Unexpected`, as a real version 3 add-on would fail to read it.
+
+**Why version 5 and not new fields under 4.** The wire format is postcard, which is not
+self-describing: a struct is its fields in order, with no names and no lengths. A field added to
+`Finding` changes the bytes of every `Findings` message, so a version 4 peer would misread a list
+with the new fields (the next finding starts in the wrong place, and trailing bytes are refused),
+and `#[serde(default)]` or `skip_serializing_if` cannot help (postcard has no "field absent").
+So the version 4 layout is frozen as `FindingV4` (the body of `Findings`, golden bytes in
+`tests/golden.rs`), and the extended `Finding` travels in the new `FindingsV5` message. The new
+fields carry `#[serde(default)]` only so that JSON without them (fixtures, tools) still parses.
 
 | Add-on | Host | Result |
 |---|---|---|
-| version 3 (released before protocol 4) | speaks 3 and 4 | Entry says 3: the host sends `Hello` 3, it runs as before, no findings. |
-| version 4 | speaks 3 and 4 | Entry says 4: findings flow. |
+| version 3 (released before protocol 4) | speaks 3 to 5 | Entry says 3: the host sends `Hello` 3, it runs as before, no findings. |
+| version 4 | speaks 3 to 5 | Entry says 4: findings flow without `why` and `evidence`. |
+| version 5 | speaks 3 to 5 | Entry says 5: findings flow with `why` and `evidence`. A version 5 exe under an entry that says 4 agrees on 4 and sends the version 4 layout. |
+| version 5 | speaks 3 and 4 | The older host's catalog filter hides entries at 5, so it keeps the version it has. |
 | version 4 | speaks only 3 | The older host's catalog filter hides entries at 4, so it keeps the version 3 add-on it has. A version 4 exe that does meet a version 3 host agrees on 3 and sends no findings. |
 | version 3 exe under an entry that says 4 | any | The add-on refuses `Hello` 4: "Add-on speaks protocol 3, Toolboks speaks 4. …" |
 
@@ -112,7 +125,7 @@ Host to add-on (`HostMessage`):
 | `AdminResult { id, outcome }` | Informational helper result for `NativeAddon::admin_result`; never authorizes a write. |
 | `AdminOperation { request, capabilities }` | Dedicated helper connection only (see below); rejected by the drawing runtime. |
 | `TutorialTarget { target, reveal }` | The tour anchor to highlight, or none. `reveal` scrolls it into view once. |
-| `CheckNow` | Version 4. The user asked Home to check again; calls `NativeAddon::check_now`. Optional to honour. Never sent on a version 3 connection. |
+| `CheckNow` | Version 4 and later. The user asked Home to check again; calls `NativeAddon::check_now`. Optional to honour. Never sent on a version 3 connection. |
 
 Input events (`InputEvent`): pointer moved, pointer button, pointer left, drag released outside,
 scroll (unit, phase, source), zoom, key (logical and physical key, repeat, modifiers), text,
@@ -139,7 +152,8 @@ Add-on to host (`AddonMessage`):
 | `TrayItems(items)` | The full set of entries (`id`, `label`, `enabled`) the add-on offers in the host's tray menu; sent when it changes. Optional. |
 | `AdminResult { id, outcome }` | Dedicated helper result only; the host ignores this on a drawing connection. |
 | `TutorialAnchor { target, rect }` | The rectangle of the anchor asked for with `TutorialTarget`, in the view's points, or none while it is not visible. Sent before the frame it belongs to, when it changes. |
-| `Findings(findings)` | Version 4. The full set of the add-on's health findings (see "Host services"); replaces the previous set. Sent when it changes, also from background ticks while suspended. Never sent on a version 3 connection; the host ignores it there. |
+| `Findings(findings)` | Version 4. The full set of the add-on's health findings (`FindingV4`, see "Host services"); replaces the previous set. Sent when it changes, also from background ticks while suspended. Never sent on a version 3 connection; the host ignores it there. The SDK sends `FindingsV5` instead at 5; a host still accepts this one there. |
+| `FindingsV5(findings)` | Version 5. The same as `Findings`, each finding with its optional `why` and `evidence`. Never sent on a version 3 or 4 connection; the host ignores it there. |
 
 A `Frame` holds the meshes (see below), texture uploads (`TextureUpdate { id, delta }`) and frees,
 a repaint-after hint, the cursor icon, copied text, URLs to open, the IME output rectangle, whether
@@ -365,20 +379,29 @@ add-on sends is cut to fixed limits before the host keeps or shows it.
 - **Installed entries.** The installer keeps the catalog entry beside each installed version
   (`entry.json`), so the title, pages, capabilities, the background mark and the protocol version
   are known offline.
-- **Health findings (version 4).** `NativeAddon::findings` → `Findings`; the runtime diffs it like
+- **Health findings (version 4; `why` and `evidence` version 5).** `NativeAddon::findings` →
+  `Findings` at 4, `FindingsV5` at 5; the runtime diffs it like
   `status_items` and also sends it after background ticks, so a background add-on reports with its
   page closed. A `Finding` is `id` (1 to 48 characters of `a-z`, `0-9`, `.`, `-`, unique within
   the add-on), `title` (one line, at most 80 characters), `observation` (at most 240), `status`
   (`Ok`, `Attention`, `NotChecked`, `Unavailable`), `severity` (`Watch` or `Problem`, used only for
   `Attention`), `measured_at` (Unix seconds), `stale_after_secs` and at most one `action`:
   `OpenPage { label, route }` (a page of the same add-on; label at most 40) or
-  `Instruction { text }` (at most 240). The limits are constants in `toolboks-addon-proto`
-  (`MAX_FINDINGS` = 16 per message, `MIN_STALE_AFTER_SECS` = 60, `MAX_STALE_AFTER_SECS` = 604 800).
+  `Instruction { text }` (at most 240). Version 5 adds `why` (why it matters, at most 200) and
+  `evidence`: `Bar { fraction, left, right }` (a filled bar, 0 to 1) or
+  `Series { values, left, right }` (at most 24 columns, oldest first, each 0 to 1), with labels of
+  at most 40 that carry the numbers ("470 GB used" / "6 GB free"). The limits are constants in
+  `toolboks-addon-proto` (`MAX_FINDINGS` = 16 per message, `MIN_STALE_AFTER_SECS` = 60,
+  `MAX_STALE_AFTER_SECS` = 604 800, `MAX_FINDING_WHY_CHARS`, `MAX_EVIDENCE_LABEL_CHARS`,
+  `MAX_EVIDENCE_VALUES`).
   The message carries no source: the host files every finding under the id of the connection it
   came from. `CheckNow` asks the add-on to check again (`NativeAddon::check_now`). The host keeps
   findings in memory only, never on disk (`src/health.rs`): each message replaces the add-on's
   set; a finding with a bad or repeated id (the first wins), an empty title or an `OpenPage`
   route whose first segment is not one of the add-on's catalog `pages` is dropped with a line in
   the add-on's report log; text is cleaned like status items, a `measured_at` in the future is
-  taken as the receive time and `stale_after_secs` is clamped. Findings stay after the add-on
-  stops and go when it is turned off or removed. Showing them on Home comes in #182.
+  taken as the receive time and `stale_after_secs` is clamped; `why` and the evidence labels are
+  cut, evidence numbers are clamped to 0 to 1 (one that is not a number becomes 0; a series keeps
+  its newest 24), and evidence without labels, with a bar that is not a number or a series without
+  values is dropped (the finding stays). Findings stay after the add-on stops and go when it is
+  turned off or removed. Home shows them as described in `DESIGN.md` ("Focus card").

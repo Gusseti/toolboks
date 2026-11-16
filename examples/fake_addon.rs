@@ -8,7 +8,7 @@
 //!   ends children too (the child's process id goes to `child.pid`);
 //! - `services`: a real add-on that uses every host service (status bar items, tray entries,
 //!   a tour with an anchor, preferences), for the host services tests;
-//! - `findings`: a real add-on (protocol 4) with background work that reports health findings:
+//! - `findings`: a real add-on (protocol 5) with background work that reports health findings:
 //!   one changes on every background tick, one counts `CheckNow`;
 //! - `wrong-token`: opens the pipes and presents a token that is not the one it was given;
 //! - `silent`: opens nothing and waits.
@@ -215,7 +215,7 @@ fn protocol_3(send_findings: bool) {
         // Not allowed at protocol 3. Sent before the status item, so a host that shows the
         // status item has already dealt with this.
         let finding = Finding::attention("rogue", "Rogue", "Not at 3", Severity::Problem);
-        let _ = writer.write(&AddonMessage::Findings(vec![finding]));
+        let _ = writer.write(&AddonMessage::Findings(vec![(&finding).into()]));
     }
     let _ = writer.write(&AddonMessage::StatusItems(vec![
         toolboks_addon_proto::StatusItem {

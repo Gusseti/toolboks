@@ -574,6 +574,7 @@ fn host_message_allowed(message: &HostMessage, version: u32) -> bool {
 fn addon_message_allowed(message: &AddonMessage, version: u32) -> bool {
     match message {
         AddonMessage::Findings(_) => version >= toolboks_addon_proto::FINDINGS_PROTOCOL_VERSION,
+        AddonMessage::FindingsV5(_) => version >= toolboks_addon_proto::EVIDENCE_PROTOCOL_VERSION,
         _ => true,
     }
 }

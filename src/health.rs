@@ -8,7 +8,11 @@
 //!   cleaning, or whose `OpenPage` route leads outside the add-on's own catalog pages;
 //! - cleans every text like status items (control characters removed, trimmed, cut to the
 //!   limit), takes a `measured_at` in the future as the receive time and clamps
-//!   `stale_after_secs`.
+//!   `stale_after_secs`;
+//! - cuts `why` and the evidence labels to their limits, clamps evidence numbers to 0..=1 (a
+//!   number that is not one becomes 0, a series keeps its newest values), and drops evidence
+//!   without labels (the labels carry the numbers; colour is never the only signal) or with a
+//!   bar that is not a number.
 //!
 //! **Memory only.** Nothing here is written to disk, put in a report or sent anywhere. After a
 //! restart Home starts empty and fills as the add-ons report again.
@@ -20,8 +24,9 @@ use crate::addon_services::clip;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use toolboks_addon_proto::{
-    Finding, FindingAction, FindingStatus, Severity, MAX_FINDINGS, MAX_FINDING_LABEL_CHARS,
-    MAX_FINDING_TEXT_CHARS, MAX_FINDING_TITLE_CHARS, MAX_STALE_AFTER_SECS, MIN_STALE_AFTER_SECS,
+    Evidence, Finding, FindingAction, FindingStatus, Severity, MAX_EVIDENCE_LABEL_CHARS,
+    MAX_EVIDENCE_VALUES, MAX_FINDINGS, MAX_FINDING_LABEL_CHARS, MAX_FINDING_TEXT_CHARS,
+    MAX_FINDING_TITLE_CHARS, MAX_FINDING_WHY_CHARS, MAX_STALE_AFTER_SECS, MIN_STALE_AFTER_SECS,
 };
 
 /// "Needs attention" shows at most this many rows per add-on; the rest are counted in
@@ -291,7 +296,60 @@ fn clean(
             .stale_after_secs
             .clamp(MIN_STALE_AFTER_SECS, MAX_STALE_AFTER_SECS),
         action,
+        why: finding
+            .why
+            .as_deref()
+            .map(|why| clip(why, MAX_FINDING_WHY_CHARS))
+            .filter(|why| !why.is_empty()),
+        evidence: finding
+            .evidence
+            .as_ref()
+            .and_then(|evidence| clean_evidence(evidence, id, notes)),
     })
+}
+
+/// A number for a picture: 0 to 1, and 0 for one that is not a number.
+fn unit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// The evidence cut to every limit, or `None` (with a line in `notes`) when it cannot be shown
+/// honestly: no label to carry the numbers, a bar that is not a number, or a series without
+/// values.
+fn clean_evidence(evidence: &Evidence, id: &str, notes: &mut Vec<String>) -> Option<Evidence> {
+    let (left, right) = evidence.labels();
+    let left = clip(left, MAX_EVIDENCE_LABEL_CHARS);
+    let right = clip(right, MAX_EVIDENCE_LABEL_CHARS);
+    let drop = |notes: &mut Vec<String>, why: &str| {
+        notes.push(format!("dropped the evidence of finding {id}: {why}"));
+        None
+    };
+    if left.is_empty() && right.is_empty() {
+        return drop(notes, "it has no labels");
+    }
+    match evidence {
+        Evidence::Bar { fraction, .. } if !fraction.is_finite() => {
+            drop(notes, "its bar is not a number")
+        }
+        Evidence::Bar { fraction, .. } => Some(Evidence::Bar {
+            fraction: unit(*fraction),
+            left,
+            right,
+        }),
+        Evidence::Series { values, .. } if values.is_empty() => drop(notes, "it has no values"),
+        Evidence::Series { values, .. } => {
+            let newest = &values[values.len().saturating_sub(MAX_EVIDENCE_VALUES)..];
+            Some(Evidence::Series {
+                values: newest.iter().copied().map(unit).collect(),
+                left,
+                right,
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -509,6 +567,83 @@ mod tests {
             );
             assert!(!all.chars().any(char::is_control), "{all:?}");
         }
+    }
+
+    #[test]
+    fn why_is_cleaned_and_cut_and_an_empty_one_is_none() {
+        let mut store = Store::default();
+        let list = [
+            ok("long").why(format!("\u{7}Because\n {}", "w".repeat(300))),
+            ok("blank").why(" \t "),
+            ok("none"),
+        ];
+        let dropped = store.replace("a.disk", &list, &[], NOW);
+        assert!(dropped.is_empty(), "{dropped:?}");
+        let kept = kept(&store, "a.disk");
+        let why = kept[0].why.as_deref().unwrap();
+        assert!(why.starts_with("Because w"), "{why}");
+        assert_eq!(why.chars().count(), MAX_FINDING_WHY_CHARS);
+        assert!(!why.chars().any(char::is_control));
+        assert_eq!(kept[1].why, None);
+        assert_eq!(kept[2].why, None);
+    }
+
+    #[test]
+    fn evidence_is_clamped_cut_and_dropped_when_it_cannot_be_read() {
+        let mut store = Store::default();
+        let long = "l".repeat(60);
+        let many: Vec<f32> = (0..30).map(|i| i as f32 / 10.0 - 1.0).collect();
+        let list = [
+            ok("over").evidence(Evidence::bar(1.7, &long, "6 GB\u{0} free")),
+            ok("under").evidence(Evidence::bar(-0.2, "", "right only")),
+            ok("nan").evidence(Evidence::bar(f32::NAN, "a", "b")),
+            ok("unlabelled").evidence(Evidence::bar(0.5, " ", "\n")),
+            ok("series").evidence(Evidence::series(many.clone(), "10 min ago", "now")),
+            ok("odd").evidence(Evidence::series(
+                vec![f32::INFINITY, f32::NAN, 0.25],
+                "a",
+                "b",
+            )),
+            ok("empty").evidence(Evidence::series(Vec::new(), "a", "b")),
+        ];
+        let dropped = store.replace("a.disk", &list, &[], NOW);
+        // Bad evidence goes, the finding stays.
+        let kept = kept(&store, "a.disk");
+        assert_eq!(kept.len(), 7);
+        assert_eq!(
+            dropped,
+            [
+                "dropped the evidence of finding nan: its bar is not a number",
+                "dropped the evidence of finding unlabelled: it has no labels",
+                "dropped the evidence of finding empty: it has no values",
+            ]
+        );
+        let Some(Evidence::Bar {
+            fraction,
+            left,
+            right,
+        }) = &kept[0].evidence
+        else {
+            panic!("{:?}", kept[0].evidence);
+        };
+        assert_eq!(*fraction, 1.0);
+        assert_eq!(left.chars().count(), MAX_EVIDENCE_LABEL_CHARS);
+        assert_eq!(right, "6 GB free");
+        assert_eq!(kept[1].evidence, Some(Evidence::bar(0.0, "", "right only")));
+        assert_eq!(kept[2].evidence, None);
+        assert_eq!(kept[3].evidence, None);
+        let Some(Evidence::Series { values, .. }) = &kept[4].evidence else {
+            panic!("{:?}", kept[4].evidence);
+        };
+        // The newest 24 (the last ones), each within 0..=1.
+        assert_eq!(values.len(), MAX_EVIDENCE_VALUES);
+        let expected: Vec<f32> = many[6..].iter().map(|v| v.clamp(0.0, 1.0)).collect();
+        assert_eq!(values, &expected);
+        assert_eq!(
+            kept[5].evidence,
+            Some(Evidence::series(vec![0.0, 0.0, 0.25], "a", "b"))
+        );
+        assert_eq!(kept[6].evidence, None);
     }
 
     #[test]

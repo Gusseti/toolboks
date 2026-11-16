@@ -16,9 +16,10 @@ pub mod runtime;
 pub mod admin;
 #[cfg(feature = "native-ui")]
 pub use toolboks_addon_proto::{AdminOutcome, AdminRequest};
-/// Health findings (protocol 4): see [`NativeAddon::findings`].
+/// Health findings (protocol 4; `why` and `evidence` protocol 5): see
+/// [`NativeAddon::findings`].
 #[cfg(feature = "native-ui")]
-pub use toolboks_addon_proto::{Finding, FindingAction, FindingStatus, Severity};
+pub use toolboks_addon_proto::{Evidence, Finding, FindingAction, FindingStatus, Severity};
 
 /// Declarative tours only describe and navigate UI; they never execute actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -521,6 +522,8 @@ pub trait NativeAddon {
     /// This add-on's current health findings for Home. Called after every frame and
     /// background tick (also while suspended); sent to the host only when the set changed,
     /// and only to a host that speaks protocol 4 or later. At most 16 are kept. Default: none.
+    /// A finding's `why` and `evidence` reach a host at protocol 5 or later; a protocol 4 host
+    /// gets the finding without them.
     ///
     /// Build a finding when you measure, keep it, and return a copy here. The builders
     /// ([`Finding::ok`] and the others) stamp the current time, so a finding built inside this

@@ -87,7 +87,11 @@ Home shows what the installed add-ons measured: no score and no "your PC is heal
 check you make is one `Finding`, built with `Finding::ok`, `Finding::attention(.., Severity)`,
 `Finding::unavailable` or `Finding::not_checked`, plus `.stale_after(secs)` and at most one action
 (`.open_page(label, route)` or `.instruction(text)`). Findings need protocol 4: the runtime sends
-them only to a host that speaks it, and an older host never sees them.
+them only to a host that speaks it, and an older host never sees them. Protocol 5 adds two
+optional parts that Home shows on the finding it puts first: `.why(text)` (why it matters, at
+most 200 characters) and `.evidence(Evidence::bar(fraction, left, right))` or
+`.evidence(Evidence::series(values, left, right))`, a small picture of what you measured. A host
+at protocol 4 gets the finding without them.
 
 - **Build a finding when you measure, keep it, and return a copy from `findings()`.** The builders
   stamp the current time, so a finding built inside `findings()` changes every second and is sent
@@ -113,6 +117,10 @@ them only to a host that speaks it, and an older host never sees them.
   the user can do (BIOS, Windows Settings).
 - A background add-on (`background: true`) reports with its page closed: `findings()` is also
   read after every `tick_background`. A foreground add-on reports only while its page is open.
+- Evidence is drawn in the finding's status colour, so the two labels must carry the numbers
+  ("470 GB used" / "6 GB free", "10 min ago" / "now"), at most 40 characters each. A bar's
+  `fraction` and each of a series' values (at most 24, oldest first) are 0 to 1. Evidence without
+  labels is dropped.
 - Findings stay on the PC: the host keeps them in memory only.
 
 ## 3. Make it look like Toolboks

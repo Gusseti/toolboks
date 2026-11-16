@@ -1,11 +1,14 @@
-//! Isolated PREVIEW check of Health on Home (#182). It installs four fixture add-on records (no
-//! exe; nothing is started) into a fresh data folder, feeds fixture findings into the health
-//! store the way `Services` does, and saves a screenshot of each state: attention, all OK, mixed
-//! (not checked, unavailable, out of date), nothing reported, "Checking…", a long list that
-//! scrolls, and nothing installed (the "Pick your tools" prompt).
+//! Isolated PREVIEW check of Health on Home (#182, the "Focus" design). It installs four fixture
+//! add-on records (no exe; nothing is started) into a fresh data folder, feeds fixture findings
+//! into the health store the way `Services` does, and saves a screenshot of each state: the focus
+//! card (a Problem with a bar, a Watch with a series, nine OK rows from three add-ons), a focus
+//! with "Why it matters" and "What to do", all OK, mixed (not checked, unavailable, out of date),
+//! nothing reported, "Checking…", a long list that scrolls, and nothing installed (the "Pick
+//! your tools" prompt). The fixtures exist only in this preview check, never in release code.
 //!
-//! `toolboks --health-check <out> [scale]`: the window is 1060 x 720 points at `scale` (1.0 or
-//! 1.5), so the screenshots are 1060 x 720 pixels at 100 % and 1590 x 1080 at 150 %.
+//! `toolboks --health-check <out> [scale] [width height]`: the window is 1060 x 720 points (or
+//! `width` x `height`) at `scale` (1.0 or 1.5), so the screenshots are 1060 x 720 pixels at
+//! 100 % and 1590 x 1080 at 150 %.
 use super::*;
 use std::{
     path::PathBuf,
@@ -14,7 +17,7 @@ use std::{
         Arc,
     },
 };
-use toolboks_addon_proto::{Finding, Severity};
+use toolboks_addon_proto::{Evidence, Finding, Severity};
 
 const DISK: &str = "fixture.disk-manager";
 const MEMORY: &str = "fixture.memory-cleaner";
@@ -121,6 +124,8 @@ fn pages(id: &str) -> Vec<String> {
 pub struct Check {
     app: App,
     output: PathBuf,
+    /// The window size in points the run was started with.
+    size: [f32; 2],
     stage: usize,
     frames: usize,
     /// When the current stage began: a capture waits for the frames and for animations (such as
@@ -132,7 +137,7 @@ pub struct Check {
 }
 
 impl Check {
-    pub fn new(output: PathBuf) -> Self {
+    pub fn new(output: PathBuf, size: [f32; 2]) -> Self {
         install_fixtures(&crate::addons::data_root());
         let mut app = App::new();
         // A fresh data folder reads as an update from the old built-in tools; that offer is not
@@ -144,6 +149,7 @@ impl Check {
         Self {
             app,
             output,
+            size,
             stage: 0,
             frames: 0,
             stage_started: std::time::Instant::now(),
@@ -207,68 +213,94 @@ fn ago(secs: u64) -> u64 {
     crate::addon_services::unix_now() - secs
 }
 
+/// Nine OK rows with short values, three from each of three add-ons.
+fn fine_rows(id: &str) -> Vec<Finding> {
+    let rows: &[(&str, &str, &str)] = match id {
+        MEMORY => &[
+            ("memory-in-use", "Memory in use", "41% in use"),
+            ("page-file", "Page file", "Sized by Windows"),
+            ("compressed", "Compressed memory", "1.2 GB"),
+        ],
+        DISK => &[
+            ("drive-health-c", "Drive health of C:", "Good"),
+            ("free-space-d", "Free space on D:", "61% free"),
+            ("temperature-c", "Drive temperature", "31 °C"),
+        ],
+        EVENTS => &[
+            ("recent-crashes", "Crashes", "None in 30 days"),
+            ("boot-time", "Start-up", "42 s"),
+            ("restarts", "Restarts", "None unexpected"),
+        ],
+        _ => &[],
+    };
+    rows.iter()
+        .map(|(id, title, value)| {
+            Finding::ok(*id, *title, *value)
+                .measured_at(ago(90))
+                .stale_after(86_400)
+        })
+        .collect()
+}
+
+/// The focus card's fixture: a Problem with a bar, a Watch with a series, nine OK rows.
 fn attention_sets() -> Vec<(&'static str, Vec<Finding>)> {
+    let mut disk = vec![Finding::attention(
+        "free-space-c",
+        "Drive C: is almost full",
+        "Only 6 GB is left of 476 GB.",
+        Severity::Problem,
+    )
+    .measured_at(ago(20))
+    .stale_after(86_400)
+    .why("Windows slows down and updates can fail when a drive drops below about 10 GB free.")
+    .evidence(Evidence::bar(470.0 / 476.0, "470 GB used", "6 GB free"))
+    .open_page("Open Disk Manager", "Optimization/C:")];
+    disk.extend(fine_rows(DISK));
+    let mut memory = vec![Finding::attention(
+        "memory-pressure",
+        "Memory ran short under load",
+        "Available memory fell under 1.1 GB 4 times in the last 10 minutes.",
+        Severity::Watch,
+    )
+    .measured_at(ago(120))
+    .stale_after(300)
+    .evidence(Evidence::series(
+        vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.7, 1.0, 0.0, 0.0, 0.85],
+        "10 min ago",
+        "now",
+    ))
+    .open_page("Open Memory Cleaner", "Home")];
+    memory.extend(fine_rows(MEMORY));
+    vec![(DISK, disk), (MEMORY, memory), (EVENTS, fine_rows(EVENTS))]
+}
+
+/// A Watch focus whose action is an instruction: "Why it matters" and "What to do" side by side.
+fn instruction_sets() -> Vec<(&'static str, Vec<Finding>)> {
     vec![
         (
-            DISK,
-            vec![
-                Finding::attention(
-                    "drive-health-c",
-                    "Drive C: may fail soon",
-                    "The drive reports 2 media errors and 94% wear.",
-                    Severity::Problem,
-                )
-                .measured_at(ago(180))
-                .stale_after(86_400)
-                .open_page("Open drive health", "Optimization/C:"),
-                Finding::unavailable(
-                    "drive-health-d",
-                    "Drive health of D:",
-                    "Needs administrator rights",
-                )
-                .measured_at(ago(180))
-                .stale_after(86_400),
-            ],
-        ),
-        (
-            MEMORY,
+            MONITOR,
             vec![Finding::attention(
-                "memory-pressure",
-                "Memory is under pressure",
-                "Available memory stayed under 1.1 GB for 6 minutes and Windows read 900 pages a second from disk.",
+                "ram-speed",
+                "Memory runs slower than it is rated for",
+                "Memory runs at 2400 MT/s; it is rated for 3600 MT/s.",
                 Severity::Watch,
             )
-            .measured_at(ago(20))
-            .stale_after(300)
-            .open_page("Open Memory Cleaner", "Home")],
+            .measured_at(ago(600))
+            .stale_after(86_400)
+            .why(
+                "Games and other heavy apps can lose some speed when memory runs below its rating.",
+            )
+            .evidence(Evidence::bar(
+                2400.0 / 3600.0,
+                "2400 MT/s now",
+                "3600 MT/s rated",
+            ))
+            .instruction(
+                "Turn on XMP or EXPO in the BIOS setup. Toolboks does not change BIOS settings.",
+            )],
         ),
-        (
-            MONITOR,
-            vec![
-                Finding::attention(
-                    "ram-speed",
-                    "XMP or EXPO looks off",
-                    "Memory runs at 2400 MT/s; it is rated for 3600 MT/s.",
-                    Severity::Watch,
-                )
-                .measured_at(ago(600))
-                .stale_after(86_400)
-                .instruction(
-                    "Turn on XMP or EXPO in the BIOS setup. Toolboks does not change BIOS settings.",
-                ),
-                Finding::ok("power-plan", "Power plan: Balanced", "")
-                    .measured_at(ago(600))
-                    .stale_after(86_400),
-            ],
-        ),
-        (
-            EVENTS,
-            vec![
-                Finding::ok("recent-crashes", "No crashes recorded in the last 7 days", "")
-                    .measured_at(ago(120))
-                    .stale_after(3_600),
-            ],
-        ),
+        (MEMORY, fine_rows(MEMORY)),
+        (DISK, fine_rows(DISK)),
     ]
 }
 
@@ -363,6 +395,7 @@ fn mixed_sets() -> Vec<(&'static str, Vec<Finding>)> {
 /// More than three attention rows from one add-on, and enough rows to scroll.
 fn long_sets() -> Vec<(&'static str, Vec<Finding>)> {
     let mut sets = attention_sets();
+    sets.extend(instruction_sets().into_iter().take(1));
     let disk = &mut sets[0].1;
     for (letter, minutes) in [("e", 7), ("f", 9), ("g", 11)] {
         disk.push(
@@ -425,80 +458,96 @@ impl eframe::App for Check {
         match self.stage {
             0 => {
                 let size = ctx.content_rect().size();
+                let [width, height] = self.size;
                 assert!(
-                    (size.x - 1060.0).abs() < 2.0 && (size.y - 720.0).abs() < 2.0,
-                    "the window is {size:?} points, not 1060 x 720"
+                    (size.x - width).abs() < 2.0 && (size.y - height).abs() < 2.0,
+                    "the window is {size:?} points, not {width} x {height}"
                 );
                 self.feed(attention_sets(), &[]);
                 let board = self.board();
-                assert_eq!(board.attention.len(), 3);
-                assert!(board
-                    .caption
-                    .starts_with("3 things need attention. From 4 add-ons"));
-                self.capture("01-attention");
+                let focus = board.focus.as_ref().expect("a focus card");
+                assert_eq!(focus.title, "Drive C: is almost full");
+                assert!(focus.button.as_ref().unwrap().primary);
+                assert!(matches!(focus.evidence, Some(Evidence::Bar { .. })));
+                assert_eq!(board.others.len(), 1);
+                assert!(matches!(
+                    board.others[0].evidence,
+                    Some(Evidence::Series { .. })
+                ));
+                assert_eq!(board.fine.len(), 3);
+                assert!(board.fine.iter().all(|group| group.facts.len() == 3
+                    && group.facts.iter().all(|fact| !fact.value.is_empty())));
+                assert_eq!(board.fine_heading, "Everything else is fine");
+                assert!(board.quiet.is_empty());
+                assert!(board.caption.starts_with("Health, 11 checks, last result"));
+                self.capture("01-focus");
             }
             1 => {
-                self.feed(all_ok_sets(), &[]);
+                self.feed(instruction_sets(), &[]);
                 let board = self.board();
-                assert!(board
-                    .caption
-                    .starts_with("Nothing needs attention in what was checked."));
-                assert!(board.footer);
-                self.capture("02-all-ok");
+                let focus = board.focus.as_ref().expect("a focus card");
+                assert!(focus.why.is_some() && focus.instruction.is_some());
+                assert_eq!(focus.button, None);
+                self.capture("02-focus-instruction");
             }
             2 => {
-                self.feed(mixed_sets(), &[EVENTS]);
+                self.feed(all_ok_sets(), &[]);
                 let board = self.board();
-                let words: Vec<_> = board.checked.iter().map(|l| l.status.word()).collect();
                 assert_eq!(
-                    words,
-                    [
-                        "Not checked",
-                        "Unavailable",
-                        "Out of date",
-                        "Out of date",
-                        "OK"
-                    ]
+                    board.headline.as_deref(),
+                    Some("Nothing needs attention in what was checked.")
                 );
-                self.capture("03-mixed");
+                assert!(board.footer && board.focus.is_none());
+                self.capture("03-all-ok");
             }
             3 => {
+                self.feed(mixed_sets(), &[EVENTS]);
+                let board = self.board();
+                let words: Vec<_> = board.quiet.iter().map(|l| l.status.word()).collect();
+                assert_eq!(
+                    words,
+                    ["Not checked", "Unavailable", "Out of date", "Out of date"]
+                );
+                assert_eq!(board.fine.len(), 1);
+                self.capture("04-mixed");
+            }
+            4 => {
                 self.feed(Vec::new(), &[]);
                 let board = self.board();
                 assert!(board.nothing_reported);
                 assert_eq!(
-                    board.caption,
-                    "No add-on has reported a check yet. Disk Manager, Event Watch and Memory Cleaner report checks here."
+                    board.headline.as_deref(),
+                    Some("No add-on has reported a check yet. Disk Manager, Event Watch and Memory Cleaner report checks here.")
                 );
-                self.capture("04-nothing-reported");
+                self.capture("05-nothing-reported");
             }
-            4 => {
+            5 => {
                 self.feed(attention_sets(), &[]);
                 self.app.health_check = Some(super::health::CheckAgain::new(
                     std::time::Instant::now(),
                     self.app.services.health.received(),
                 ));
                 assert!(self.board().caption.ends_with("Checking…"));
-                self.capture("05-checking");
+                self.capture("06-checking");
             }
-            5 => {
+            6 => {
                 self.feed(long_sets(), &[]);
                 let board = self.board();
                 assert_eq!(
                     board.more,
                     [(DISK.to_string(), "1 more from Disk Manager".to_string())]
                 );
-                self.capture("06-long-list");
-            }
-            6 => {
-                self.feed(Vec::new(), &[]);
-                std::fs::remove_dir_all(self.app.registry.root.join("addons")).unwrap();
-                self.capture("07-nothing-installed");
+                self.capture("07-long-list");
             }
             7 => {
+                self.feed(Vec::new(), &[]);
+                std::fs::remove_dir_all(self.app.registry.root.join("addons")).unwrap();
+                self.capture("08-nothing-installed");
+            }
+            8 => {
                 std::fs::write(
                     self.output.join("result.txt"),
-                    "PASS: Health on Home drawn in seven states from fixture findings (attention, all OK, mixed, nothing reported, checking, long list, nothing installed). Inspect the captures.\n",
+                    "PASS: Health on Home drawn in eight states from fixture findings (focus, focus with what to do, all OK, mixed, nothing reported, checking, long list, nothing installed). Inspect the captures.\n",
                 )
                 .unwrap();
                 self.app.quitting = true;
