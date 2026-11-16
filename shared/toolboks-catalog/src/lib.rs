@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fmt;
-use toolboks_addon_sdk::{valid_data_note, valid_id, version};
+use toolboks_addon_sdk::{valid_check_names, valid_data_note, valid_id, version};
 
 /// The only index format this build understands. Additive fields do not bump it (unknown fields are
 /// ignored); a change in meaning does, and older hosts then refuse the whole index.
@@ -125,6 +125,11 @@ pub struct Entry {
     /// (`toolboks_addon_sdk::valid_data_note`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_note: Option<String>,
+    /// The names of the health checks the add-on can report to Home, copied from its manifest
+    /// (`checks`): at most 6 names of at most 40 characters, plain text, no duplicates
+    /// (`toolboks_addon_sdk::valid_check_names`). Older hosts ignore the field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<String>,
     pub kind: Kind,
     pub version: String,
     pub min_toolboks_version: String,
@@ -252,6 +257,7 @@ impl Entry {
             self.data_note.as_deref().is_none_or(valid_data_note),
             "data_note",
         )?;
+        ok(valid_check_names(&self.checks), "checks")?;
         ok(version(&self.version).is_some(), "version")?;
         ok(
             version(&self.min_toolboks_version).is_some(),
@@ -383,6 +389,7 @@ mod tests {
             pages: vec![],
             background: false,
             data_note: None,
+            checks: vec![],
             kind: Kind::Declarative,
             version: version.into(),
             min_toolboks_version: "0.12.0".into(),
@@ -567,6 +574,101 @@ mod tests {
                 Err(Refused::Malformed(_))
             ));
         }
+    }
+
+    #[test]
+    fn checks_are_optional_few_short_unique_plain_names() {
+        let mut entry = entry("toolboks.sample", "1.0.0");
+        // Without the field: not written, and an index without it reads as no checks.
+        let json = serde_json::to_value(&entry).unwrap();
+        assert!(json.get("checks").is_none());
+        let old: Entry = serde_json::from_value(json).unwrap();
+        assert!(old.checks.is_empty());
+        // With the field: it round-trips through a whole index.
+        let mut with = index();
+        with.entries[0].checks = vec!["Recent crashes".into(), "Disk health".into()];
+        assert_eq!(Index::parse(&bytes(&with)), Ok(with.clone()));
+        let json = serde_json::to_value(&with.entries[0]).unwrap();
+        assert_eq!(
+            json["checks"],
+            serde_json::json!(["Recent crashes", "Disk health"])
+        );
+        // An explicit empty list is allowed and is the same as absent.
+        let mut json = serde_json::to_value(&entry).unwrap();
+        json["checks"] = serde_json::json!([]);
+        let empty: Entry = serde_json::from_value(json).unwrap();
+        assert!(empty.checks.is_empty());
+        // The limits: 6 names, 40 characters (not bytes).
+        entry.checks = (0..6).map(|i| format!("Check {i}")).collect();
+        assert_eq!(entry.validate(), Ok(()));
+        entry.checks = vec!["a".repeat(40), "\u{e5}".repeat(40)];
+        assert_eq!(entry.validate(), Ok(()));
+        let bad_lists: Vec<Vec<String>> = vec![
+            (0..7).map(|i| format!("Check {i}")).collect(),
+            vec!["a".repeat(41)],
+            vec!["\u{e5}".repeat(41)],
+            vec![String::new()],
+            vec!["   ".into()],
+            vec![" Disk".into()],
+            vec!["Disk ".into()],
+            vec!["Dis\nk".into()],
+            vec!["Dis\tk".into()],
+            vec!["Dis\u{1b}[31mk".into()],
+            // Bidi and other hidden characters: the same rule as the data note.
+            vec!["Dis\u{202e}k".into()],
+            vec!["Dis\u{2066}k\u{2069}".into()],
+            vec!["Dis\u{200b}k".into()],
+            vec!["\u{feff}Disk".into()],
+            vec!["Dis\u{2028}k".into()],
+            // Duplicates, also when only the case differs.
+            vec!["Disk".into(), "Disk".into()],
+            vec!["Disk".into(), "Other".into(), "disk".into()],
+        ];
+        for bad in bad_lists {
+            entry.checks = bad.clone();
+            assert_eq!(entry.validate(), Err("checks"), "{bad:?}");
+            // A bad list refuses the whole index, like any other bad field.
+            let mut index = index();
+            index.entries[0].checks = bad;
+            assert!(matches!(
+                Index::parse(&bytes(&index)),
+                Err(Refused::Malformed(_))
+            ));
+        }
+    }
+
+    /// What a host built before the field existed does with an index that has it: its entry type
+    /// has no `checks` and no `deny_unknown_fields`, so the field is ignored and the rest reads
+    /// the same.
+    #[test]
+    fn an_older_host_ignores_checks() {
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct OldEntry {
+            id: String,
+            version: String,
+            data_note: Option<String>,
+            sha256: String,
+        }
+        #[derive(Deserialize)]
+        struct OldIndex {
+            format_version: u32,
+            entries: Vec<OldEntry>,
+        }
+        let mut with = index();
+        with.entries[0].checks = vec!["Recent crashes".into()];
+        let old: OldIndex = serde_json::from_slice(&bytes(&with)).unwrap();
+        assert_eq!(old.format_version, FORMAT_VERSION);
+        assert_eq!(old.entries.len(), with.entries.len());
+        assert_eq!(old.entries[0].id, with.entries[0].id);
+        assert_eq!(old.entries[0].sha256, with.entries[0].sha256);
+        // And this host reads an index without the field, which is every existing index.
+        let mut json: serde_json::Value = serde_json::from_slice(&bytes(&with)).unwrap();
+        for entry in json["entries"].as_array_mut().unwrap() {
+            entry.as_object_mut().unwrap().remove("checks");
+        }
+        let parsed = Index::parse(&serde_json::to_vec(&json).unwrap()).unwrap();
+        assert!(parsed.entries.iter().all(|e| e.checks.is_empty()));
     }
 
     #[test]
