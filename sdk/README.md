@@ -79,6 +79,9 @@ API 2 adds the optional `byline` and `native_provider` manifest fields. The opti
 manifest field is one plain line (at most 160 characters) about data the add-on keeps on this PC;
 the app shows it in the install review and the details. Apps older than the release that adds it
 refuse a package that has it, so a package that sets it needs that `min_toolboks_version`. `native-ui`
+The optional `checks` manifest field lists the names of the health checks the add-on can report
+(at most 6 names of at most 40 characters of plain text, no duplicates); the same rule and the
+same `min_toolboks_version` caveat apply as for `data_note`. `native-ui`
 exposes the `NativeAddon` Rust trait; `runtime::run_addon` runs it in a separate process.
 Local activation packages must match a provider still compiled into the host; they cannot
 start executables. Catalog installation uses the existing installer and supervisor.
