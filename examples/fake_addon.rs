@@ -11,7 +11,8 @@
 //! - `wrong-token`: opens the pipes and presents a token that is not the one it was given;
 //! - `silent`: opens nothing and waits.
 //!
-//! Every start appends a line to `starts.txt`, so a test can count launches.
+//! Every start appends a line to `starts.txt`, so a test can count launches, and every `Suspend`
+//! a line to `suspends.txt`.
 
 use eframe::egui;
 use std::collections::BTreeMap;
@@ -26,6 +27,16 @@ pub const ID: &str = "test.fake-addon";
 struct Fake;
 
 impl NativeAddon for Fake {
+    fn suspend(&mut self) {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(folder().join("suspends.txt"))
+        {
+            let _ = writeln!(file, "suspend");
+        }
+    }
+
     fn ui(
         &mut self,
         ui: &mut egui::Ui,

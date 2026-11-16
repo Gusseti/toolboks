@@ -10,6 +10,7 @@ use crate::ui as look;
 use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
 #[cfg(feature = "preview")]
 pub mod addon_check;
+mod addon_tick;
 #[cfg(feature = "preview")]
 pub mod disk_manager_check;
 mod marketplace;
@@ -73,6 +74,8 @@ pub struct App {
     silent_check: bool,
     /// Show the "update available" prompt window.
     prompt_open: bool,
+    /// When the add-on work last ran, and whether `logic` ran it in this pass (#176).
+    addon_tick: addon_tick::AddonTick,
     /// Start update cleanup only after the first frame has rendered successfully.
     first_frame: Option<std::time::Instant>,
     update_cleanup_done: bool,
@@ -207,6 +210,7 @@ impl App {
             launch_check_started: false,
             silent_check: false,
             prompt_open: false,
+            addon_tick: Default::default(),
             first_frame: None,
             update_cleanup_done: cfg!(feature = "preview"),
             keep_in_tray,
@@ -382,6 +386,7 @@ impl eframe::App for App {
         }
         self.poll_update(ctx);
         self.tray_tick(ctx);
+        self.addons_logic(ctx);
         if self
             .preferences_dirty
             .is_some_and(|t| t.elapsed() > Duration::from_millis(500))
@@ -405,6 +410,21 @@ impl eframe::App for App {
 impl App {
     fn install_in_progress(&self) -> bool {
         update::is_installing()
+    }
+
+    /// The add-on work from `logic` (#176): eframe runs no `ui` for a window hidden in the tray or
+    /// minimized, so without this the supervisor would not tick there (no restart of a crashed
+    /// background add-on, no hiding of a page add-on that was open). Once a second at most, and
+    /// never in the same pass as the `ui` run; see `addon_tick`.
+    fn addons_logic(&mut self, ctx: &egui::Context) {
+        let now = std::time::Instant::now();
+        if self.addon_tick.logic_due(now) {
+            self.tick_addons(ctx);
+        }
+        let minimized = ctx.input(|i| i.viewport().minimized) == Some(true);
+        if addon_tick::wake_for_tick(self.hidden, minimized) {
+            ctx.request_repaint_after(self.addon_tick.wait(now));
+        }
     }
     /// Tray mode: icon, menu, hiding on close, and keeping the app ticking while hidden.
     /// eframe 0.37 calls `logic` (and repaints every ~100 ms when asked) for a hidden window,

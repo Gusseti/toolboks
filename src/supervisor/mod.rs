@@ -365,12 +365,17 @@ impl Supervisor {
     }
 
     /// A background add-on suspends; every other add-on exits when its page is left.
+    /// Called on every tick for each add-on whose page is not on screen, so a background add-on
+    /// is told `Suspend` only when it goes from shown to hidden (one that connects hidden is
+    /// told on connect). Telling it again every tick would wake it, and the host, each time.
     pub fn hide(&mut self, id: &str) {
         if let Some(managed) = self.addons.get_mut(id) {
-            managed.visible = false;
+            let was_visible = std::mem::replace(&mut managed.visible, false);
             if managed.spec.background {
                 if let Phase::Running { sender, .. } = &managed.phase {
-                    send(sender, &HostMessage::Suspend);
+                    if was_visible {
+                        send(sender, &HostMessage::Suspend);
+                    }
                 }
             } else {
                 begin_stop(&self.shared, managed, Then::Stay, Instant::now());
