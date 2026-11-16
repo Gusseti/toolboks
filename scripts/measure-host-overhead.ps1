@@ -4,9 +4,11 @@
   process (and, separately, of any add-on process it started) in three window states.
 
 .DESCRIPTION
-  Starts the given Toolboks exe with its OWN data folder (TOOLBOKS_DATA_DIR), so it has its own
-  single-instance lock and never joins or touches a normal Toolboks that is already running. Use a
-  preview build (`cargo build --release --features preview`): it never checks for app updates.
+  Starts the given Toolboks exe with its own data folder (TOOLBOKS_DATA_DIR). Only a preview build
+  (`cargo build --release --features preview`) is accepted: a preview build has its own
+  single-instance lock, separate from the normal Toolboks, and never checks for app updates. A
+  normal build would join the Toolboks that is already running (the lock is per build flavour, not
+  per data folder), so the script refuses it. Do not run two preview instances at once either.
 
   States, measured in this order on one running instance:
     open       the window is shown and left alone (no mouse or keys over it)
@@ -40,11 +42,18 @@ param(
     [int]$WarmUp = 15,
     [int]$Seconds = 60,
     [string]$Open = '',
-    [string]$Out = '',
-    # The app keeps its data in this folder inside -DataDir ("Toolboks" for a normal build).
-    [string]$AppFolder = 'Toolboks Preview'
+    [string]$Out = ''
 )
 $ErrorActionPreference = 'Stop'
+
+# Only a preview build: it carries the name of its own single-instance lock (UTF-16 in the exe).
+$bytes = [IO.File]::ReadAllBytes((Resolve-Path $Exe).Path)
+if (-not [Text.Encoding]::Unicode.GetString($bytes).Contains('toolboks-preview-single-instance')) {
+    throw "$Exe is not a preview build. A normal build would join the Toolboks that is already running; build with --features preview."
+}
+$bytes = $null
+# A preview build keeps its data in this folder inside -DataDir.
+$AppFolder = 'Toolboks Preview'
 
 Add-Type -Namespace TbMeasure -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
@@ -151,13 +160,14 @@ if (-not (Test-Path $config)) {
     Set-Content -Path $config -Encoding ascii -Value '{"first_run_complete":true,"keep_in_tray":true,"platform_migrated":true}'
 }
 
-$env:TOOLBOKS_DATA_DIR = (Resolve-Path $DataDir).Path
-$arguments = @()
-if ($Open) { $arguments = @('--open', "`"$Open`"") }
-$started = if ($arguments.Count) { Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru } else { Start-Process -FilePath $Exe -PassThru }
-$hostId = $started.Id
-$seen = New-Object System.Collections.Generic.HashSet[int]
+$callerDataDir = $env:TOOLBOKS_DATA_DIR
+$started = $null
 try {
+    $env:TOOLBOKS_DATA_DIR = (Resolve-Path $DataDir).Path
+    $arguments = @()
+    if ($Open) { $arguments = @('--open', "`"$Open`"") }
+    $started = if ($arguments.Count) { Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru } else { Start-Process -FilePath $Exe -PassThru }
+    $hostId = $started.Id
     $window = [IntPtr]::Zero
     for ($i = 0; $i -lt 60 -and $window -eq [IntPtr]::Zero; $i++) {
         Start-Sleep -Milliseconds 500
@@ -179,7 +189,6 @@ try {
         $iconic = [TbMeasure.Win]::IsIconic($window)
         $shown = if (-not $visible) { 'hidden' } elseif ($iconic) { 'minimized' } else { 'visible' }
         $children = Get-Children $hostId
-        foreach ($c in $children) { [void]$seen.Add($c) }
         Write-Host "[$Label] $state (window $shown, add-on processes: $($children.Count)): measuring $Seconds s"
         foreach ($r in Measure-Processes (@($hostId) + $children) $Seconds $window) {
             $who = if ($r.Name -eq $started.ProcessName) { 'host' } else { "add-on ($($r.Name))" }
@@ -189,10 +198,17 @@ try {
     }
 }
 finally {
-    foreach ($c in Get-Children $hostId) { [void]$seen.Add($c) }
-    Stop-Process -Id $hostId -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
-    foreach ($c in $seen) { Stop-Process -Id $c -Force -ErrorAction SilentlyContinue }
+    if ($started -and -not $started.HasExited) {
+        # The add-ons it started, held as process objects (not ids) so a reused id is never hit.
+        $children = @(Get-Children $started.Id | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+        $started.Kill()
+        Start-Sleep -Seconds 3
+        foreach ($c in $children) { if (-not $c.HasExited) { $c.Kill() } }
+    }
+    elseif ($started) {
+        Write-Warning "Toolboks (pid $($started.Id)) had already exited; its add-on processes were not swept, since their ids may have been reused."
+    }
+    if ($null -eq $callerDataDir) { Remove-Item Env:TOOLBOKS_DATA_DIR -ErrorAction SilentlyContinue } else { $env:TOOLBOKS_DATA_DIR = $callerDataDir }
 }
 
 $machine = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name.Trim()

@@ -59,8 +59,9 @@ repeat: the second run of the same case gave 0.003% and 14.5 wake-ups/s, the sam
 | Memory Cleaner (background) | any | 0.000 to 0.005 | 0.000 | 13 / 5 |
 
 Resource Monitor's own cost with its page open rose a little after the change (0.03 → 0.05 to
-0.06%), while the host's fell by more (0.33 to 0.42 → 0.20 to 0.24%), so the total for that page
-went down from about 0.38 to about 0.27% of the PC. Why the add-on's share rose is not known; the
+0.06%), while the host's fell by more (0.33 to 0.42 → 0.20 to 0.24%), so the total for that page,
+host plus add-on, went down from about 0.41% (0.36 and 0.45 in the two runs) to about 0.27% (0.24
+and 0.30) of the PC. Why the add-on's share rose is not known; the
 host now answers its repaint requests when they are due instead of on its own 100 ms beat.
 
 ## Against the budget

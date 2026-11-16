@@ -471,6 +471,9 @@ impl App {
 
     fn hide_window(&mut self, ctx: &egui::Context) {
         self.hidden = true;
+        // The Settings figure starts fresh when the window is back, instead of averaging over
+        // the whole time it was hidden.
+        self.own_usage.reset();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 
