@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-11-16
+
+### Fixed
+
+- **Switching pages inside an add-on works at once.** Picking a page of an add-on in the sidebar (or in the header with the rail collapsed, or from a Home finding) often left the old page on screen until the mouse moved over the page, and on quiet pages such as Disk Manager's or Event Watch's the switch could seem to never happen. Add-ons that redraw on their own (Resource Monitor, Memory Cleaner) switched only after up to two seconds. The new page now shows right away, with every add-on, including those already installed.
+
 ## [0.16.0] - 2026-11-16
 
 ### Changed

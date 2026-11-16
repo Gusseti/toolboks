@@ -248,6 +248,9 @@ supervisor. Pongs and logs never wake the host's UI.
 - **Pacing.** One batch in flight, at most 60 a second, add-on repaint hints (`repaint_after_ms` and
   `RequestRepaint`) through `RepaintLimiter`. With no input and no hint the host neither sends nor
   repaints, so an idle add-on costs nothing.
+- **Page switches.** A page picked in the host (sidebar, header, a Home finding) goes as `Navigate`
+  followed by an input batch (`addon_view::navigate`), because the add-on draws only in answer to
+  input. `NativeAddon::navigate` needs no repaint request of its own.
 - **Applied back.** The cursor icon while the pointer is over the page, copied text to the
   clipboard, links through the host's link handling (only `http`, `https` and `mailto`), and the IME
   rectangle moved to the page.

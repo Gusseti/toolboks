@@ -158,6 +158,26 @@ pub fn allowed_url(url: &str) -> bool {
     }
 }
 
+/// Switches the add-on to `page`: sends `Navigate` with `send` (the supervisor's `send` for this
+/// add-on) and asks its view for a frame. An add-on draws only in answer to an input batch, and a
+/// click in the host's sidebar or header is no input for the add-on, so without the frame request
+/// the old page stayed on screen until the pointer next moved over the page or the add-on
+/// repainted on its own timer. The batch goes after any batch still in flight, so the add-on
+/// handles `Navigate` before it draws. Returns whether `Navigate` was sent.
+pub fn navigate(
+    view: Option<&mut AddonView>,
+    page: String,
+    send: impl FnOnce(&HostMessage) -> bool,
+) -> bool {
+    let sent = send(&HostMessage::Navigate { page });
+    if sent {
+        if let Some(view) = view {
+            view.request_frame();
+        }
+    }
+    sent
+}
+
 /// How often the host looks at an add-on view that is waiting for its add-on.
 pub const WAITING_POLL: Duration = Duration::from_millis(100);
 
@@ -227,6 +247,9 @@ pub struct AddonView {
     ime: Option<ImeOutput>,
     /// False while a guided tour runs: nothing the user does reaches the add-on.
     interactive: bool,
+    /// The page the last frame showed.
+    #[cfg(test)]
+    page_index: Option<u32>,
 }
 
 impl AddonView {
@@ -253,6 +276,8 @@ impl AddonView {
             cursor: egui::CursorIcon::Default,
             ime: None,
             interactive: true,
+            #[cfg(test)]
+            page_index: None,
         }
     }
 
@@ -555,6 +580,10 @@ impl AddonView {
         self.textures.drop_stale();
         self.fresh = Some(meshes);
         self.has_frame = true;
+        #[cfg(test)]
+        {
+            self.page_index = Some(frame.page_index);
+        }
         self.state = ViewState::Running;
         self.cursor = frame.cursor;
         self.ime = frame.ime;
