@@ -5,7 +5,7 @@
 ### Added
 
 - **Updates are shown on Home.** When an add-on has a newer version, the top of Home says "Update available: Audio Gainer" (or "2 updates available: ...") with an **Update** button that opens the normal access review. The add-on's row says "Update" instead of "On", and its card shows the new version with an **Update** button.
-- **The install review says what data an add-on keeps on your PC.** An add-on can declare one short plain line about it (for example "Keeps your last scan of each drive on this PC (file and folder names)."). It is shown under what the add-on can do when you review an install, and in its details. It comes from the reviewed add-on list, at most 160 characters.
+- **The install review says what data an add-on keeps on your PC.** An add-on can declare one short plain line about it (for example "Keeps your last scan of each drive on this PC (file and folder names)."). It is shown under what the add-on can do when you review an install (also for a package installed from a file), and in its details. It comes from the reviewed add-on list or package, at most 160 characters of plain text. For add-on makers: a package manifest with `data_note` is refused by Toolboks versions older than this release, so an add-on that sets it must raise its `min_toolboks_version` to this release.
 
 ## [0.13.2] - 2026-11-15
 

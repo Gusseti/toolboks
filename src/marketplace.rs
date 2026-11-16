@@ -299,6 +299,36 @@ mod tests {
     }
 
     #[test]
+    fn local_package_review_shows_the_data_note_after_the_capabilities() {
+        let note = "Keeps a list of recent files on this PC.";
+        let mut package = toolboks_addon_sdk::Package::parse(
+            crate::addons::SDK_EXAMPLE.as_bytes(),
+            env!("CARGO_PKG_VERSION"),
+        )
+        .unwrap();
+        let capabilities: Vec<AccessLine> = package_access_text(&package.manifest);
+        assert_eq!(capabilities.len(), package.manifest.capabilities.len());
+        assert!(capabilities
+            .iter()
+            .all(|line| matches!(line, AccessLine::Can(_))));
+        // A package that passed validation with a note shows it, after the capabilities.
+        package.manifest.data_note = Some(note.into());
+        let bytes = serde_json::to_vec(&package).unwrap();
+        let package =
+            toolboks_addon_sdk::Package::parse(&bytes, env!("CARGO_PKG_VERSION")).unwrap();
+        let mut expected = capabilities.clone();
+        expected.push(AccessLine::Data(note.into()));
+        assert_eq!(package_access_text(&package.manifest), expected);
+        // No capabilities: only the note.
+        let mut bare = package.manifest.clone();
+        bare.capabilities.clear();
+        assert_eq!(package_access_text(&bare), [AccessLine::Data(note.into())]);
+        // A note that breaks the rule is never shown.
+        bare.data_note = Some("Keeps \u{202e}selif".into());
+        assert!(package_access_text(&bare).is_empty());
+    }
+
+    #[test]
     fn a_catalog_entry_with_a_data_note_reads_and_old_ones_still_do() {
         let old = entry("test.old");
         assert_eq!(old.data_note, None);
@@ -540,6 +570,35 @@ pub fn access_text(entry: &Entry) -> Vec<AccessLine> {
     }
     if entry.kind == catalog::Kind::Native {
         lines.push(AccessLine::Native);
+    }
+    lines
+}
+/// What the review before installing a local `.tbaddon` lists under "It asks to": one line per
+/// capability (none when it asks for none), then the package's data note when it has one.
+pub fn package_access_text(manifest: &toolboks_addon_sdk::Manifest) -> Vec<AccessLine> {
+    use toolboks_addon_sdk::Capability;
+    let mut lines: Vec<AccessLine> = manifest
+        .capabilities
+        .iter()
+        .map(|capability| {
+            AccessLine::Can(
+                match capability {
+                    Capability::Administrator => "Make administrator changes only after you confirm in a separate window",
+                    Capability::HostMetrics => "Read basic memory and uptime readings",
+                    Capability::LocalPreferences => "Save its own preferences locally",
+                    Capability::FilesystemRead => "Read file and folder metadata for locations you select",
+                    Capability::UserExports => "Save reports to a destination you choose",
+                    Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
+                    Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
+                    Capability::SystemTuning => "Back up and change the Windows settings and power plan you select",
+                    Capability::InputAutomation => "Record keyboard and mouse input and replay it only when you start a macro",
+                }
+                .into(),
+            )
+        })
+        .collect();
+    if let Some(note) = shown_data_note(manifest.data_note.as_deref()) {
+        lines.push(AccessLine::Data(note.into()));
     }
     lines
 }

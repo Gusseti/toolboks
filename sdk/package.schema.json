@@ -134,14 +134,14 @@
           "maxLength": 60
         },
         "data_note": {
-          "description": "One plain-language line about data the add-on keeps on this PC, shown in the install review and the details. 1 to 160 characters, no line breaks or other control characters, no whitespace at either end.",
+          "description": "One plain-language line about data the add-on keeps on this PC, shown in the install review and the details. 1 to 160 characters, no line breaks or other control characters, no Unicode format characters (bidi overrides, zero-width characters) or line/paragraph separators, no whitespace at either end. Hosts older than the release that added this field refuse a package that has it. The pattern covers format characters up to U+FFFF; the SDK's valid_data_note also refuses the few above it.",
           "type": [
             "string",
             "null"
           ],
           "minLength": 1,
           "maxLength": 160,
-          "pattern": "^\\S([^\\u0000-\\u001f\\u007f-\\u009f]*\\S)?$"
+          "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u0600-\\u0605\\u061c\\u06dd\\u070f\\u0890-\\u0891\\u08e2\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2064\\u2066-\\u206f\\ufeff\\ufff9-\\ufffb]([^\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u0600-\\u0605\\u061c\\u06dd\\u070f\\u0890-\\u0891\\u08e2\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2064\\u2066-\\u206f\\ufeff\\ufff9-\\ufffb]*[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u0600-\\u0605\\u061c\\u06dd\\u070f\\u0890-\\u0891\\u08e2\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u2064\\u2066-\\u206f\\ufeff\\ufff9-\\ufffb])?$"
         },
         "native_provider": {
           "type": [

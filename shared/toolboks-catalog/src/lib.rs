@@ -544,17 +544,29 @@ mod tests {
             "Keeps scans.\n".into(),
             "Keeps\nscans.".into(),
             "Keeps\u{1b}[31mscans.".into(),
+            // Format characters (Cf) and line/paragraph separators: the same rule as the SDK.
+            "Keeps \u{202e}snacs.".into(),
+            "Keeps\u{2066}scans\u{2069}.".into(),
+            "Keeps\u{200b}scans.".into(),
+            "Keeps\u{200d}scans.".into(),
+            "\u{feff}Keeps scans.".into(),
+            "Keeps scans.\u{e0041}".into(),
+            "Keeps\u{ad}scans.".into(),
+            "Keeps\u{2028}scans.".into(),
+            "Keeps\u{2029}scans.".into(),
         ] {
             entry.data_note = Some(bad);
             assert_eq!(entry.validate(), Err("data_note"));
         }
         // A bad note refuses the index, like any other bad field.
-        let mut bad = index();
-        bad.entries[0].data_note = Some("x".repeat(161));
-        assert!(matches!(
-            Index::parse(&bytes(&bad)),
-            Err(Refused::Malformed(_))
-        ));
+        for note in ["x".repeat(161), "Keeps \u{202e}snacs.".into()] {
+            let mut bad = index();
+            bad.entries[0].data_note = Some(note);
+            assert!(matches!(
+                Index::parse(&bytes(&bad)),
+                Err(Refused::Malformed(_))
+            ));
+        }
     }
 
     #[test]

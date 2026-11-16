@@ -205,13 +205,44 @@ fn text(s: &str, max: usize) -> bool {
 }
 /// The longest data note, in characters.
 pub const MAX_DATA_NOTE_CHARS: usize = 160;
-/// A data note is one line of plain text: 1 to [`MAX_DATA_NOTE_CHARS`] characters, no control
-/// characters (so no line breaks or tabs) and no whitespace at either end.
+/// A data note is one line of plain text: 1 to [`MAX_DATA_NOTE_CHARS`] characters, no whitespace
+/// at either end, no control characters (so no line breaks or tabs) and no [`hidden_char`].
+/// The SDK and the catalog both check notes with this one rule.
 pub fn valid_data_note(s: &str) -> bool {
     !s.is_empty()
         && s.trim() == s
         && s.chars().count() <= MAX_DATA_NOTE_CHARS
-        && !s.chars().any(char::is_control)
+        && !s.chars().any(|c| c.is_control() || hidden_char(c))
+}
+/// Unicode format characters (general category Cf, as of Unicode 15) and the line and paragraph
+/// separators (U+2028, U+2029). They are invisible or change how the text around them is shown:
+/// bidi overrides and isolates such as U+202E can make a note read differently from what it
+/// says, and zero-width characters hide text.
+pub fn hidden_char(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
 }
 fn key(s: &str) -> bool {
     !s.is_empty()
@@ -600,6 +631,41 @@ mod tests {
         ] {
             assert!(parse(Some(serde_json::json!(bad))).is_err(), "{bad:?}");
         }
+        // Format characters (Cf) and line/paragraph separators, anywhere in the note.
+        for hidden in [
+            '\u{202e}',  // right-to-left override
+            '\u{202a}',  // left-to-right embedding
+            '\u{2066}',  // left-to-right isolate
+            '\u{2069}',  // pop directional isolate
+            '\u{200b}',  // zero width space
+            '\u{200d}',  // zero width joiner
+            '\u{200e}',  // left-to-right mark
+            '\u{2060}',  // word joiner
+            '\u{feff}',  // zero width no-break space
+            '\u{ad}',    // soft hyphen
+            '\u{e0041}', // tag latin capital letter a
+            '\u{2028}',  // line separator
+            '\u{2029}',  // paragraph separator
+        ] {
+            assert!(hidden_char(hidden), "{hidden:?}");
+            for bad in [
+                format!("Keeps{hidden}scans."),
+                format!("{hidden}Keeps scans."),
+                format!("Keeps scans.{hidden}"),
+            ] {
+                assert!(!valid_data_note(&bad), "{bad:?}");
+                assert!(parse(Some(serde_json::json!(bad))).is_err(), "{bad:?}");
+            }
+        }
+        // Ordinary punctuation and letters are not hidden.
+        for shown in [
+            'a', '\u{e5}', '(', '.', '\u{2013}', '\u{2019}', '\u{20ac}', ' ',
+        ] {
+            assert!(!hidden_char(shown), "{shown:?}");
+        }
+        assert!(valid_data_note(
+            "Keeps scans \u{2013} file names, \u{e5}\u{f8}\u{e6}."
+        ));
     }
     #[test]
     fn tutorial_targets_are_validated_without_executable_actions() {
