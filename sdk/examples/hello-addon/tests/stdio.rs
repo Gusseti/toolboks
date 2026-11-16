@@ -3,11 +3,35 @@
 
 use std::process::{Command, Stdio};
 use toolboks_addon_proto::{
-    host_handshake, AddonMessage, FrameReader, FrameWriter, Hello, HostMessage, InputBatch, Theme,
+    host_handshake, AddonMessage, FindingStatus, FrameReader, FrameWriter, Hello, HostMessage,
+    InputBatch, Theme, PROTOCOL_VERSION,
 };
 
 #[test]
 fn the_sample_add_on_draws_and_quits() {
+    let (status, findings) = run_sample(PROTOCOL_VERSION);
+    assert_eq!(status.expect("a status item").text, "Hello 41");
+    let findings = findings.expect("findings at protocol 4");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].status, FindingStatus::Attention);
+    assert_eq!(findings[0].observation, "Add one was pressed 41 times.");
+}
+
+#[test]
+fn the_sample_runs_on_a_protocol_3_host_without_findings() {
+    let (status, findings) = run_sample(3);
+    assert_eq!(status.expect("a status item").text, "Hello 41");
+    assert_eq!(findings, None, "no findings on a protocol 3 connection");
+}
+
+/// Starts the sample, connects at `version`, draws one frame and quits. Returns the status
+/// item and the findings sent before the frame.
+fn run_sample(
+    version: u32,
+) -> (
+    Option<toolboks_addon_proto::StatusItem>,
+    Option<Vec<toolboks_addon_proto::Finding>>,
+) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_hello-addon"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -18,11 +42,11 @@ fn the_sample_add_on_draws_and_quits() {
     let theirs = host_handshake(
         &mut reader,
         &mut writer,
-        &Hello::new("example.hello", "test"),
+        &Hello::with_version("example.hello", "test", version),
     )
     .expect("handshake");
     assert_eq!(theirs.addon_id, "example.hello");
-    assert_eq!(theirs.protocol_version, 3);
+    assert_eq!(theirs.protocol_version, version);
 
     writer
         .write(&HostMessage::LoadPreferences {
@@ -39,20 +63,21 @@ fn the_sample_add_on_draws_and_quits() {
             events: Vec::new(),
         }))
         .unwrap();
-    let mut status = None;
+    let (mut status, mut findings) = (None, None);
     let frame = loop {
         match reader.read::<AddonMessage>().expect("a message") {
             AddonMessage::StatusItems(items) => status = items.into_iter().next(),
+            AddonMessage::Findings(list) => findings = Some(list),
             AddonMessage::Frame(frame) => break frame,
             _ => {}
         }
     };
     assert_eq!(frame.seq, 1);
     assert!(!frame.meshes.is_empty(), "the page was drawn");
-    assert_eq!(status.expect("a status item").text, "Hello 41");
 
     writer.write(&HostMessage::Quit).unwrap();
     assert!(child.wait().unwrap().success());
+    (status, findings)
 }
 
 #[test]
@@ -72,8 +97,11 @@ fn the_sample_refuses_protocol_two_with_a_plain_update_message() {
             protocol_version,
             reason,
         } => {
-            assert_eq!(protocol_version, 3);
-            assert!(reason.contains("Update the add-on or Toolboks."));
+            assert_eq!(protocol_version, PROTOCOL_VERSION);
+            assert_eq!(
+                reason,
+                "Add-on speaks protocol 4, Toolboks speaks 2. Update the add-on or Toolboks."
+            );
         }
         other => panic!("expected refusal, got {other:?}"),
     }

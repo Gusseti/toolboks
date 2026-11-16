@@ -169,6 +169,12 @@ Even a first-party add-on can have a bug, and what it sends is treated as untrus
 - Status items, tray entries, tour steps and preferences are cut to fixed limits, and preferences
   are written only under the add-on's own id. Links open only for `http`, `https` and `mailto`.
   **Covered** (`addon_services` and `addon_view` tests).
+- Health findings (protocol 4) are cut to fixed limits, filed under the sending connection's id,
+  and link only to the sender's own pages. The message has no source field, and the host files
+  it under the connection's id; `Findings` on a version 3 connection is ignored and `CheckNow` is
+  never sent to one. **Covered** for that (`supervisor` tests). Today the host keeps no finding
+  and shows none (`Services::on_findings` is a stub); the cut to limits and the route check come
+  with the store in #181 and its `health` tests, before anything is shown on Home.
 - Every add-on process is in a job object that ends with the host, so nothing is left running
   after Toolboks closes or crashes. **Covered**. An add-on started through the UAC prompt is not
   in the job; it exits when the host closes the pipes.

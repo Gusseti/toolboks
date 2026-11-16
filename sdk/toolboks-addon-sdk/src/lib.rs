@@ -16,6 +16,9 @@ pub mod runtime;
 pub mod admin;
 #[cfg(feature = "native-ui")]
 pub use toolboks_addon_proto::{AdminOutcome, AdminRequest};
+/// Health findings (protocol 4): see [`NativeAddon::findings`].
+#[cfg(feature = "native-ui")]
+pub use toolboks_addon_proto::{Finding, FindingAction, FindingStatus, Severity};
 
 /// Declarative tours only describe and navigate UI; they never execute actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -485,6 +488,19 @@ pub trait NativeAddon {
     fn status_items(&self) -> Vec<StatusItem> {
         Vec::new()
     }
+    /// This add-on's current health findings for Home. Called after every frame and
+    /// background tick (also while suspended); sent to the host only when the set changed,
+    /// and only to a host that speaks protocol 4 or later. At most 16 are kept. Default: none.
+    ///
+    /// Build a finding when you measure, keep it, and return a copy here. The builders
+    /// ([`Finding::ok`] and the others) stamp the current time, so a finding built inside this
+    /// method changes every second and is sent again each time.
+    fn findings(&self) -> Vec<Finding> {
+        Vec::new()
+    }
+    /// The user asked Home to check again. Optional: check again when you can, and the new
+    /// [`Self::findings`] are sent. Default: nothing.
+    fn check_now(&mut self) {}
     /// Entries for the host's tray menu. Only the out-of-process runtime forwards them.
     fn tray_items(&self) -> Vec<TrayItem> {
         Vec::new()

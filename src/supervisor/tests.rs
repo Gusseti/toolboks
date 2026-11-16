@@ -48,6 +48,7 @@ pub(crate) fn fake(test: &str, mode: &str) -> (PathBuf, LaunchSpec) {
         may_elevate: false,
         background: false,
         installed_root: None,
+        protocol_version: toolboks_addon_proto::PROTOCOL_VERSION,
     };
     (dir, spec)
 }
@@ -692,4 +693,231 @@ fn refusing_a_helper_without_a_catalog_keeps_the_same_unelevated_drawing_process
         supervisor.status(ID),
         Some(Status::Running { elevated: false })
     );
+}
+
+// Protocol versions (#180): the host speaks the installed entry's version, keeps the agreed one
+// per add-on, never sends a message newer than it and ignores newer messages from the add-on.
+
+/// The `Findings` and `StatusItems` messages among `events`, in order.
+fn findings_and_status(events: &[Event]) -> (Vec<Vec<toolboks_addon_proto::Finding>>, usize) {
+    let mut findings = Vec::new();
+    let mut status = 0;
+    for event in events {
+        match event {
+            Event::Message {
+                message: AddonMessage::Findings(list),
+                ..
+            } => findings.push(list.clone()),
+            Event::Message {
+                message: AddonMessage::StatusItems(_),
+                ..
+            } => status += 1,
+            _ => {}
+        }
+    }
+    (findings, status)
+}
+
+fn has_status(events: &[Event], _: &Supervisor) -> bool {
+    findings_and_status(events).1 > 0
+}
+
+#[test]
+fn a_protocol_3_addon_runs_on_this_host_at_protocol_3() {
+    let (dir, mut spec) = fake("protocol-3", "normal --protocol 3");
+    spec.protocol_version = 3;
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec, Instant::now());
+    let events = run_until(&mut supervisor, has_status);
+    assert!(connected(&events, &supervisor));
+    assert_eq!(supervisor.protocol_version(ID), Some(3));
+    assert_eq!(
+        supervisor.status(ID),
+        Some(Status::Running { elevated: false })
+    );
+    // Frames: every input batch is answered with its frame.
+    let link = supervisor.take_link(ID).unwrap();
+    for seq in 1..=3 {
+        assert!(supervisor.send(
+            ID,
+            &HostMessage::Input(toolboks_addon_proto::InputBatch {
+                seq,
+                size: [400.0, 300.0],
+                pixels_per_point: 1.0,
+                theme: toolboks_addon_proto::Theme::Dark,
+                window_focused: true,
+                events: Vec::new(),
+            })
+        ));
+        match link.recv_timeout(PATIENCE) {
+            Ok(Ok(AddonMessage::Frame(frame))) => assert_eq!(frame.seq, seq),
+            other => panic!("expected frame {seq}, got {other:?}"),
+        }
+    }
+    // Messages of protocol 3 still go out; it answers pings, so it is not seen as stalled.
+    assert!(supervisor.send(ID, &HostMessage::Navigate { page: "x".into() }));
+    let report = supervisor.report(ID).unwrap();
+    assert!(report.contains("connected at protocol 3"), "{report}");
+    supervisor.stop(ID, Instant::now());
+    let events = run_until(&mut supervisor, stopped);
+    assert_eq!(stop_reason(&events), &StopReason::ByHost);
+    assert_eq!(supervisor.protocol_version(ID), None);
+    assert_eq!(starts(&dir), 1);
+}
+
+#[test]
+fn check_now_is_never_sent_to_a_protocol_3_addon() {
+    let (dir, mut spec) = fake("protocol-3-check", "normal --protocol 3");
+    spec.protocol_version = 3;
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec, Instant::now());
+    run_until(&mut supervisor, has_status);
+    let link = supervisor.take_link(ID).unwrap();
+    assert!(
+        !supervisor.send(ID, &HostMessage::CheckNow),
+        "not sent at protocol 3"
+    );
+    // An input batch after it: the add-on reads in order, so once this frame is back a
+    // CheckNow sent before would have reached it (and ended it).
+    assert!(supervisor.send(
+        ID,
+        &HostMessage::Input(toolboks_addon_proto::InputBatch {
+            seq: 1,
+            size: [400.0, 300.0],
+            pixels_per_point: 1.0,
+            theme: toolboks_addon_proto::Theme::Dark,
+            window_focused: true,
+            events: Vec::new(),
+        })
+    ));
+    match link.recv_timeout(PATIENCE) {
+        Ok(Ok(AddonMessage::Frame(frame))) => assert_eq!(frame.seq, 1),
+        other => panic!("expected the frame, got {other:?}"),
+    }
+    let events = supervisor.tick(Instant::now());
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::Stopped { .. } | Event::Restarting { .. })),
+        "{events:?}"
+    );
+    assert!(!dir.join("checknow.txt").exists(), "CheckNow reached it");
+    assert_eq!(
+        supervisor.status(ID),
+        Some(Status::Running { elevated: false })
+    );
+    assert_eq!(starts(&dir), 1);
+}
+
+#[test]
+fn findings_on_a_protocol_3_connection_are_ignored() {
+    let (_dir, mut spec) = fake("protocol-3-findings", "findings --protocol 3");
+    spec.protocol_version = 3;
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec, Instant::now());
+    // The add-on sent Findings before its status item; both are handled in order.
+    let events = run_until(&mut supervisor, has_status);
+    let (findings, status) = findings_and_status(&events);
+    assert_eq!(status, 1);
+    assert!(findings.is_empty(), "findings passed on at protocol 3");
+    let report = supervisor.report(ID).unwrap();
+    assert!(
+        report.contains("ignored a message that protocol 3 does not have"),
+        "{report}"
+    );
+}
+
+#[test]
+fn a_protocol_4_addon_sends_findings_also_while_hidden_and_gets_check_now() {
+    let (dir, mut spec) = fake("protocol-4-findings", "findings");
+    spec.background = true;
+    let mut supervisor = supervisor(Timing::default());
+    // Started hidden: suspended on connect, so only background ticks run from then on.
+    supervisor.start_background(spec, Instant::now());
+    run_until(&mut supervisor, connected);
+    assert_eq!(supervisor.protocol_version(ID), Some(4));
+    let events = run_until(&mut supervisor, |events, _| {
+        findings_and_status(events).0.len() >= 3
+    });
+    assert!(suspends(&dir) >= 1, "it was suspended");
+    let (findings, _) = findings_and_status(&events);
+    assert!(
+        findings
+            .windows(2)
+            .all(|pair| pair[0][0].title != pair[1][0].title),
+        "each set differs from the last: {findings:?}"
+    );
+    assert!(findings.last().unwrap()[0].title != "0 ticks");
+    // CheckNow goes out at protocol 4, and the changed findings come back.
+    assert!(supervisor.send(ID, &HostMessage::CheckNow));
+    run_until(&mut supervisor, |events, _| {
+        findings_and_status(events)
+            .0
+            .iter()
+            .any(|list| list[1].title == "Checked 1 times")
+    });
+    assert!(dir.join("checknow.txt").exists());
+}
+
+#[test]
+fn an_installed_entry_at_a_protocol_this_build_does_not_speak_is_never_started() {
+    for (version, text) in [
+        (
+            5,
+            "Add-on speaks protocol 5, Toolboks speaks 4. Update the add-on or Toolboks.",
+        ),
+        (
+            2,
+            "Add-on speaks protocol 2, Toolboks speaks 4. Update the add-on or Toolboks.",
+        ),
+    ] {
+        let (dir, mut spec) = fake(&format!("protocol-{version}"), "normal");
+        spec.protocol_version = version;
+        let mut supervisor = supervisor(Timing::default());
+        supervisor.open(spec.clone(), Instant::now());
+        let events = run_until(&mut supervisor, stopped);
+        assert_eq!(stop_reason(&events), &StopReason::Refused(text.into()));
+        assert_eq!(starts(&dir), 0, "the exe must not have run");
+        assert_eq!(supervisor.protocol_version(ID), None);
+        // It stays stopped when the page is opened again.
+        supervisor.open(spec, Instant::now());
+        assert_eq!(
+            supervisor.status(ID),
+            Some(Status::Stopped(StopReason::Refused(text.into())))
+        );
+        assert_eq!(starts(&dir), 0);
+    }
+}
+
+#[test]
+fn an_entry_at_4_for_a_protocol_3_exe_is_refused_in_plain_words() {
+    // The entry says 4, but the exe speaks only 3: it refuses the host's Hello 4.
+    let (dir, spec) = fake("protocol-mismatch", "normal --protocol 3");
+    assert_eq!(spec.protocol_version, 4);
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.open(spec, Instant::now());
+    let events = run_until(&mut supervisor, stopped);
+    assert_eq!(
+        stop_reason(&events),
+        &StopReason::Refused(
+            "Add-on speaks protocol 3, Toolboks speaks 4. Update the add-on or Toolboks.".into()
+        )
+    );
+    assert_eq!(starts(&dir), 1, "refused, not restarted");
+}
+
+#[test]
+fn messages_newer_than_the_connection_are_held_back_both_ways() {
+    use toolboks_addon_proto::Finding;
+    let finding = AddonMessage::Findings(vec![Finding::ok("a", "A", "B")]);
+    assert!(!host_message_allowed(&HostMessage::CheckNow, 3));
+    assert!(host_message_allowed(&HostMessage::CheckNow, 4));
+    assert!(host_message_allowed(&HostMessage::Suspend, 3));
+    assert!(!addon_message_allowed(&finding, 3));
+    assert!(addon_message_allowed(&finding, 4));
+    assert!(addon_message_allowed(&AddonMessage::Bye, 3));
+    assert_eq!(unsupported_protocol(3), None);
+    assert_eq!(unsupported_protocol(4), None);
+    assert!(unsupported_protocol(5).is_some());
+    assert!(unsupported_protocol(0).is_some());
 }

@@ -14,6 +14,8 @@
 //!   turned on ([`background`]).
 //! - **Preferences.** The add-on gets its namespaced preferences after it connects and sends
 //!   changes back; the host writes them to `config.json`.
+//! - **Health findings** (protocol 4). The add-on sends its checks for Home; they are handed
+//!   to [`Services::on_findings`]. The supervisor drops them on a protocol 3 connection.
 //!
 //! Everything is optional for an add-on. What an add-on sends is cut to fixed limits before
 //! the host keeps or shows it.
@@ -28,7 +30,8 @@ use eframe::egui::{Pos2, Rect};
 use std::collections::BTreeMap;
 use std::path::Path;
 use toolboks_addon_proto::{
-    AddonMessage, HostMessage, HostRequest, StatusItem, TrayItem, TutorialStep,
+    AddonMessage, Finding, HostMessage, HostRequest, StatusItem, TrayItem, TutorialStep,
+    MAX_FINDINGS,
 };
 use toolboks_catalog::{Entry, Kind};
 
@@ -71,6 +74,8 @@ pub fn launch_spec(root: &Path, entry: &Entry) -> LaunchSpec {
             .any(|name| ELEVATING_CAPABILITIES.contains(&name.as_str())),
         background: entry.background,
         installed_root: Some(root.to_path_buf()),
+        // The host speaks the installed entry's protocol, so older add-ons keep working.
+        protocol_version: entry.protocol_version,
     }
 }
 
@@ -291,8 +296,25 @@ impl Services {
                 id: id.to_string(),
                 request: request.clone(),
             }),
+            AddonMessage::Findings(findings) => {
+                // Only the first ones are ever kept; the rest are not even copied.
+                let findings = findings.iter().take(MAX_FINDINGS).cloned().collect();
+                self.on_findings(id, findings);
+                None
+            }
             _ => None,
         }
+    }
+
+    /// The add-on `id` sent its full set of health findings (protocol 4 only: the supervisor
+    /// drops them on a protocol 3 connection). `id` is the connection's own id, never a field
+    /// of the message.
+    ///
+    /// TODO(#181): validate them and keep them in memory only in `health::Store` (cut to the
+    /// limits in `toolboks_addon_proto`, routes checked against the entry's `pages`). Until
+    /// then nothing is kept.
+    pub fn on_findings(&mut self, id: &str, findings: Vec<Finding>) {
+        let _ = (id, findings);
     }
 
     /// Status bar items of the running add-ons that are turned on, in add-on id order.
@@ -680,6 +702,35 @@ mod tests {
         assert!(!launch_spec(root, &installed[3]).background);
         assert_eq!(specs[0].installed_root.as_deref(), Some(root));
         assert!(!launch_spec(root, &installed[3]).may_elevate);
+    }
+
+    #[test]
+    fn the_launch_spec_speaks_the_installed_entrys_protocol() {
+        let root = std::path::Path::new("data");
+        let mut old = entry("toolboks.old", "Old", &[]);
+        old.protocol_version = 3;
+        assert_eq!(launch_spec(root, &old).protocol_version, 3);
+        let new = entry("toolboks.new", "New", &[]);
+        assert_eq!(new.protocol_version, 4);
+        assert_eq!(launch_spec(root, &new).protocol_version, 4);
+    }
+
+    #[test]
+    fn findings_are_accepted_and_change_nothing_else() {
+        let (supervisor, root, mut config) = idle();
+        let mut services = Services::default();
+        let many = (0..40)
+            .map(|i| Finding::ok(format!("check-{i}"), "Title", "Seen"))
+            .collect();
+        let effect = services.apply(
+            &message("a", AddonMessage::Findings(many)),
+            &supervisor,
+            &root,
+            &mut config,
+        );
+        assert_eq!(effect, None);
+        assert!(services.status_items(|_| true).is_empty());
+        assert!(config.preferences.is_empty());
     }
 
     /// Ticks the supervisor and applies every event until `done`. Returns the effects seen.

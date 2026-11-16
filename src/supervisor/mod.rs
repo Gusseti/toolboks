@@ -6,7 +6,11 @@
 //!   use the install record; privileged starts require a current catalog entry.
 //!   Installed version folders refuse unexpected files or redirected paths.
 //! - Each launch gets two named pipes that only the current user can open and a random token
-//!   the add-on must present (see `pipe`), then the protocol handshake.
+//!   the add-on must present (see `pipe`), then the protocol handshake at the version of the
+//!   installed entry ([`LaunchSpec::protocol_version`]), which must be one this build speaks
+//!   (`catalog::PROTOCOL_VERSIONS`). The agreed version is kept per add-on
+//!   ([`Supervisor::protocol_version`]): no message newer than it is sent to the add-on, and
+//!   newer messages from it are dropped.
 //! - Every add-on process is in one job object that ends with the host, also after a crash of
 //!   the host (see `process`).
 //! - Hidden background add-ons suspend; other hidden add-ons exit. A crash restarts at most
@@ -64,6 +68,10 @@ pub struct LaunchSpec {
     pub may_elevate: bool,
     /// Background add-ons keep their process while their page is hidden.
     pub background: bool,
+    /// The protocol version recorded for the installed entry. The host speaks this version in
+    /// its `Hello`, so an add-on built for an older protocol keeps working. A version this
+    /// build does not speak is refused before the exe is started.
+    pub protocol_version: u32,
     /// `addons::data_root()` for an add-on the installer placed. The supervisor then follows
     /// the installer's start bookkeeping (`launching`, `started`), so a new version that never
     /// starts rolls back.
@@ -250,6 +258,8 @@ enum Phase {
         heartbeat: HeartbeatMonitor,
         stalled_since: Option<Instant>,
         said_bye: bool,
+        /// The protocol version agreed in the handshake.
+        protocol_version: u32,
     },
     Stopping {
         process: Process,
@@ -445,11 +455,26 @@ impl Supervisor {
     }
 
     /// Sends a host message (navigation, preferences, capabilities, tutorial) to a running
-    /// add-on. Returns false when it is not running.
+    /// add-on. Returns false when it is not running, or when the message is newer than the
+    /// connection's protocol version (it is then not sent: an older add-on cannot read it).
     pub fn send(&self, id: &str, message: &HostMessage) -> bool {
         match self.addons.get(id).map(|m| &m.phase) {
-            Some(Phase::Running { sender, .. }) => send(sender, message),
+            Some(Phase::Running {
+                sender,
+                protocol_version,
+                ..
+            }) if host_message_allowed(message, *protocol_version) => send(sender, message),
             _ => false,
+        }
+    }
+
+    /// The protocol version agreed with the running add-on, or `None` while it is not running.
+    pub fn protocol_version(&self, id: &str) -> Option<u32> {
+        match &self.addons.get(id)?.phase {
+            Phase::Running {
+                protocol_version, ..
+            } => Some(*protocol_version),
+            _ => None,
         }
     }
 
@@ -528,6 +553,39 @@ impl Drop for Supervisor {
     }
 }
 
+/// True when `message` exists at protocol `version`. Only messages added after protocol 3 are
+/// limited; everything else exists at every version this build speaks.
+fn host_message_allowed(message: &HostMessage, version: u32) -> bool {
+    match message {
+        HostMessage::CheckNow => version >= toolboks_addon_proto::FINDINGS_PROTOCOL_VERSION,
+        _ => true,
+    }
+}
+
+/// True when an add-on message may arrive at protocol `version`. One newer than the
+/// connection is dropped: the add-on is not supposed to send it there.
+fn addon_message_allowed(message: &AddonMessage, version: u32) -> bool {
+    match message {
+        AddonMessage::Findings(_) => version >= toolboks_addon_proto::FINDINGS_PROTOCOL_VERSION,
+        _ => true,
+    }
+}
+
+/// The plain refusal for an installed entry whose protocol this build does not speak. The
+/// add-on is not started.
+fn unsupported_protocol(version: u32) -> Option<String> {
+    if crate::catalog::PROTOCOL_VERSIONS.contains(&version) {
+        return None;
+    }
+    Some(
+        ProtocolError::VersionMismatch {
+            addon: version,
+            host: toolboks_addon_proto::PROTOCOL_VERSION,
+        }
+        .to_string(),
+    )
+}
+
 fn send(sender: &SharedSender, message: &HostMessage) -> bool {
     sender
         .lock()
@@ -577,6 +635,11 @@ fn launch(
         None => (spec.exe.clone(), spec.sha256.clone()),
     };
     let refused = |why| LaunchError::Stop(StopReason::Refused(why));
+    // Only a version this build speaks, checked before anything is started: the host would
+    // otherwise talk an older or newer protocol than it implements.
+    if let Some(why) = unsupported_protocol(spec.protocol_version) {
+        return Err(refused(why));
+    }
     // A drawing process must never inherit administrator rights from an elevated host.
     if !elevated && crate::elevation::is_elevated() {
         return Err(refused(
@@ -639,6 +702,7 @@ fn launch(
         pipes,
         process,
         &spec.id,
+        spec.protocol_version,
         shared.timing.connect,
         cancel,
         admin_capabilities,
@@ -649,6 +713,7 @@ fn finish_launch(
     pipes: pipe::PipePair,
     process: Process,
     id: &str,
+    protocol_version: u32,
     timeout: Duration,
     cancel: &AtomicBool,
     admin_capabilities: Vec<String>,
@@ -681,7 +746,8 @@ fn finish_launch(
 
     let mut reader = FrameReader::new(from_addon);
     let mut writer = FrameWriter::new(to_addon);
-    let ours = Hello::new(id, env!("CARGO_PKG_VERSION"));
+    // The installed entry's version: `host_handshake` refuses an answer at any other.
+    let ours = Hello::with_version(id, env!("CARGO_PKG_VERSION"), protocol_version);
     // The handshake read blocks. A watchdog ends the process at the deadline, which breaks
     // the pipe and so ends the read.
     let done = AtomicBool::new(false);
@@ -794,6 +860,7 @@ fn connect(shared: &Shared, managed: &mut Managed, started: Started, now: Instan
         send(&sender, &HostMessage::Suspend);
     }
     managed.addon_version = Some(hello.software_version);
+    managed.note(format!("connected at protocol {}", hello.protocol_version));
     managed.phase = Phase::Running {
         process,
         sender,
@@ -802,6 +869,7 @@ fn connect(shared: &Shared, managed: &mut Managed, started: Started, now: Instan
         heartbeat: HeartbeatMonitor::new(now),
         stalled_since: None,
         said_bye: false,
+        protocol_version: hello.protocol_version,
     };
     true
 }
@@ -915,6 +983,7 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
             heartbeat,
             stalled_since,
             said_bye,
+            protocol_version,
             ..
         } => {
             let mut heard = false;
@@ -929,6 +998,12 @@ fn tick_one(shared: &Shared, managed: &mut Managed, now: Instant, events: &mut V
                     }
                 };
                 heard = true;
+                if !addon_message_allowed(&message, *protocol_version) {
+                    notes.push(format!(
+                        "ignored a message that protocol {protocol_version} does not have"
+                    ));
+                    continue;
+                }
                 match message {
                     AddonMessage::Pong { nonce } => heartbeat.on_pong(nonce, now),
                     AddonMessage::Log { level, line } => notes.push(format!("{level:?}: {line}")),
