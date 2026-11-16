@@ -82,7 +82,7 @@ Text at least 4.5:1, large text 3:1. Nothing is conveyed by colour alone (data l
 
 ## Native notes (egui)
 
-The mockups are web; the app is native egui. Tokens live in `ui::apply_style` and the shared helpers in `shared/toolboks-shared/src/ui.rs` (`toolboks_shared::ui`: `graph_card`, `pill`, `card`, `toggle_switch`), which the host and every add-on use. Build new pages from those helpers; do not restyle widgets per page. Nothing here may write to disk: sidebar state, selected resource and range are in memory.
+The mockups are web; the app is native egui. Tokens live in `ui::apply_style` and the shared helpers in `shared/toolboks-shared/src/ui.rs` (`toolboks_shared::ui`: `graph_card`, `pill`, `card`, `toggle_switch`), which the host and every add-on use. Build new pages from those helpers; do not restyle widgets per page. What is written to disk (decision, issue #52, 2026-11-16): the host keeps only its own settings, and the sidebar state, the selected resource and the range stay in memory. An add-on may keep data the person benefits from in its own data folder (`addon-data/<id>`), and only these kinds: its saved settings, what the person asked it to save (reports, macros, saved scans), safety data that undoes its own changes (the Debloater undo list, the gaming profile recovery folder), and Resource Monitor's resource history (on by default, 7 days, one switch to turn it off, a button to delete it). Every such file stays on the PC, is declared in the add-on's data note so the install review shows it, can be deleted from the add-on, and is deleted with the add-on when the person chooses to delete its data.
 
 ## For add-on authors
 
