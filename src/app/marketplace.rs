@@ -868,7 +868,7 @@ impl App {
             {
                 let pill = ui.horizontal(|ui| {
                     ui.add_space(44.0);
-                    store::status_pill(ui, &status)
+                    store::status_pill(ui, &entry.id, &entry.title, &status)
                 });
                 if pill.inner.clicked() {
                     self.screen = Screen::Browser;
@@ -894,7 +894,13 @@ impl App {
         }
     }
 
-    pub(super) fn market_sidebar_status(&mut self, ui: &mut egui::Ui, id: &str, expanded: bool) {
+    pub(super) fn market_sidebar_status(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: &str,
+        title: &str,
+        expanded: bool,
+    ) {
         let status = self
             .market_status(id)
             .filter(|status| status != "Update available");
@@ -902,7 +908,7 @@ impl App {
             if expanded {
                 let pill = ui.horizontal(|ui| {
                     ui.add_space(44.0);
-                    store::status_pill(ui, &status)
+                    store::status_pill(ui, id, title, &status)
                 });
                 if pill.inner.clicked() {
                     self.screen = Screen::Browser;
@@ -911,15 +917,7 @@ impl App {
                 }
             } else {
                 let center = egui::pos2(ui.max_rect().right() - 3.0, ui.cursor().top() - 12.0);
-                ui.painter().circle_filled(center, 3.0, look::DATA_MEMORY);
-                let response = ui
-                    .interact(
-                        egui::Rect::from_center_size(center, Vec2::splat(10.0)),
-                        egui::Id::unique(("addon-status", id)),
-                        egui::Sense::click(),
-                    )
-                    .on_hover_text(&status);
-                if response.clicked() {
+                if store::status_dot(ui, id, title, &status, center).clicked() {
                     self.screen = Screen::Browser;
                     self.market.focused = Some(id.into());
                     self.market.details = true;

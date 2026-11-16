@@ -441,7 +441,7 @@ const PAGE_ROW_H: f32 = 28.0;
 const LABEL_X: f32 = 40.0;
 
 /// Paints the keyboard focus ring over a custom-drawn control.
-fn focus_ring(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response) {
+pub(super) fn focus_ring(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response) {
     if response.has_focus() {
         ui.painter().rect_stroke(
             rect,
@@ -867,7 +867,7 @@ impl App {
                             if nav(ui, &title, sidebar_icon(&id, &icon), on, expanded, tag) {
                                 self.open_addon(&id);
                             }
-                            self.market_sidebar_status(ui, &id, expanded);
+                            self.market_sidebar_status(ui, &id, &title, expanded);
                             if on && expanded && pages.len() > 1 {
                                 for (p, name) in pages.iter().enumerate() {
                                     if page_row(ui, name, self.addon_page == p) {
