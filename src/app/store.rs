@@ -50,8 +50,24 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
             .unwrap()
             .insert(0, "segoe-ui".into());
     }
+    // 600-weight text in the system face (Home's Health card): Segoe UI Semibold, falling back
+    // to the regular face when the file is missing, so the family always exists.
+    let mut semibold = fonts.families[&FontFamily::Proportional].clone();
+    if let Ok(bytes) = std::fs::read("C:/Windows/Fonts/seguisb.ttf") {
+        fonts.font_data.insert(
+            "segoe-ui-600".into(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        semibold.insert(0, "segoe-ui-600".into());
+    }
+    fonts
+        .families
+        .insert(FontFamily::Name(SEMIBOLD.into()), semibold);
     ctx.set_fonts(fonts);
 }
+
+/// The font family for 600-weight text in the system face; see [`install_fonts`].
+pub(crate) const SEMIBOLD: &str = "host-600";
 
 pub(super) fn font(size: f32, weight: u16) -> FontId {
     FontId::new(size, FontFamily::Name(format!("store-{weight}").into()))

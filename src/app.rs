@@ -13,6 +13,9 @@ pub mod addon_check;
 mod addon_tick;
 #[cfg(feature = "preview")]
 pub mod disk_manager_check;
+mod health;
+#[cfg(feature = "preview")]
+pub mod health_check;
 mod marketplace;
 #[cfg(feature = "preview")]
 pub mod marketplace_check;
@@ -59,8 +62,11 @@ pub struct App {
     pending_package: Option<toolboks_addon_sdk::Package>,
     pending_declarative: Option<String>,
     detail: Option<String>,
-    /// The add-on selected in the Home list (by id). Memory only.
-    home_selected: Option<String>,
+    /// "Check again" on Home was pressed and has not been answered yet.
+    health_check: Option<health::CheckAgain>,
+    /// A page route for an add-on opened from Home before it was running: sent as `Navigate`
+    /// when it connects. `(add-on id, route)`.
+    pending_route: Option<(String, String)>,
     remove_pending: Option<String>,
     message: Option<String>,
     preferences_dirty: Option<std::time::Instant>,
@@ -203,7 +209,8 @@ impl App {
             pending_package: None,
             pending_declarative: None,
             detail: None,
-            home_selected: None,
+            health_check: None,
+            pending_route: None,
             remove_pending: None,
             message,
             preferences_dirty: None,

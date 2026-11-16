@@ -38,7 +38,7 @@ egui makes any widget with `Sense::click()` focusable and part of the Tab order,
 |---|---|---|---|---|
 | Sidebar hamburger, nav rows | `src/app/shell.rs` `nav_row` | yes | yes | accessible name set |
 | Nested page rows | `src/app/shell.rs` `page_row` | yes | yes | |
-| Home list rows | `src/app/shell.rs` `list_row` | yes | yes | |
+| Home Health actions (Check again, row actions, "more" links) | `src/app/health.rs` | yes | yes, `focus_ring` over each | Tab order Check again, then each row's action top to bottom (`tab_goes_check_again_then_each_action_top_to_bottom`). The Home list rows (`list_row`) left Home with #182. |
 | Toggle switch (add-on preferences, settings) | `shared/toolboks-shared/src/ui.rs` `toggle_switch` | yes | yes (line 235) | owned elsewhere, read only |
 | Range pills, page pills | `shared/toolboks-shared/src/ui.rs` `pill` | yes | yes (line 247), see (d) | |
 | Primary button, Help, Dismiss, Browse, View details, modal buttons | `src/app/shell.rs` | yes | yes, egui default widget focus uses the style's selection stroke | |
@@ -72,7 +72,7 @@ Scaling first: `with_min_inner_size` takes logical points, so Windows display sc
 |---|---|---|
 | Sidebar | Tab goes hamburger, Home, add-ons with their pages, then the foot top to bottom: Settings, Add-ons, Pick your tools. The foot used to be drawn bottom-up, which reversed Tab; it is now created top to bottom and placed by its known height (`bottom_group`). Every row draws `focus_ring`. A collapsed row shows its name as a tooltip on keyboard focus as well as on hover (`focus_tip`, used by `nav` and by the rows of catalog-installed add-ons in `market_sidebar`). Tests: `tab_goes_down_the_foot_of_the_sidebar_in_the_order_shown`, `collapsed_rail_row_shows_its_name_while_it_has_keyboard_focus`. | The list scrolls and reserves the real height of the foot; at 720 points tall there is room for the foot plus several rows (`shell_fits_the_minimum_window`). |
 | Header | Buttons are egui widgets with the default focus ring. Page pills use `ui::pill`. | The add-on browser's buttons and an add-on's page tabs switch to a menu ("Add-on actions", "Pages") when they do not fit the width left after the breadcrumb. Before, the buttons switched at a fixed 850 point window width and the page tabs never did. The width estimates are tested to be at least the real widget widths (`header_estimates_are_not_smaller_than_the_widgets`). The breadcrumb itself is not truncated: a very long add-on name beside Help could still crowd it; not measured. |
-| Home | List rows (`list_row`) draw `focus_ring`. | Stacks list over detail under 520 points of width (see (c)). |
+| Home | Since #182 Home shows the Health card, not the list; its actions draw `focus_ring`. | A row narrower than 560 points puts its action under the text; Home scrolls. Checked in a real window at 1060 x 720 at 100 and 150 percent (`--health-check`). |
 | Picker and browser | `store::row` draws its own 1 px accent ring. | Rows keep a minimum text column; not measured. |
 | `ui::pill` | Focusable, draws the same ring as the sidebar rows (`shared/toolboks-shared/src/ui.rs`), 3.83:1 or better on every fill. | Width is text plus 18 points, never wrapped; callers must fit it (the header now does). |
 
