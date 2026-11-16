@@ -149,6 +149,21 @@ pub fn allowed_url(url: &str) -> bool {
     }
 }
 
+/// How often the host looks at an add-on view that is waiting for its add-on.
+pub const WAITING_POLL: Duration = Duration::from_millis(100);
+
+/// When the host must look at the add-on view on screen again by itself: only while the page is
+/// shown and the add-on is still starting, restarting or not answering. A running add-on wakes the
+/// host with its own frames and repaint requests (and the supervisor's heartbeat comes every
+/// second), and a view that is not on screen, or a stopped one, needs nothing at all. Before this,
+/// every view (also those of background add-ons, never shown) asked for a pass every 100 ms.
+pub fn poll_after(shown: Option<&ViewState>) -> Option<Duration> {
+    match shown? {
+        ViewState::Connecting | ViewState::Restarting | ViewState::Stalled => Some(WAITING_POLL),
+        ViewState::Running | ViewState::Stopped(_) => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ViewState {
     /// Waiting for the first frame of the add-on.

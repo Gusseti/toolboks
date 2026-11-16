@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Toolboks costs almost nothing while you are not using it.** Once any add-on had connected (also a background one), the open window redrew 10 times a second, about 0.2% of the whole PC on an 8-core PC; it now redraws only when something changes (0.01%). Hidden in the tray it stays at about 0.002%. Settings shows the live figure: "Toolboks uses about X% CPU and Y MB". Numbers and method are in `docs/OVERHEAD.md`.
+
 ### Added
 
 - **Updates are shown on Home.** When an add-on has a newer version, the top of Home says "Update available: Audio Gainer" (or "2 updates available: ...") with an **Update** button that opens the normal access review. The add-on's row says "Update" instead of "On", and its card shows the new version with an **Update** button.

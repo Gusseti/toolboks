@@ -83,6 +83,8 @@ pub struct App {
     hidden: bool,
     /// The tray's Quit was chosen: the next close request really closes.
     quitting: bool,
+    /// Toolboks's own CPU and memory, read only while the Settings page is drawn.
+    own_usage: crate::own_usage::OwnUsage,
 }
 
 impl Drop for App {
@@ -213,6 +215,7 @@ impl App {
             tray: None,
             hidden: false,
             quitting: false,
+            own_usage: Default::default(),
         }
     }
 
@@ -433,9 +436,10 @@ impl App {
         tray.set_visible(true);
         tray.refresh();
         let actions = tray.actions();
+        // The percentage is polled, so wake up when the next refresh is due even if nothing else
+        // asks (every 2 s; clicks on the icon wake the app at once by themselves).
+        ctx.request_repaint_after(tray.refresh_in(std::time::Instant::now()));
         let installing = self.install_in_progress();
-        // The percentage is polled, so wake up regularly even if nothing else asks.
-        ctx.request_repaint_after(Duration::from_secs(if self.hidden { 1 } else { 2 }));
 
         for action in actions {
             match action {

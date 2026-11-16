@@ -96,6 +96,12 @@ impl Tray {
         self.rx.try_iter().collect()
     }
 
+    /// How long until [`Tray::refresh`] has something to do: the app wakes up then, and not
+    /// sooner, whether the window is shown or hidden.
+    pub fn refresh_in(&self, now: Instant) -> Duration {
+        until_due(self.last_refresh, now, REFRESH)
+    }
+
     /// Redraws the icon if 2 s passed and the percentage changed.
     pub fn refresh(&mut self) {
         if self.last_refresh.is_some_and(|t| t.elapsed() < REFRESH) {
@@ -112,6 +118,17 @@ impl Tray {
         }
         let _ = self.icon.set_tooltip(Some(tooltip_text(percent)));
     }
+}
+
+/// Time left until `every` has passed since `last` (none yet: now). Never less than a few
+/// milliseconds, so a wake-up that comes a hair early does not spin.
+pub fn until_due(last: Option<Instant>, now: Instant, every: Duration) -> Duration {
+    const MIN: Duration = Duration::from_millis(10);
+    last.map_or(MIN, |at| {
+        every
+            .saturating_sub(now.saturating_duration_since(at))
+            .max(MIN)
+    })
 }
 
 fn make_icon(percent: u32) -> Option<Icon> {
@@ -204,6 +221,27 @@ pub fn digits_to_rgba(percent: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wakes_when_the_next_refresh_is_due_and_not_before() {
+        let t0 = Instant::now();
+        let every = Duration::from_secs(2);
+        assert_eq!(until_due(Some(t0), t0, every), every);
+        assert_eq!(
+            until_due(Some(t0), t0 + Duration::from_millis(1500), every),
+            Duration::from_millis(500)
+        );
+        // Due or late: come back almost at once, never with a zero wait.
+        assert_eq!(
+            until_due(Some(t0), t0 + every, every),
+            Duration::from_millis(10)
+        );
+        assert_eq!(
+            until_due(Some(t0), t0 + Duration::from_secs(9), every),
+            Duration::from_millis(10)
+        );
+        assert_eq!(until_due(None, t0, every), Duration::from_millis(10));
+    }
 
     #[test]
     fn colors_follow_the_health_thresholds() {
