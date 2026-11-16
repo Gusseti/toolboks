@@ -94,6 +94,12 @@ guarantee. Measured:
 Not changed: the 30 s wake-up and the 5-minute list refresh (cost too small to see), the
 supervisor, background add-ons, the tray icon itself.
 
+Found, not changed (#176): while the window is hidden in the tray only `App::logic` runs, so the
+supervisor is not ticked (no heartbeat, no restart of a crashed background add-on until the window
+is shown) and a page add-on that was open when the window was hidden keeps its process (Resource
+Monitor stayed running in the tray at 0% CPU, 46 MB). Fixing it changes behaviour, so it is its own
+issue.
+
 ## Settings
 
 The Settings page (About Toolboks) shows "Toolboks uses about X% CPU and Y MB (add-ons not
