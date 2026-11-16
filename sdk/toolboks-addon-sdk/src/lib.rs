@@ -73,6 +73,10 @@ pub struct Manifest {
     /// review and the details. See [`valid_data_note`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_note: Option<String>,
+    /// The names of the health checks this add-on can report to Home (see
+    /// [`valid_check_names`]). Optional; the catalog entry carries the same list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,6 +221,27 @@ pub fn valid_data_note(s: &str) -> bool {
         && s.chars().count() <= MAX_DATA_NOTE_CHARS
         && !s.chars().any(|c| c.is_control() || hidden_char(c))
 }
+/// The most health check names an add-on can declare.
+pub const MAX_CHECKS: usize = 6;
+/// The longest health check name, in characters.
+pub const MAX_CHECK_NAME_CHARS: usize = 40;
+/// A health check name is plain text like a data note (no control, hidden or bidi characters, no
+/// whitespace at either end, so never empty after trimming) of at most
+/// [`MAX_CHECK_NAME_CHARS`] characters.
+pub fn valid_check_name(s: &str) -> bool {
+    valid_data_note(s) && s.chars().count() <= MAX_CHECK_NAME_CHARS
+}
+/// A list of health check names: at most [`MAX_CHECKS`], each a [`valid_check_name`], and no two
+/// the same when upper and lower case are ignored. The SDK and the catalog use this one rule.
+pub fn valid_check_names(names: &[String]) -> bool {
+    names.len() <= MAX_CHECKS
+        && names.iter().all(|n| valid_check_name(n))
+        && names.iter().enumerate().all(|(i, n)| {
+            !names[..i]
+                .iter()
+                .any(|earlier| earlier.to_lowercase() == n.to_lowercase())
+        })
+}
 /// Unicode format characters (general category Cf, as of Unicode 15) and the line and paragraph
 /// separators (U+2028, U+2029). They are invisible or change how the text around them is shown:
 /// bidi overrides and isolates such as U+202E can make a note read differently from what it
@@ -357,6 +382,11 @@ impl Package {
         if m.data_note.as_deref().is_some_and(|s| !valid_data_note(s)) {
             return Err(format!(
                 "The data note must be one line of plain text, 1 to {MAX_DATA_NOTE_CHARS} characters, with no spaces at either end."
+            ));
+        }
+        if !valid_check_names(&m.checks) {
+            return Err(format!(
+                "The health checks must be at most {MAX_CHECKS} different names of 1 to {MAX_CHECK_NAME_CHARS} characters of plain text, with no spaces at either end."
             ));
         }
         let mut ids = HashSet::new();
@@ -682,6 +712,54 @@ mod tests {
         assert!(valid_data_note(
             "Keeps scans \u{2013} file names, \u{e5}\u{f8}\u{e6}."
         ));
+    }
+    #[test]
+    fn checks_are_optional_short_unique_plain_names() {
+        let parse = |checks: Option<serde_json::Value>| {
+            let mut v = example();
+            if let Some(checks) = checks {
+                v["manifest"]["checks"] = checks;
+            }
+            Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2")
+        };
+        // Absent: every existing manifest keeps parsing, and it is not written back out.
+        let package = parse(None).unwrap();
+        assert!(package.manifest.checks.is_empty());
+        assert!(!serde_json::to_string(&package).unwrap().contains("checks"));
+        let names: Vec<String> = vec![
+            "Recent crashes".into(),
+            "Disk health".into(),
+            "\u{e5}".repeat(40),
+        ];
+        assert_eq!(
+            parse(Some(serde_json::json!(names)))
+                .unwrap()
+                .manifest
+                .checks,
+            names
+        );
+        let six: Vec<String> = (0..6).map(|i| format!("Check {i}")).collect();
+        assert!(parse(Some(serde_json::json!(six))).is_ok());
+        let seven: Vec<String> = (0..7).map(|i| format!("Check {i}")).collect();
+        let bad_lists: Vec<Vec<String>> = vec![
+            seven,
+            vec!["a".repeat(41)],
+            vec!["\u{e5}".repeat(41)],
+            vec![String::new()],
+            vec!["  ".into()],
+            vec![" Disk".into()],
+            vec!["Disk ".into()],
+            vec!["Dis\nk".into()],
+            vec!["Dis\u{202e}k".into()],
+            vec!["Dis\u{200b}k".into()],
+            vec!["Disk".into(), "Disk".into()],
+            vec!["Disk".into(), "disk".into()],
+        ];
+        for bad in bad_lists {
+            assert!(parse(Some(serde_json::json!(bad))).is_err(), "{bad:?}");
+            assert!(!valid_check_names(&bad), "{bad:?}");
+        }
+        assert!(valid_check_names(&[]));
     }
     #[test]
     fn tutorial_targets_are_validated_without_executable_actions() {

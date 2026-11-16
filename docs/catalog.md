@@ -67,3 +67,12 @@ are ignored, so those indexes still read.
   of each drive on this PC (file and folder names)." It is shown under the capabilities in the
   install review and in the details. Copy it from the add-on's manifest (`data_note`, same rule).
   A bad note makes the whole index refused, like any other bad field. Older apps ignore it.
+- `checks` (optional, default empty, left out when empty) lists the names of the health checks the
+  add-on can report to Home, such as `["Recent crashes", "Disk health"]`: at most 6 names, each 1 to
+  40 characters of plain text (same rule as `data_note`: no control characters, no Unicode format
+  characters such as bidi overrides or zero-width characters, no line or paragraph separators, no
+  spaces at either end; `toolboks_addon_sdk::valid_check_names`), and no two names the same when
+  upper and lower case are ignored. Copy it from the add-on's manifest (`checks`, same rule). A bad
+  list makes the whole index refused, like any other bad field. Older apps ignore it; a package
+  manifest with `checks` is refused by apps older than the release that adds it, so an add-on that
+  sets it needs that `min_toolboks_version`.

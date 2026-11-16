@@ -39,6 +39,7 @@ pub(super) fn manifest_of(entry: &crate::catalog::Entry) -> Manifest {
         screenshots: entry.screenshots.clone(),
         capabilities: Vec::new(),
         data_note: entry.data_note.clone(),
+        checks: entry.checks.clone(),
     }
 }
 
