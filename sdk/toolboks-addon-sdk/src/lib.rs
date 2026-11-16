@@ -66,6 +66,10 @@ pub struct Manifest {
     pub screenshots: Vec<String>,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
+    /// One plain-language line about data the add-on keeps on this PC, shown in the install
+    /// review and the details. See [`valid_data_note`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_note: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +203,47 @@ fn text(s: &str, max: usize) -> bool {
         && s.len() <= max
         && !s.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
 }
+/// The longest data note, in characters.
+pub const MAX_DATA_NOTE_CHARS: usize = 160;
+/// A data note is one line of plain text: 1 to [`MAX_DATA_NOTE_CHARS`] characters, no whitespace
+/// at either end, no control characters (so no line breaks or tabs) and no [`hidden_char`].
+/// The SDK and the catalog both check notes with this one rule.
+pub fn valid_data_note(s: &str) -> bool {
+    !s.is_empty()
+        && s.trim() == s
+        && s.chars().count() <= MAX_DATA_NOTE_CHARS
+        && !s.chars().any(|c| c.is_control() || hidden_char(c))
+}
+/// Unicode format characters (general category Cf, as of Unicode 15) and the line and paragraph
+/// separators (U+2028, U+2029). They are invisible or change how the text around them is shown:
+/// bidi overrides and isolates such as U+202E can make a note read differently from what it
+/// says, and zero-width characters hide text.
+pub fn hidden_char(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
 fn key(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 80
@@ -305,6 +350,11 @@ impl Package {
         }
         if m.byline.as_ref().is_some_and(|s| !text(s, 60)) {
             return Err("Invalid add-on byline.".into());
+        }
+        if m.data_note.as_deref().is_some_and(|s| !valid_data_note(s)) {
+            return Err(format!(
+                "The data note must be one line of plain text, 1 to {MAX_DATA_NOTE_CHARS} characters, with no spaces at either end."
+            ));
         }
         let mut ids = HashSet::new();
         let mut keys = HashSet::new();
@@ -531,6 +581,91 @@ mod tests {
         assert!(!valid_id("C:/escape"));
         assert_eq!(version("1.2.3"), Some((1, 2, 3)));
         assert!(version("01.2.3").is_none());
+    }
+    #[test]
+    fn data_note_is_optional_and_checked() {
+        let parse = |note: Option<serde_json::Value>| {
+            let mut v = example();
+            if let Some(note) = note {
+                v["manifest"]["data_note"] = note;
+            }
+            Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2")
+        };
+        // Absent: every existing manifest keeps parsing, and it is not written back out.
+        let package = parse(None).unwrap();
+        assert_eq!(package.manifest.data_note, None);
+        assert!(!serde_json::to_string(&package)
+            .unwrap()
+            .contains("data_note"));
+        // An explicit null is the same as absent.
+        assert_eq!(
+            parse(Some(serde_json::Value::Null))
+                .unwrap()
+                .manifest
+                .data_note,
+            None
+        );
+        let note = "Keeps your last scan of each drive on this PC (file and folder names).";
+        assert_eq!(
+            parse(Some(serde_json::json!(note)))
+                .unwrap()
+                .manifest
+                .data_note
+                .as_deref(),
+            Some(note)
+        );
+        // The limit counts characters, not bytes.
+        assert!(parse(Some(serde_json::json!("a".repeat(160)))).is_ok());
+        assert!(parse(Some(serde_json::json!("\u{e5}".repeat(160)))).is_ok());
+        for bad in [
+            "a".repeat(161),
+            "\u{e5}".repeat(161),
+            String::new(),
+            "   ".into(),
+            " Keeps scans.".into(),
+            "Keeps scans. ".into(),
+            "Keeps\nscans.".into(),
+            "Keeps\tscans.".into(),
+            "Keeps\u{7}scans.".into(),
+            "Keeps\u{85}scans.".into(),
+        ] {
+            assert!(parse(Some(serde_json::json!(bad))).is_err(), "{bad:?}");
+        }
+        // Format characters (Cf) and line/paragraph separators, anywhere in the note.
+        for hidden in [
+            '\u{202e}',  // right-to-left override
+            '\u{202a}',  // left-to-right embedding
+            '\u{2066}',  // left-to-right isolate
+            '\u{2069}',  // pop directional isolate
+            '\u{200b}',  // zero width space
+            '\u{200d}',  // zero width joiner
+            '\u{200e}',  // left-to-right mark
+            '\u{2060}',  // word joiner
+            '\u{feff}',  // zero width no-break space
+            '\u{ad}',    // soft hyphen
+            '\u{e0041}', // tag latin capital letter a
+            '\u{2028}',  // line separator
+            '\u{2029}',  // paragraph separator
+        ] {
+            assert!(hidden_char(hidden), "{hidden:?}");
+            for bad in [
+                format!("Keeps{hidden}scans."),
+                format!("{hidden}Keeps scans."),
+                format!("Keeps scans.{hidden}"),
+            ] {
+                assert!(!valid_data_note(&bad), "{bad:?}");
+                assert!(parse(Some(serde_json::json!(bad))).is_err(), "{bad:?}");
+            }
+        }
+        // Ordinary punctuation and letters are not hidden.
+        for shown in [
+            'a', '\u{e5}', '(', '.', '\u{2013}', '\u{2019}', '\u{20ac}', ' ',
+        ] {
+            assert!(!hidden_char(shown), "{shown:?}");
+        }
+        assert!(valid_data_note(
+            "Keeps scans \u{2013} file names, \u{e5}\u{f8}\u{e6}."
+        ));
     }
     #[test]
     fn tutorial_targets_are_validated_without_executable_actions() {
