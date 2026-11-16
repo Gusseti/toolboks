@@ -132,10 +132,23 @@ fn spawn_counter(
     mpsc::Receiver<AddonMessage>,
     JoinHandle<Result<(), ProtocolError>>,
 ) {
-    let (host, addon) = duplex();
-    let thread = std::thread::spawn(move || run_addon_on(addon, Counter::default(), "counter"));
+    spawn_addon(ctx, Counter::default(), "counter")
+}
+
+/// Runs `addon` in the SDK runtime on a thread over in-memory pipes and connects a link to it.
+fn spawn_addon<A: NativeAddon + Send + 'static>(
+    ctx: &egui::Context,
+    addon: A,
+    id: &'static str,
+) -> (
+    AddonLink,
+    mpsc::Receiver<AddonMessage>,
+    JoinHandle<Result<(), ProtocolError>>,
+) {
+    let (host, pipes) = duplex();
+    let thread = std::thread::spawn(move || run_addon_on(pipes, addon, id));
     let (mut reader, mut writer) = host.split();
-    host_handshake(&mut reader, &mut writer, &Hello::new("counter", "test")).expect("handshake");
+    host_handshake(&mut reader, &mut writer, &Hello::new(id, "test")).expect("handshake");
     let (side_tx, side_rx) = mpsc::channel();
     let link = AddonLink::spawn(reader, writer, ctx, side_tx).expect("reader thread");
     (link, side_rx, thread)
@@ -537,6 +550,75 @@ fn real_addon_paints_takes_clicks_and_restarts_dimmed() {
     // Dropping the view frees every texture and closes the connection.
     drop(view);
     assert_eq!(allocated(&ctx), baseline);
+    assert!(addon.join().expect("add-on thread").is_ok());
+}
+
+/// An add-on with pages. Like the real ones, `navigate` only changes its page: it has no
+/// `Context` to ask for a repaint with.
+#[derive(Default)]
+struct Pages {
+    page: usize,
+}
+
+impl NativeAddon for Pages {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut BTreeMap<String, serde_json::Value>) -> bool {
+        ui.label(format!("Page {}", self.page));
+        false
+    }
+
+    fn navigate(&mut self, page: &str) {
+        self.page = page.parse().unwrap_or(0);
+    }
+
+    fn page_index(&self) -> usize {
+        self.page
+    }
+}
+
+/// The owner's report: a page picked in the sidebar often did not show, or only after a while.
+/// A sidebar click is no input for the add-on, and an add-on draws only in answer to input, so
+/// after `Navigate` alone the old page stayed until the pointer moved over the page. `navigate`
+/// asks for the frame; the new page must be drawn with no input at all, also when a batch was
+/// still in flight when the page was picked.
+#[test]
+fn a_page_picked_in_the_host_is_drawn_without_input() {
+    let ctx = egui::Context::default();
+    let mut view = AddonView::new("Pages", &ctx);
+    let (link, _side, addon) = spawn_addon(&ctx, Pages::default(), "pages");
+    let sender = link.sender();
+    let send = |message: &HostMessage| sender.lock().unwrap().send(message).is_ok();
+    view.attach(link);
+    pump(&ctx, &mut view, |view| view.page_index == Some(0));
+    let idle = |view: &AddonView| {
+        view.pacer.in_flight().is_none()
+            && view.pacer.next_send_at().is_none()
+            && view.repaint_due.is_none()
+    };
+    // Settle: nothing in flight, nothing wanted, no repaint asked for, so the host sends nothing
+    // more by itself (egui asks for a few repaints after the first frames).
+    pump(&ctx, &mut view, idle);
+
+    // An idle page: the click is in the sidebar, the pointer never touches the page.
+    assert!(navigate(Some(&mut view), "1".into(), send));
+    pump(&ctx, &mut view, |view| view.page_index == Some(1));
+
+    // A batch is in flight (the add-on is drawing) when the next page is picked.
+    pump(&ctx, &mut view, idle);
+    std::thread::sleep(toolboks_addon_proto::pacing::FRAME_INTERVAL);
+    view.request_frame();
+    pass(&ctx, Vec::new(), |ui| {
+        view.show(ui, page());
+    });
+    assert!(view.pacer.in_flight().is_some());
+    assert!(navigate(Some(&mut view), "2".into(), send));
+    pump(&ctx, &mut view, |view| view.page_index == Some(2));
+
+    // Not running: nothing is sent and nothing is asked for.
+    assert!(!navigate(Some(&mut view), "0".into(), |_| false));
+
+    // The add-on ends once every sender is gone.
+    drop(view);
+    drop(sender);
     assert!(addon.join().expect("add-on thread").is_ok());
 }
 

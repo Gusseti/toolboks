@@ -924,14 +924,15 @@ impl App {
                 for (page, title) in entry.pages.iter().enumerate() {
                     if super::shell::page_row(ui, title, self.addon_page == page) {
                         self.addon_page = page;
-                        if let Some(supervisor) = &self.supervisor {
-                            supervisor.send(
-                                &entry.id,
-                                &toolboks_addon_proto::HostMessage::Navigate {
-                                    page: page.to_string(),
-                                },
-                            );
-                        }
+                        crate::addon_view::navigate(
+                            self.views.get_mut(&entry.id),
+                            page.to_string(),
+                            |message| {
+                                self.supervisor
+                                    .as_ref()
+                                    .is_some_and(|supervisor| supervisor.send(&entry.id, message))
+                            },
+                        );
                     }
                 }
             }
