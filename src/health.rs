@@ -32,6 +32,8 @@ pub const MAX_ATTENTION_PER_SOURCE: usize = 3;
 #[derive(Default)]
 pub struct Store {
     sources: BTreeMap<String, Source>,
+    /// How many sets were received in total; Home's "Checking…" ends when it moves.
+    received: u64,
 }
 
 struct Source {
@@ -114,7 +116,18 @@ impl Store {
                 running: true,
             },
         );
+        self.received += 1;
         dropped
+    }
+
+    /// How many sets were received since start; it only grows.
+    pub fn received(&self) -> u64 {
+        self.received
+    }
+
+    /// The add-on has reported a set (possibly empty) that is still kept.
+    pub fn reported(&self, id: &str) -> bool {
+        self.sources.contains_key(id)
     }
 
     /// The add-on started or stopped. Its findings stay either way, so Home can show their age

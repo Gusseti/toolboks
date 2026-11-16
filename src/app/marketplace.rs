@@ -140,11 +140,19 @@ impl App {
                     if let Some(link) = supervisor.take_link(&id) {
                         view.attach(link);
                     }
+                    // A route from a Home finding wins over the page index, once.
+                    let route = match self.pending_route.take() {
+                        Some((for_id, route)) if for_id == id => Some(route),
+                        other => {
+                            self.pending_route = other;
+                            None
+                        }
+                    };
                     if self.screen == Screen::External(id.clone()) {
                         supervisor.send(
                             &id,
                             &toolboks_addon_proto::HostMessage::Navigate {
-                                page: self.addon_page.to_string(),
+                                page: route.unwrap_or_else(|| self.addon_page.to_string()),
                             },
                         );
                     }
