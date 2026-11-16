@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- **Add-ons are looked after while Toolboks is in the tray or minimized.** A background add-on that stops unexpectedly is now restarted within about a second even when the window is hidden, and a tool whose page was open when you closed the window to the tray is now closed instead of left running. Before, both waited until the window was shown again.
 - **Keyboard use of the add-on status in the sidebar.** The small status pill (for example "Could not install") and the dot on the collapsed sidebar can now be reached with Tab, show a focus ring, and are named for screen readers and in a tooltip, for example "Disk Manager, could not install".
 
 ## [0.13.2] - 2026-11-15

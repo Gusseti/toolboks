@@ -1,3 +1,4 @@
+use super::addon_tick;
 use super::shell::{muted, Screen, Tag};
 use super::store;
 use super::*;
@@ -39,13 +40,30 @@ impl App {
         })
     }
 
+    /// From `ui`: the add-on work, unless the `logic` of this pass already ran it (#176), then
+    /// the repaints a drawn window needs for its add-on views.
     pub(super) fn poll_marketplace(&mut self, ctx: &egui::Context) {
-        if !self.market.checked {
-            self.market.refresh(self.registry.root.clone(), ctx);
-        } else if !self.hidden && self.market.refresh_due(std::time::Instant::now()) {
+        if self.addon_tick.ui_due(std::time::Instant::now()) {
+            self.tick_addons(ctx);
+        }
+        self.poll_views(ctx);
+    }
+
+    /// The add-on work that does not draw: the add-on list timer, install jobs, the supervisor
+    /// tick, the hide rule and starting background add-ons. It runs from `ui` while the window is
+    /// drawn and from `logic` once a second while it is not (hidden in the tray or minimized);
+    /// see `addon_tick`.
+    pub(super) fn tick_addons(&mut self, ctx: &egui::Context) {
+        let busy = self.market.busy() || self.market.review.is_some();
+        let due = self.market.refresh_due(std::time::Instant::now());
+        match addon_tick::list_fetch(self.market.checked, self.hidden, due, busy) {
+            addon_tick::ListFetch::First => self.market.refresh(self.registry.root.clone(), ctx),
             // Fetch the list again every few minutes while the app is open, so a new release is
             // noticed without pressing Refresh. Nothing on screen changes while it runs.
-            self.market.refresh_quietly(self.registry.root.clone(), ctx);
+            addon_tick::ListFetch::Quiet => {
+                self.market.refresh_quietly(self.registry.root.clone(), ctx);
+            }
+            addon_tick::ListFetch::Nothing => {}
         }
         // Wake up now and then so the timer above also runs in a window nobody is touching.
         ctx.request_repaint_after(Duration::from_secs(30));
@@ -145,7 +163,8 @@ impl App {
             if entry.kind != crate::catalog::Kind::Native {
                 continue;
             }
-            if self.screen != Screen::External(entry.id.clone()) || self.hidden {
+            let on_screen = self.screen == Screen::External(entry.id.clone());
+            if addon_tick::hide_addon(on_screen, self.hidden) {
                 supervisor.hide(&entry.id);
             }
             if entry.background
@@ -167,6 +186,11 @@ impl App {
                 );
             }
         }
+    }
+
+    /// Only from `ui`: the repaint an add-on view on screen needs. Not while hidden in the tray:
+    /// eframe still runs `ui` for a window hidden with `Visible(false)` on Windows.
+    fn poll_views(&mut self, ctx: &egui::Context) {
         let shown = match &self.screen {
             Screen::External(id) if !self.hidden => self.views.get(id).map(|view| view.state()),
             _ => None,

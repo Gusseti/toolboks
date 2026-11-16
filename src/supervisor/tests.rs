@@ -485,6 +485,40 @@ fn hidden_background_addon_keeps_its_process() {
     assert_eq!(starts(&dir), 1);
 }
 
+fn suspends(dir: &Path) -> usize {
+    fs::read_to_string(dir.join("suspends.txt"))
+        .map(|text| text.lines().count())
+        .unwrap_or(0)
+}
+
+/// `hide` runs on every tick (also from the hidden-window path, #176): a background add-on is
+/// told `Suspend` once per change from shown to hidden, not on every call.
+#[test]
+fn a_hidden_background_addon_is_told_suspend_once_per_hide() {
+    let (dir, mut spec) = fake("suspend-once", "normal");
+    spec.background = true;
+    let mut supervisor = supervisor(Timing::default());
+    supervisor.start_background(spec.clone(), Instant::now());
+    run_until(&mut supervisor, connected);
+    // Connected hidden: told on connect, and repeated hides add nothing.
+    let settle = |supervisor: &mut Supervisor| {
+        for _ in 0..30 {
+            supervisor.hide(ID);
+            supervisor.start_background(spec.clone(), Instant::now());
+            supervisor.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    settle(&mut supervisor);
+    assert_eq!(suspends(&dir), 1);
+    // Its page is opened and left: one more, however often hide is called after.
+    supervisor.open(spec.clone(), Instant::now());
+    supervisor.tick(Instant::now());
+    settle(&mut supervisor);
+    assert_eq!(suspends(&dir), 2);
+    assert_eq!(starts(&dir), 1);
+}
+
 #[test]
 fn hiding_during_launch_cancels_without_a_hidden_restart() {
     let (dir, spec) = fake("hide-starting", "silent");
