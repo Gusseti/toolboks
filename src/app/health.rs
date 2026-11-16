@@ -1465,14 +1465,12 @@ impl App {
                     .unwrap_or(0);
                 self.addon_page = index;
                 let route = route.unwrap_or_else(|| index.to_string());
-                let sent = self.supervisor.as_ref().is_some_and(|supervisor| {
-                    supervisor.send(
-                        id,
-                        &HostMessage::Navigate {
-                            page: route.clone(),
-                        },
-                    )
-                });
+                let sent =
+                    crate::addon_view::navigate(self.views.get_mut(id), route.clone(), |message| {
+                        self.supervisor
+                            .as_ref()
+                            .is_some_and(|supervisor| supervisor.send(id, message))
+                    });
                 self.pending_route = (!sent).then(|| (id.to_string(), route));
             }
             crate::addon_services::Link::TurnedOff { title, .. } => {

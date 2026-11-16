@@ -937,14 +937,11 @@ impl App {
         if let Some(page) = chosen_page {
             if let Screen::External(ref id) = self.screen {
                 self.addon_page = page;
-                if let Some(supervisor) = &self.supervisor {
-                    supervisor.send(
-                        id,
-                        &toolboks_addon_proto::HostMessage::Navigate {
-                            page: page.to_string(),
-                        },
-                    );
-                }
+                crate::addon_view::navigate(self.views.get_mut(id), page.to_string(), |message| {
+                    self.supervisor
+                        .as_ref()
+                        .is_some_and(|supervisor| supervisor.send(id, message))
+                });
             }
         }
 
