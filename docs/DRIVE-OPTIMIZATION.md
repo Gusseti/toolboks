@@ -1,12 +1,10 @@
 # Drive optimization in Disk Manager
 
 Disk Manager now runs as an executable from `toolboks-addons`, not inside the host binary.
-The protocol 2 pilot keeps fragmentation analysis and its existing elevation request, but
-**Defragment, TRIM and Optimize with Windows are disabled in both UI and backend** pending
-#132's separate elevated helper and native confirmation window. Repin the host dependencies
-and rebuild after #132 merges to staging for protocol 3. No replacement dialog is implemented
-by this pilot. The maintenance behavior described below is the original implementation and
-must be revalidated after #132 before it is enabled for executable distribution.
+Fragmentation analysis, Defragment, TRIM and Optimize with Windows all run through the
+separate administrator helper (protocol 3). Disk Manager and Toolboks stay unelevated; the
+helper shows its own Confirm/Cancel window for each action. Real defrag, TRIM and UAC
+runs have not been validated on a real system yet (see `docs/RISKY-FEATURES-TEST.md`).
 
 Open Disk Manager > Optimization. This view is available without running a folder scan.
 It reads local fixed-drive metadata and retained Microsoft-Windows-Defrag success

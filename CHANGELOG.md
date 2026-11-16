@@ -10,6 +10,10 @@
 
 - **Keyboard use of the sidebar and header.** Tab now goes down the foot of the sidebar in the order shown (Settings, Add-ons, Pick your tools), a collapsed sidebar shows a row's name while it has keyboard focus, and the header switches to a menu whenever its buttons or page tabs would not fit, not at a fixed window width.
 
+### Fixed
+
+- **Keyboard use of the add-on status in the sidebar.** The small status pill (for example "Could not install") and the dot on the collapsed sidebar can now be reached with Tab, show a focus ring, and are named for screen readers and in a tooltip, for example "Disk Manager, could not install".
+
 ## [0.13.2] - 2026-11-15
 
 ### Fixed

@@ -129,8 +129,8 @@ remain compatible; the app release version is unchanged during local development
 storage optimization. Source providers receive the installed package capabilities
 through `set_capabilities` and must gate actions accordingly. The host trusts only
 its exact first-party providers; adding a capability to a manifest does not grant it.
-Disk Manager keeps this capability in its executable manifest. Its drive-changing actions
-are gated on #132; analysis retains the existing elevation request.
+Disk Manager keeps this capability in its executable manifest. Its analysis and drive-changing
+actions each go through the administrator helper.
 
 `live_audio` is a native-only capability for microphone monitoring and routing to
 user-selected outputs. Audio Gainer opens audio streams only after an explicit action.

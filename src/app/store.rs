@@ -672,8 +672,48 @@ pub(super) fn verified_pill(ui: &mut egui::Ui) {
     );
 }
 
-/// A small state pill for the sidebar: an update, a download or a failure.
-pub(super) fn status_pill(ui: &mut egui::Ui, label: &str) -> egui::Response {
+/// The id of an add-on's status control in the sidebar. It comes from the add-on id, so it is the
+/// same every frame and keyboard focus can stay on it.
+pub(super) fn status_id(addon_id: &str) -> egui::Id {
+    egui::Id::unique(("addon-status", addon_id))
+}
+
+/// What a screen reader says for an add-on's status, for example "Disk Manager, update available".
+pub(super) fn status_name(title: &str, label: &str) -> String {
+    let mut chars = label.chars();
+    match chars.next() {
+        Some(first) => format!("{title}, {}{}", first.to_lowercase(), chars.as_str()),
+        None => title.to_owned(),
+    }
+}
+
+/// The collapsed sidebar's status dot: a small coloured dot that takes keyboard focus, shows a
+/// focus ring and names the status in a tooltip.
+pub(super) fn status_dot(
+    ui: &mut egui::Ui,
+    addon_id: &str,
+    title: &str,
+    label: &str,
+    center: egui::Pos2,
+) -> egui::Response {
+    let rect = Rect::from_center_size(center, Vec2::splat(12.0));
+    let response = ui.interact(rect, status_id(addon_id), Sense::click());
+    let name = status_name(title, label);
+    ui.painter().circle_filled(center, 3.0, look::DATA_MEMORY);
+    super::shell::focus_ring(ui, rect, &response);
+    super::shell::focus_tip(&response, &name);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+    response.on_hover_text(label)
+}
+
+/// A small state pill for the sidebar: an update, a download or a failure. `addon_id` keeps its
+/// id stable between frames and `title` makes its accessible name ("Disk Manager, update available").
+pub(super) fn status_pill(
+    ui: &mut egui::Ui,
+    addon_id: &str,
+    title: &str,
+    label: &str,
+) -> egui::Response {
     let color = if label.starts_with("Could not") {
         look::RED
     } else if label.starts_with("Update") {
@@ -685,12 +725,21 @@ pub(super) fn status_pill(ui: &mut egui::Ui, label: &str) -> egui::Response {
         .painter()
         .layout_no_wrap(label.to_owned(), font(11.0, 500), color);
     let width = (galley.size().x + 16.0).min(ui.available_width().max(40.0));
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 19.0), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 19.0), Sense::hover());
+    let response = ui.interact(rect, status_id(addon_id), Sense::click());
     ui.painter().rect_filled(
         rect,
         99,
         Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 0x26),
     );
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            99,
+            ui.visuals().selection.stroke,
+            egui::StrokeKind::Inside,
+        );
+    }
     let clipped = ui
         .painter()
         .with_clip_rect(rect.shrink2(Vec2::new(4.0, 0.0)));
@@ -699,7 +748,8 @@ pub(super) fn status_pill(ui: &mut egui::Ui, label: &str) -> egui::Response {
         galley,
         color,
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let name = status_name(title, label);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -774,5 +824,109 @@ pub(super) fn meta_line(entry: &Entry) -> String {
             entry.publisher, entry.category
         ),
         None => format!("{} \u{b7} {}", entry.publisher, entry.category),
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    fn run(ctx: &egui::Context, tab: bool, add: impl FnMut(&mut egui::Ui)) {
+        let events = if tab {
+            vec![egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: Some(egui::Key::Tab),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        } else {
+            vec![]
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(300.0, 200.0),
+            )),
+            events,
+            focused: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, add);
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn the_status_name_says_which_add_on_and_what_state() {
+        assert_eq!(
+            status_name("Disk Manager", "Update available"),
+            "Disk Manager, update available"
+        );
+        assert_eq!(
+            status_name("Debloater", "Could not install"),
+            "Debloater, could not install"
+        );
+        assert_eq!(
+            status_name("Audio Gainer", "Downloading 1.2 MB of 3.4 MB"),
+            "Audio Gainer, downloading 1.2 MB of 3.4 MB"
+        );
+        assert_eq!(status_name("Debloater", ""), "Debloater");
+    }
+
+    #[test]
+    fn the_status_id_comes_from_the_add_on_id_and_never_changes() {
+        assert_eq!(
+            status_id("toolboks.disk-manager"),
+            status_id("toolboks.disk-manager")
+        );
+        assert_ne!(
+            status_id("toolboks.disk-manager"),
+            status_id("toolboks.debloater")
+        );
+    }
+
+    #[test]
+    fn tab_reaches_the_pill_and_keeps_focus_between_frames() {
+        let ctx = egui::Context::default();
+        let draw = |ui: &mut egui::Ui| {
+            status_pill(
+                ui,
+                "toolboks.disk-manager",
+                "Disk Manager",
+                "Could not install",
+            );
+        };
+        run(&ctx, false, draw);
+        run(&ctx, true, draw);
+        for _ in 0..3 {
+            run(&ctx, false, draw);
+            assert_eq!(
+                ctx.memory(|m| m.focused()),
+                Some(status_id("toolboks.disk-manager"))
+            );
+        }
+    }
+
+    #[test]
+    fn tab_reaches_the_collapsed_dot_and_keeps_focus_between_frames() {
+        let ctx = egui::Context::default();
+        let draw = |ui: &mut egui::Ui| {
+            status_dot(
+                ui,
+                "toolboks.disk-manager",
+                "Disk Manager",
+                "Could not install",
+                egui::pos2(40.0, 40.0),
+            );
+        };
+        run(&ctx, false, draw);
+        run(&ctx, true, draw);
+        for _ in 0..3 {
+            run(&ctx, false, draw);
+            assert_eq!(
+                ctx.memory(|m| m.focused()),
+                Some(status_id("toolboks.disk-manager"))
+            );
+        }
     }
 }

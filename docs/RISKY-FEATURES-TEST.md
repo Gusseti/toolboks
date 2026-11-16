@@ -360,9 +360,9 @@ the real registry, packages, services, tasks and startup entries exist and are i
 a real restore point, real app removal, and the helper window. The docs at
 `docs/PLAN-debloater.md` say the same ("never applied to the real system").
 
-> Note while writing this file: `addons/debloater/debloater.tbaddon` still says that changes that
-> need administrator rights "are listed but not available yet", but the code now sends them to the
-> helper. If the add-on's own text disagrees with what you see, record it.
+> Note: the add-on's own long description in `addons/debloater/debloater.tbaddon` (add-ons repo)
+> still says administrator changes are "listed but not available yet", but the code sends them to
+> the helper (#170). That text needs a change in the add-ons repo; record it if you still see it.
 
 ### A3. System Profiles (Gaming profile)
 
@@ -522,8 +522,8 @@ Capabilities: `filesystem_read`, `local_preferences`, `user_exports`, `drive_opt
 Ignored: `real_metadata_read_only` (reads inventory and the event log), `reads_this_pc`,
 `bench_*`, `large_saved_scan_loads_while_frames_continue`. **Not covered:** real defrag and TRIM,
 UAC, the helper window, antivirus or a locked drive during a scan. `docs/DRIVE-OPTIMIZATION.md`
-still says optimization is disabled "pending #132"; the add-on now has the helper, so check that
-document against what you see and note any difference.
+now says analysis and optimization run through the helper; check it against what you see and
+note any difference.
 
 ### A5. Macro Manager
 
