@@ -1,6 +1,6 @@
 # Plan: Health on Home, fed by add-on findings (#54)
 
-Status: plan, 2026-11-16. Nothing here is built. Umbrella issue: #54 (part of #47).
+Status: plan, questions decided 2026-11-16 (section 7). Nothing here is built. Umbrella issue: #54 (part of #47).
 
 Home answers "what deserves attention on this PC, and what should I do?" from what the installed
 add-ons measured. The host never measures anything itself: it is a shell. Each add-on reports
@@ -391,15 +391,15 @@ entry (#57)**. **A6. Resource Monitor: settings checks engine (#56)** (pure chec
 `background: true` per #64), then **A6b. Resource Monitor: Checks page (#56)**. Each risk low to
 medium, each with fake-input tests.
 
-## 7. Questions for the owner
+## 7. Decisions (2026-11-16)
 
-1. **Does Health replace the "Your toolkit" list on Home?** The list repeats the sidebar and the
-   Add-ons page, which #54 asks Home not to do. Recommendation: yes, remove it from Home; keep
-   the restore and update banners and the "Pick your tools" prompt when nothing is installed.
-2. **May Event Watch run in the background** so crash and boot findings are current from start?
-   Otherwise they appear only after Event Watch has been opened and then age into "Out of date".
-   Recommendation: yes, one check at start and every 30 minutes; its idle cost is measured
-   under #48 before release.
-3. **Where do the #56 settings checks live?** Recommendation: a read-only "Checks" page in
-   Resource Monitor (already sampling, already going background for history). The alternative is
-   a new small read-only add-on, which costs a catalog entry, an icon and another process.
+The owner handed these product calls to the orchestrator ("can't you do it?"). Decided with the
+recommendations below; each can be reversed before its phase starts.
+
+1. **Health replaces the "Your toolkit" list on Home.** The list repeats the sidebar and the
+   Add-ons page, which #54 asks Home not to do. Home keeps the restore and update banners and the
+   "Pick your tools" prompt when nothing is installed.
+2. **Event Watch runs in the background** (one check at start and every 30 minutes) so crash and
+   boot findings are current from start. Its idle cost is measured under #48 before it ships.
+3. **The #56 settings checks live in a read-only "Checks" page in Resource Monitor**, which already
+   samples and is already going background for history. No new add-on.
