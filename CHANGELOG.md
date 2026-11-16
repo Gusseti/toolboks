@@ -2,9 +2,7 @@
 
 ## [Unreleased]
 
-### Changed
-
-- **Toolboks costs almost nothing while you are not using it.** Once any add-on had connected (also a background one), the open window redrew 10 times a second, about 0.2% of the whole PC on an 8-core PC; it now redraws only when something changes (0.01%). Hidden in the tray it stays at about 0.002%. Settings shows the live figure: "Toolboks uses about X% CPU and Y MB". Numbers and method are in `docs/OVERHEAD.md`.
+## [0.14.0] - 2026-11-16
 
 ### Added
 
@@ -14,6 +12,7 @@
 ### Changed
 
 - **Keyboard use of the sidebar and header.** Tab now goes down the foot of the sidebar in the order shown (Settings, Add-ons, Pick your tools), a collapsed sidebar shows a row's name while it has keyboard focus, and the header switches to a menu whenever its buttons or page tabs would not fit, not at a fixed window width.
+- **Toolboks costs almost nothing while you are not using it.** Once any add-on had connected (also a background one), the open window redrew 10 times a second, about 0.2% of the whole PC on an 8-core PC; it now redraws only when something changes (0.01%). Hidden in the tray it stays at about 0.002%. Settings shows the live figure: "Toolboks uses about X% CPU and Y MB". Numbers and method are in `docs/OVERHEAD.md`.
 
 ### Fixed
 
