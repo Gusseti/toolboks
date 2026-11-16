@@ -1,9 +1,10 @@
 //! When the add-on work runs: the supervisor tick, the hide rule, starting background add-ons
 //! and the add-on list timer (#176).
 //!
-//! eframe calls `App::logic` on every wake-up but `App::ui` only while the window is drawn: not
-//! while it is hidden in the tray, and not while it is minimized. So the add-on work runs from
-//! `ui` while the window is drawn, as before, and from `logic` once no tick has run for
+//! eframe calls `App::logic` on every wake-up but `App::ui` only when it thinks the window can be
+//! seen. A minimized window gets no `ui` pass at all; a window hidden in the tray gets one on
+//! Windows today (eframe 0.37 cannot tell it is hidden), but nothing promises that. So the add-on
+//! work runs from `ui` while `ui` runs, as before, and from `logic` once no tick has run for
 //! [`EVERY`]. One pass never runs it twice: when `logic` ticked, the `ui` of that pass skips it.
 //! While the window is not drawn the app asks to be woken for the next tick, and for nothing
 //! else, so the tray state stays at about one short wake-up per second.

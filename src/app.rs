@@ -76,6 +76,8 @@ pub struct App {
     prompt_open: bool,
     /// When the add-on work last ran, and whether `logic` ran it in this pass (#176).
     addon_tick: addon_tick::AddonTick,
+    /// The window lost focus after it was hidden in the tray; see [`back_without_tray`].
+    focus_lost_while_hidden: bool,
     /// Start update cleanup only after the first frame has rendered successfully.
     first_frame: Option<std::time::Instant>,
     update_cleanup_done: bool,
@@ -211,6 +213,7 @@ impl App {
             silent_check: false,
             prompt_open: false,
             addon_tick: Default::default(),
+            focus_lost_while_hidden: false,
             first_frame: None,
             update_cleanup_done: cfg!(feature = "preview"),
             keep_in_tray,
@@ -358,6 +361,20 @@ impl App {
     }
 }
 
+/// For a window hidden in the tray: true when it was brought back without the tray (another launch
+/// shows and focuses it, see `instance::bring_forward`), which is when it has focus again after
+/// losing it while hidden. The focus it still has in the pass it is hidden in (the X was clicked on
+/// a focused window) does not count: that made the window count as shown again at once, so a page
+/// add-on kept running in the tray (#176).
+fn back_without_tray(focus_lost: &mut bool, focused: Option<bool>) -> bool {
+    if focused == Some(true) {
+        *focus_lost
+    } else {
+        *focus_lost = true;
+        false
+    }
+}
+
 /// Starts the freshly installed exe. It inherits this process's rights, admin included.
 fn restart() -> std::io::Result<()> {
     std::process::Command::new(std::env::current_exe()?)
@@ -412,10 +429,10 @@ impl App {
         update::is_installing()
     }
 
-    /// The add-on work from `logic` (#176): eframe runs no `ui` for a window hidden in the tray or
-    /// minimized, so without this the supervisor would not tick there (no restart of a crashed
-    /// background add-on, no hiding of a page add-on that was open). Once a second at most, and
-    /// never in the same pass as the `ui` run; see `addon_tick`.
+    /// The add-on work from `logic` (#176): eframe runs no `ui` for a minimized window (and may not
+    /// for one hidden in the tray), so without this the supervisor would not tick there (no
+    /// restart of a crashed background add-on, no hiding of a page add-on). Once a second at
+    /// most, and never in the same pass as the `ui` run; see `addon_tick`.
     fn addons_logic(&mut self, ctx: &egui::Context) {
         let now = std::time::Instant::now();
         if self.addon_tick.logic_due(now) {
@@ -480,13 +497,19 @@ impl App {
             self.hide_window(ctx);
         }
         // Another launch (or the user) brought the window back without the tray.
-        if self.hidden && ctx.input(|i| i.viewport().focused) == Some(true) {
+        if self.hidden
+            && back_without_tray(
+                &mut self.focus_lost_while_hidden,
+                ctx.input(|i| i.viewport().focused),
+            )
+        {
             self.hidden = false;
         }
     }
 
     fn hide_window(&mut self, ctx: &egui::Context) {
         self.hidden = true;
+        self.focus_lost_while_hidden = false;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 
@@ -587,7 +610,22 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_spec, open_target};
+    use super::{back_without_tray, open_spec, open_target};
+
+    #[test]
+    fn a_hidden_window_counts_as_back_only_when_focus_returns_after_it_was_lost() {
+        // Hidden while focused (the X clicked): still hidden, however long the old focus is seen.
+        let mut lost = false;
+        assert!(!back_without_tray(&mut lost, Some(true)));
+        assert!(!back_without_tray(&mut lost, Some(true)));
+        // The focus goes, then another launch brings the window forward.
+        assert!(!back_without_tray(&mut lost, Some(false)));
+        assert!(back_without_tray(&mut lost, Some(true)));
+        // Unknown focus counts as not focused.
+        let mut lost = false;
+        assert!(!back_without_tray(&mut lost, None));
+        assert!(back_without_tray(&mut lost, Some(true)));
+    }
     use crate::addons::Registry;
 
     fn args(list: &[&str]) -> Vec<String> {

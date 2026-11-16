@@ -188,9 +188,10 @@ impl App {
         }
     }
 
-    /// Only from `ui`: a hidden or minimized window must not be woken for its views.
+    /// Only from `ui`, and not while hidden in the tray: eframe still runs `ui` for a window hidden
+    /// with `Visible(false)` on Windows, and this would wake it ten times a second there.
     fn poll_views(&mut self, ctx: &egui::Context) {
-        if !self.views.is_empty() {
+        if !self.hidden && !self.views.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
