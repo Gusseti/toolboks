@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-17
+
+### Added
+
+- **Arrange your add-ons in the sidebar, and put them in groups.** Drag an add-on row up or down to change the order; it stays that way after a restart. With a row selected, Alt+Up and Alt+Down move it one place. Right-click an add-on (or press the menu key, or Shift+F10) and pick "Move to group" to put it in a group you name, or "New group...". A group is a folder in the sidebar: click its header to open or close it, drag add-ons into it or out of it, drag the group itself up or down, and right-click it to rename it or delete it (its add-ons go back to the list, nothing is uninstalled). A closed group still shows the add-on you have open, and shows a dot when something inside it has an update or is new. In the narrow icon sidebar a group is one icon that opens and closes the same way.
+
 ## [0.16.1] - 2026-11-16
 
 ### Fixed

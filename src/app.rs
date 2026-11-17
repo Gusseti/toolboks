@@ -60,6 +60,8 @@ pub struct App {
     install_path: String,
     show_install: bool,
     pending_package: Option<toolboks_addon_sdk::Package>,
+    /// The small window that asks for a sidebar group name (new group or rename).
+    group_dialog: Option<shell::GroupDialog>,
     pending_declarative: Option<String>,
     detail: Option<String>,
     /// "Check again" on Home was pressed and has not been answered yet.
@@ -207,6 +209,7 @@ impl App {
             install_path: String::new(),
             show_install: false,
             pending_package: None,
+            group_dialog: None,
             pending_declarative: None,
             detail: None,
             health_check: None,

@@ -3,6 +3,18 @@ use crate::ui::{BORDER, HOST_ACCENT as ACCENT, MUTED, PANEL_BG, SIDEBAR_BG, TEXT
 use egui::{Color32, RichText, Vec2};
 use toolboks_addon_sdk::{Manifest, Metric, Widget};
 
+mod sidebar;
+
+/// The small window that asks for a sidebar group name.
+pub(super) struct GroupDialog {
+    /// The group being renamed; `None` for a new group.
+    pub rename: Option<String>,
+    /// The add-on that goes into a new group.
+    pub addon: Option<String>,
+    pub text: String,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) enum Screen {
     Home,
@@ -404,13 +416,32 @@ pub(super) fn nav_row(
     show_label: bool,
     tag: Tag,
 ) -> egui::Response {
+    nav_row_sensing(
+        ui,
+        label,
+        icon,
+        selected,
+        show_label,
+        tag,
+        egui::Sense::click(),
+    )
+}
+
+fn nav_row_sensing(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: &str,
+    selected: bool,
+    show_label: bool,
+    tag: Tag,
+    sense: egui::Sense,
+) -> egui::Response {
     let name = match tag {
         Tag::None => label.to_owned(),
         Tag::New => format!("{label}, new"),
         Tag::Update => format!("{label}, update available"),
     };
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), sense);
     if ui.is_rect_visible(rect) {
         let fill = if selected {
             look::ACCENT_WASH
@@ -762,22 +793,6 @@ impl App {
                 ui.add_space(look::GAP);
 
                 let browser_open = matches!(self.screen, Screen::Browser | Screen::Pick);
-                let installed: Vec<_> = self
-                    .registry
-                    .packages
-                    .iter()
-                    .filter(|p| self.registry.enabled(&p.manifest.id))
-                    .map(|p| {
-                        let pages: Vec<String> =
-                            p.pages.iter().map(|page| page.title.clone()).collect();
-                        (
-                            p.manifest.id.clone(),
-                            p.manifest.title.clone(),
-                            p.manifest.icon.clone(),
-                            pages,
-                        )
-                    })
-                    .collect();
                 egui::ScrollArea::vertical()
                     .id_salt("sidebar-nav")
                     .max_height(
@@ -798,21 +813,7 @@ impl App {
                         ) {
                             self.screen = Screen::Home;
                         }
-                        for (id, title, icon, pages) in installed {
-                            let on = self.screen == Screen::External(id.clone());
-                            let tag = self.addon_tag(&id);
-                            if nav(ui, &title, sidebar_icon(&id, &icon), on, expanded, tag) {
-                                self.open_addon(&id);
-                            }
-                            self.market_sidebar_status(ui, &id, &title, expanded);
-                            if on && expanded && pages.len() > 1 {
-                                for (p, name) in pages.iter().enumerate() {
-                                    if page_row(ui, name, self.addon_page == p) {
-                                        self.addon_page = p;
-                                    }
-                                }
-                            }
-                        }
+                        self.sidebar_list(ui, expanded);
                         toolboks_addon_sdk::tutorial::region(ui, "browser-sidebar", |ui| {
                             self.market_sidebar(ui, expanded)
                         });
@@ -1514,6 +1515,10 @@ impl App {
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if self.group_dialog.is_some() {
+            self.group_dialog_ui(ctx);
+            return;
+        }
         if let Some(p) = self.pending_package.clone() {
             let response = egui::Modal::new(egui::Id::unique("install-review"))
                 .frame(panel())
