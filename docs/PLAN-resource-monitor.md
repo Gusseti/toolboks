@@ -12,7 +12,7 @@ A second tool in toolboks: a Task Manager style overview of CPU, GPU, memory, di
 | Scope of v1 | Overview plus Details (per-core CPU, GPU engines, per-drive disk, per-adapter network) |
 | GPU depth | Basic (name, load, video memory) plus the engine split (3D, Copy, Video), plus NVIDIA extras (temperature, power, clocks) loaded from `nvml.dll` at runtime and skipped on other brands |
 | Sampling | Only while the Resource Monitor page is visible and the window is not minimized. Graphs fill while you look and pause otherwise, so history has gaps |
-| Persistence | None. History lives in memory and resets on every launch (single exe, no files) |
+| Persistence | The live graphs stay in memory and reset on every launch. Resource history (the add-on, toolboks-addons #36 and #45) is saved: on by default, app names, times and figures (never window titles, file names or what you do in an app), kept 7 days in the add-on's data folder on this PC, never sent anywhere. It records while Toolboks runs, also when the window is closed to the tray, and stops when you quit. One "Record resource history" switch turns it off (then no resource history is recorded or written; Toolboks still saves its own settings), with "Delete history" and "Open history folder" next to it on the History page |
 | Admin rights | Not needed. Some per-process figures for protected processes stay blank |
 | CPU temperature | Not shown: Windows only exposes it through a kernel driver (this PC returned no readings) |
 
