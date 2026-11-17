@@ -622,6 +622,137 @@ fn a_page_picked_in_the_host_is_drawn_without_input() {
     assert!(addon.join().expect("add-on thread").is_ok());
 }
 
+/// An add-on that opens one of its own pages when told to (like Resource Monitor's "Open in
+/// history"). With `deaf` it ignores `Navigate`, so its frames keep showing the old page.
+struct SelfPaging {
+    page: usize,
+    goto: Arc<std::sync::atomic::AtomicUsize>,
+    deaf: bool,
+}
+
+impl NativeAddon for SelfPaging {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut BTreeMap<String, serde_json::Value>) -> bool {
+        let goto = self.goto.load(std::sync::atomic::Ordering::SeqCst);
+        if goto != usize::MAX {
+            self.page = goto;
+        }
+        ui.label(format!("Page {}", self.page));
+        false
+    }
+
+    fn navigate(&mut self, page: &str) {
+        if !self.deaf {
+            self.page = page.parse().unwrap_or(0);
+            self.goto
+                .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    fn page_index(&self) -> usize {
+        self.page
+    }
+}
+
+fn self_paging(deaf: bool) -> (SelfPaging, Arc<std::sync::atomic::AtomicUsize>) {
+    let goto = Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX));
+    (
+        SelfPaging {
+            page: 0,
+            goto: goto.clone(),
+            deaf,
+        },
+        goto,
+    )
+}
+
+/// The owner's report: Resource Monitor's "Open in history" changes the add-on's own page, but
+/// the sidebar and the header still said "Processes". The view reports the add-on's own change so
+/// the host can follow it; a change the host asked for is not reported back.
+#[test]
+fn a_page_the_add_on_opens_by_itself_is_reported_to_the_host() {
+    let ctx = egui::Context::default();
+    let mut view = AddonView::new("SelfPaging", &ctx);
+    let (addon, goto) = self_paging(false);
+    let (link, _side, thread) = spawn_addon(&ctx, addon, "selfpaging");
+    let sender = link.sender();
+    let send = |message: &HostMessage| sender.lock().unwrap().send(message).is_ok();
+    view.attach(link);
+    pump(&ctx, &mut view, |view| view.page_index == Some(0));
+    // Where the add-on starts is no change.
+    assert_eq!(view.take_own_page(), None);
+
+    // The add-on opens page 2 on its own (the button's action).
+    goto.store(2, std::sync::atomic::Ordering::SeqCst);
+    view.request_frame();
+    pump(&ctx, &mut view, |view| view.page_index == Some(2));
+    assert_eq!(view.take_own_page(), Some(2));
+    assert_eq!(view.take_own_page(), None, "reported once");
+
+    // A page picked in the host is answered by the add-on and is not reported back as its own.
+    assert!(navigate(Some(&mut view), "1".into(), send));
+    pump(&ctx, &mut view, |view| view.page_index == Some(1));
+    assert_eq!(view.take_own_page(), None);
+    // After that the add-on's own choices count again.
+    goto.store(0, std::sync::atomic::Ordering::SeqCst);
+    view.request_frame();
+    pump(&ctx, &mut view, |view| view.page_index == Some(0));
+    assert_eq!(view.take_own_page(), Some(0));
+
+    drop(view);
+    drop(sender);
+    assert!(thread.join().expect("add-on thread").is_ok());
+}
+
+/// A click in the host wins over frames that still show the old page: a frame that was on its
+/// way before the add-on handled `Navigate`, or an add-on that has not answered yet.
+#[test]
+fn a_page_picked_in_the_host_is_not_undone_by_a_late_frame() {
+    let ctx = egui::Context::default();
+    let mut view = AddonView::new("SelfPaging", &ctx);
+    let (addon, _goto) = self_paging(true);
+    let (link, _side, thread) = spawn_addon(&ctx, addon, "selfpaging-deaf");
+    let sender = link.sender();
+    let send = |message: &HostMessage| sender.lock().unwrap().send(message).is_ok();
+    view.attach(link);
+    pump(&ctx, &mut view, |view| view.page_index == Some(0));
+
+    let frame = |page| Frame {
+        page_index: page,
+        ..Default::default()
+    };
+    let now = Instant::now();
+    // The add-on sat on page 2, and the user clicks page 1 in the host.
+    view.note_page(2, now);
+    assert_eq!(view.take_own_page(), Some(2));
+    assert!(navigate(Some(&mut view), "1".into(), send));
+    // The stale frames still say 2, or 0: neither is the add-on's choice.
+    view.apply_frame(&ctx, frame(2), now).unwrap();
+    view.apply_frame(&ctx, frame(0), now).unwrap();
+    assert_eq!(view.take_own_page(), None, "the click is not undone");
+    // The add-on answers: nothing to report.
+    view.apply_frame(&ctx, frame(1), now).unwrap();
+    assert_eq!(view.take_own_page(), None);
+    // Its own next change is reported.
+    view.apply_frame(&ctx, frame(3), now).unwrap();
+    assert_eq!(view.take_own_page(), Some(3));
+
+    // An add-on that never answers: after the wait its page is what the host shows.
+    assert!(navigate(Some(&mut view), "1".into(), send));
+    view.apply_frame(&ctx, frame(2), now).unwrap();
+    assert_eq!(view.take_own_page(), None);
+    view.apply_frame(
+        &ctx,
+        frame(3),
+        now + PAGE_ANSWER_WAIT + Duration::from_millis(1),
+    )
+    .unwrap();
+    assert_eq!(view.take_own_page(), Some(3));
+
+    drop(view);
+    drop(sender);
+    assert!(thread.join().expect("add-on thread").is_ok());
+}
+
 #[test]
 fn a_bad_texture_stops_the_view_instead_of_panicking() {
     let ctx = egui::Context::default();
