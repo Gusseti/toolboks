@@ -55,6 +55,52 @@ pub enum Group {
     Apps,
 }
 
+/// How well a speed or performance benefit is backed (issue #33). Only a named source or our own
+/// controlled measurement may raise it above `Unproven`; never invent a benefit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Evidence {
+    /// Our own controlled measurement shows a gain. Nothing qualifies yet.
+    Measured,
+    /// A named source or our own measurement shows a mixed result. Nothing qualifies yet.
+    Mixed,
+    /// The change claims or implies a speed or performance benefit and no controlled measurement
+    /// shows one.
+    Unproven,
+    /// Chosen for privacy, fewer ads or housekeeping. It makes no speed claim.
+    NotSpeed,
+}
+
+impl Evidence {
+    /// The badge text.
+    pub fn label(self) -> &'static str {
+        match self {
+            Evidence::Measured => "Measured",
+            Evidence::Mixed => "Mixed evidence",
+            Evidence::Unproven => "Unproven",
+            Evidence::NotSpeed => "Not a speed tweak",
+        }
+    }
+
+    /// Unproven and mixed changes are never ticked for the user.
+    pub fn may_default_on(self) -> bool {
+        !matches!(self, Evidence::Unproven | Evidence::Mixed)
+    }
+}
+
+/// The evidence for one catalog entry: the level, one plain sentence why, and where it comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EvidenceInfo {
+    pub level: Evidence,
+    /// One plain sentence.
+    pub note: &'static str,
+    /// A link (`https://...`) or a plain pointer such as a section of docs/RESEARCH-debloat.md.
+    /// `None` means no source was found. Never a made-up address.
+    pub source: Option<&'static str>,
+    /// True only where we read the source against this claim. A link we only confirmed to exist
+    /// is `false` and the page says so.
+    pub source_checked: bool,
+}
+
 /// One thing the user can turn off.
 #[derive(Clone, Copy, Debug)]
 pub struct Item {
@@ -72,6 +118,11 @@ pub struct Item {
 }
 
 impl Item {
+    /// What backs a speed claim for this item.
+    pub fn evidence(&self) -> EvidenceInfo {
+        crate::evidence::for_id(self.id)
+    }
+
     /// True if any of its settings lives in HKEY_LOCAL_MACHINE.
     pub fn needs_admin(&self) -> bool {
         self.settings.iter().any(|s| s.hive == Hive::LocalMachine)

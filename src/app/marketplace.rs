@@ -1043,6 +1043,14 @@ impl App {
             });
             view.set_interactive(self.tour.is_none());
             view.show(ui, ui.available_rect_before_wrap());
+            // The add-on opened one of its own pages (Resource Monitor's "Open in history"):
+            // the sidebar and the header show it too.
+            if let Some(page) = view.take_own_page() {
+                if (page as usize) < entry.pages.len() && page as usize != self.addon_page {
+                    self.addon_page = page as usize;
+                    ui.ctx().request_repaint();
+                }
+            }
         } else {
             muted(ui, "Opening add-on...");
         }

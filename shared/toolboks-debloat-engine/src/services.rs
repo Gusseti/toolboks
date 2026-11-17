@@ -55,6 +55,11 @@ pub struct ServiceDef {
 }
 
 impl ServiceDef {
+    /// What backs a speed claim for this service.
+    pub fn evidence(&self) -> crate::model::EvidenceInfo {
+        crate::evidence::for_id(self.id)
+    }
+
     pub fn is_off(&self, start: StartType) -> bool {
         start == StartType::Disabled || start == self.target
     }

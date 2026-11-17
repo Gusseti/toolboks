@@ -16,6 +16,13 @@ pub struct Curated {
     pub could_break: &'static str,
 }
 
+impl Curated {
+    /// What backs a speed claim for this app.
+    pub fn evidence(&self) -> crate::model::EvidenceInfo {
+        crate::evidence::for_id(self.id)
+    }
+}
+
 /// A package installed for the current user.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Installed {
