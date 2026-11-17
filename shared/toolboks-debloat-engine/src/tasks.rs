@@ -23,6 +23,13 @@ pub struct TaskDef {
     pub risk: Risk,
 }
 
+impl TaskDef {
+    /// What backs a speed claim for this task.
+    pub fn evidence(&self) -> crate::model::EvidenceInfo {
+        crate::evidence::for_id(self.id)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskState {
     Enabled,
