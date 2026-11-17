@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-17
+
 ### Fixed
 
 - **Dragging add-ons in the sidebar now works the way you try it.** A row only moved once you dragged it past the middle of the next row, so a normal drag by one place did nothing, and the dragged row hid the line that shows where it lands. Now a row swaps places as soon as the pointer reaches the next row, the row you carry is see-through and the line shows on top of it. The name window for a new or renamed group also did not close when you pressed Enter; it does now.
