@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The sidebar and the header follow an add-on that opens one of its own pages.** When an add-on opens another of its own pages, for example Resource Monitor's "Open in history", the sidebar and the header now show that page. Before, they kept showing the page you had come from. A page you pick yourself in the sidebar still wins over an add-on that has not answered yet.
+
 ## [0.17.1] - 2026-11-17
 
 ### Fixed

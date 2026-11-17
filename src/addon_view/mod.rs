@@ -169,14 +169,20 @@ pub fn navigate(
     page: String,
     send: impl FnOnce(&HostMessage) -> bool,
 ) -> bool {
+    let wanted = page.parse::<u32>().ok();
     let sent = send(&HostMessage::Navigate { page });
     if sent {
         if let Some(view) = view {
             view.request_frame();
+            view.expect_page(wanted, Instant::now());
         }
     }
     sent
 }
+
+/// How long a page the host asked for wins over the pages the add-on's frames report: frames
+/// that were already on their way when `Navigate` was sent still show the old page.
+const PAGE_ANSWER_WAIT: Duration = Duration::from_secs(2);
 
 /// How often the host looks at an add-on view that is waiting for its add-on.
 pub const WAITING_POLL: Duration = Duration::from_millis(100);
@@ -248,8 +254,13 @@ pub struct AddonView {
     /// False while a guided tour runs: nothing the user does reaches the add-on.
     interactive: bool,
     /// The page the last frame showed.
-    #[cfg(test)]
     page_index: Option<u32>,
+    /// A page the host asked for with `Navigate` and the add-on has not shown yet (`None` for a
+    /// route that is not a page number), and when.
+    expected_page: Option<(Option<u32>, Instant)>,
+    /// A page the add-on chose by itself (for example "Open in history"), not yet taken by the
+    /// host.
+    own_page: Option<u32>,
 }
 
 impl AddonView {
@@ -276,8 +287,9 @@ impl AddonView {
             cursor: egui::CursorIcon::Default,
             ime: None,
             interactive: true,
-            #[cfg(test)]
             page_index: None,
+            expected_page: None,
+            own_page: None,
         }
     }
 
@@ -293,6 +305,19 @@ impl AddonView {
         self.pacer.request();
     }
 
+    /// The host asked the add-on for a page: until the add-on shows it, or a moment has passed,
+    /// frames that still show another page do not count as the add-on's own choice.
+    fn expect_page(&mut self, page: Option<u32>, now: Instant) {
+        self.expected_page = Some((page, now));
+        self.own_page = None;
+    }
+
+    /// The page the add-on switched to by itself since the last call, if it did. The host
+    /// follows it in the sidebar and the header.
+    pub fn take_own_page(&mut self) -> Option<u32> {
+        self.own_page.take()
+    }
+
     pub fn state(&self) -> &ViewState {
         &self.state
     }
@@ -306,6 +331,9 @@ impl AddonView {
         self.repaint_due = None;
         self.sent = None;
         self.escape = None;
+        self.page_index = None;
+        self.expected_page = None;
+        self.own_page = None;
         if self.focused {
             self.pacer.push([InputEvent::FocusGained { via_tab: None }]);
         }
@@ -580,10 +608,7 @@ impl AddonView {
         self.textures.drop_stale();
         self.fresh = Some(meshes);
         self.has_frame = true;
-        #[cfg(test)]
-        {
-            self.page_index = Some(frame.page_index);
-        }
+        self.note_page(frame.page_index, now);
         self.state = ViewState::Running;
         self.cursor = frame.cursor;
         self.ime = frame.ime;
@@ -602,6 +627,28 @@ impl AddonView {
             self.schedule_repaint(now, after_ms);
         }
         Ok(())
+    }
+
+    /// A frame shows `page`. A change the host did not ask for is the add-on's own: the host
+    /// follows it. A page the host asked for wins until the add-on has shown it (or
+    /// `PAGE_ANSWER_WAIT` has passed), so a frame sent before the add-on handled `Navigate`
+    /// cannot undo a click. The first frame after a connect only says where the add-on is.
+    fn note_page(&mut self, page: u32, now: Instant) {
+        let changed = self.page_index.is_some_and(|before| before != page);
+        self.page_index = Some(page);
+        match self.expected_page {
+            Some((wanted, since)) if now.saturating_duration_since(since) < PAGE_ANSWER_WAIT => {
+                if wanted == Some(page) {
+                    self.expected_page = None;
+                }
+            }
+            _ => {
+                self.expected_page = None;
+                if changed {
+                    self.own_page = Some(page);
+                }
+            }
+        }
     }
 
     /// Cursor and IME rectangle, every pass (egui resets both each pass).
