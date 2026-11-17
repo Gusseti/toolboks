@@ -113,6 +113,7 @@ pub fn accept(root: &Path, index: &[u8]) -> Result<Index, Refused> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_dir::TestDir;
 
     const SHA: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 
@@ -152,11 +153,8 @@ mod tests {
         serde_json::to_vec(&value).unwrap()
     }
 
-    fn root(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("toolboks-catalog-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        root
+    fn root(name: &str) -> TestDir {
+        TestDir::unused(&format!("catalog-{name}"))
     }
 
     #[test]
@@ -165,7 +163,6 @@ mod tests {
         let bytes = index();
         assert_eq!(accept(&root, &bytes).unwrap().entries.len(), 1);
         assert_eq!(std::fs::read(cache_path(&root)).unwrap(), bytes);
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -199,7 +196,6 @@ mod tests {
         assert!(elevated_entry(&root, "toolboks.sample", "0.9.0").is_err());
         std::fs::write(cache_path(&root), b"damaged").unwrap();
         assert!(elevated_entry(&root, "toolboks.sample", "1.0.0").is_err());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -237,7 +233,6 @@ mod tests {
         assert!(trusted
             .check_download(&std::fs::read(exe).unwrap())
             .is_err());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -258,7 +253,6 @@ mod tests {
                 elevated_entry(&root, "toolboks.sample", "1.0.0").is_err(),
                 "{field}"
             );
-            std::fs::remove_dir_all(root).unwrap();
         }
     }
 
