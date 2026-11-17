@@ -8,6 +8,7 @@ pub mod apps;
 pub mod backend;
 pub mod catalog;
 mod change;
+pub mod evidence;
 pub mod model;
 pub mod plan;
 pub mod restore;

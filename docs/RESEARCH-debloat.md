@@ -557,3 +557,14 @@ Build first within phase 5: tasks before policies, because tasks have an allow-l
 The research reframes what a "safe debloater" is. The honest catalog is small, because Microsoft documents policies, not service safety, and only per-user template defaults and SCM/Task Scheduler mechanics are verified. The strongest differentiator is therefore not breadth but integrity: read-back plus effective-state truthfulness, a live-state view that survives restarts without writing anything to disk, and a refusal to claim success on Home or managed PCs. The no-disk constraint is a product choice with a plain cost (no cross-session undo) that the UI must state, and the clipboard export and launch-time re-read are the mitigations.
 
 The biggest risks are outside the catalog: an unsigned exe may be blocked outright by Smart App Control or ML antivirus, signing eligibility from Norway is unverified, and several load-bearing facts (service defaults on 26300, Pro behaviour for Ent/Edu-only policies, restore-point coverage of tasks) must be checked on the owner's PC before any row ships. Build startup and the undo foundation first, validate on real machines, and let the evidence, not tool precedent, decide what graduates from Careful to Safe.
+
+---
+
+## 9. Evidence labels in the app (issue #33)
+
+Every registry item, service, scheduled task and removable app the Debloater lists carries an evidence level, one plain sentence and a source (`shared/toolboks-debloat-engine/src/evidence.rs`, one table keyed by the entry id; a test fails if a catalog entry has none).
+
+- **Not a speed tweak**: chosen for privacy, fewer ads or housekeeping; the app makes no speed claim.
+- **Unproven**: the change claims or implies a speed or performance benefit and no controlled measurement shows one (Game Bar capture, Edge background running, services that are "not ready at startup", two background compatibility tasks). Never ticked for the user.
+- **Measured** and **Mixed** exist in the type but nothing qualifies: there is no controlled measurement of a gain from any entry. See [RESEARCH-memory-cleaning.md](RESEARCH-memory-cleaning.md) for the one benchmark we ran.
+- A source link marked "not checked" only means the page was confirmed to exist; it is not claimed to back more than this document says. Only the Win11Debloat app list was read against the 12 app entries it names.
