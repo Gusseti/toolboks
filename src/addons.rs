@@ -52,6 +52,8 @@ pub struct Config {
     /// Add-ons installed or updated that have not been opened since: they show "New" in the
     /// sidebar until the user switches to them.
     pub new_addons: Vec<String>,
+    /// The order of the add-ons in the sidebar and the groups the user made.
+    pub sidebar_layout: Vec<crate::sidebar_layout::Item>,
 }
 pub struct Registry {
     pub packages: Vec<Package>,
