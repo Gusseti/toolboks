@@ -489,6 +489,7 @@ pub fn cleanup_old_exe() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_dir::TestDir;
 
     #[cfg(feature = "preview")]
     #[test]
@@ -736,8 +737,7 @@ mod tests {
 
     #[test]
     fn swaps_the_exe_and_keeps_the_old_one_aside() {
-        let dir = std::env::temp_dir().join(format!("toolboks-swap-test-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("swap-test");
         let exe = dir.join("app.exe");
         fs::write(&exe, b"old").unwrap();
 
@@ -752,14 +752,11 @@ mod tests {
 
         // The staging file never survives a swap.
         assert!(!new_path(&exe).exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_failed_swap_leaves_the_original_exe_untouched() {
-        let dir = std::env::temp_dir().join(format!("toolboks-swap-fail-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("swap-fail");
         let exe = dir.join("app.exe");
         fs::write(&exe, b"original").unwrap();
         // A directory squatting on the .new name makes writing the new exe fail.
@@ -768,7 +765,5 @@ mod tests {
         assert!(replace_exe(&exe, b"new").is_err());
         assert_eq!(fs::read(&exe).unwrap(), b"original");
         assert!(!old_path(&exe).exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -459,6 +459,7 @@ mod tests {
     use super::*;
     use crate::supervisor::tests::{fake, supervisor, ID};
     use crate::supervisor::{StopReason, Timing};
+    use crate::test_dir::TestDir;
     use eframe::egui::pos2;
     use std::time::{Duration, Instant};
     use toolboks_addon_proto::{Evidence, Finding, InputBatch, Severity, Theme};
@@ -748,10 +749,8 @@ mod tests {
     }
 
     /// A data folder with `entry` installed (only the records `installed_entry` reads).
-    fn installed(test: &str, entry: &Entry) -> std::path::PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("toolboks-services-{test}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+    fn installed(test: &str, entry: &Entry) -> TestDir {
+        let root = TestDir::unused(&format!("services-{test}"));
         let dir = installer::addon_dir(&root, &entry.id);
         let version = dir.join(&entry.version);
         std::fs::create_dir_all(&version).unwrap();

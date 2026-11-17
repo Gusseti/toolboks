@@ -91,6 +91,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::test_dir::TestDir;
 
     fn entry(id: &str) -> Entry {
         serde_json::from_value(serde_json::json!({
@@ -102,11 +103,8 @@ mod tests {
         })).unwrap()
     }
 
-    fn root(name: &str) -> PathBuf {
-        let folder =
-            std::env::temp_dir().join(format!("toolboks-browser-{name}-{}", std::process::id()));
-        std::fs::create_dir_all(&folder).unwrap();
-        folder
+    fn root(name: &str) -> TestDir {
+        TestDir::new(&format!("browser-{name}"))
     }
 
     #[test]
@@ -170,7 +168,6 @@ mod tests {
         restored.save_status(&root);
         assert!(!Marketplace::restore(&root).jobs.contains_key("test.one"));
         assert!(Marketplace::restore(&root).jobs.contains_key("test.two"));
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -224,7 +221,6 @@ mod tests {
             .unwrap();
         browser.poll(&root, &ctx, &BTreeSet::new());
         assert_eq!(browser.jobs["test.one"].status, InstallStatus::Cancelled);
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -240,7 +236,6 @@ mod tests {
         assert!(browser.active.is_none());
         assert_eq!(browser.queue.len(), 1);
         assert_eq!(browser.jobs["test.one"].status, InstallStatus::Waiting);
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -350,7 +345,7 @@ mod tests {
             } else {
                 "keep-data"
             });
-            let mut registry = crate::addons::Registry::load(root.clone());
+            let mut registry = crate::addons::Registry::load(root.to_path_buf());
             let package = toolboks_addon_sdk::Package::parse(
                 crate::addons::SDK_EXAMPLE.as_bytes(),
                 env!("CARGO_PKG_VERSION"),
@@ -370,13 +365,12 @@ mod tests {
             registry.remove(&id, !delete_data).unwrap();
             assert_eq!(data.exists(), !delete_data);
             assert_eq!(
-                crate::addons::Registry::load(root.clone())
+                crate::addons::Registry::load(root.to_path_buf())
                     .config
                     .preferences
                     .contains_key(&id),
                 !delete_data
             );
-            std::fs::remove_dir_all(root).unwrap();
         }
     }
 }

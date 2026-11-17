@@ -665,10 +665,9 @@ mod tests {
 
     #[test]
     fn open_of_an_add_on_that_is_not_installed_falls_back_with_a_message() {
-        let root = std::env::temp_dir().join(format!("toolboks-open-{}", std::process::id()));
-        let registry = Registry::load(root.clone());
+        let root = crate::test_dir::TestDir::unused("open");
+        let registry = Registry::load(root.to_path_buf());
         let message = open_target(&registry, "Resource Monitor/Details").unwrap_err();
         assert!(message.contains("not available"), "{message}");
-        std::fs::remove_dir_all(root).ok();
     }
 }

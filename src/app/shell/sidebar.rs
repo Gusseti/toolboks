@@ -1001,19 +1001,14 @@ mod tests {
         ctx: egui::Context,
         app: App,
         time: f64,
-        dir: std::path::PathBuf,
+        /// Last, so the app is gone before its data folder is removed.
+        _dir: crate::test_dir::TestDir,
     }
 
     impl Whole {
         fn new(expanded: bool) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "toolboks-sidebar-whole-{}-{}",
-                std::process::id(),
-                expanded
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::env::set_var("TOOLBOKS_DATA_DIR", &dir);
+            let dir = crate::test_dir::TestDir::new(&format!("sidebar-whole-{expanded}"));
+            std::env::set_var("TOOLBOKS_DATA_DIR", &*dir);
             let mut app = App::new();
             app.screen = Screen::Home;
             app.sidebar_expanded = expanded;
@@ -1036,7 +1031,7 @@ mod tests {
                 ctx,
                 app,
                 time: 0.0,
-                dir,
+                _dir: dir,
             };
             whole.frame(vec![]);
             whole.frame(vec![]);
@@ -1096,12 +1091,6 @@ mod tests {
             self.frame(vec![]);
             self.frame(vec![button(to, false)]);
             self.frame(vec![]);
-        }
-    }
-
-    impl std::ops::Drop for Whole {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
 

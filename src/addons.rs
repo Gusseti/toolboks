@@ -295,34 +295,32 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_dir::TestDir;
 
-    fn temp(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("toolboks-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        root
+    fn temp(name: &str) -> TestDir {
+        TestDir::unused(name)
     }
 
     #[test]
     fn installation_persistence_and_removal() {
         let root = temp("addons");
-        let mut r = Registry::load(root.clone());
+        let mut r = Registry::load(root.to_path_buf());
         let p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
         r.install(p.clone()).unwrap();
         assert!(r.install(p).is_err());
         r.set_enabled("com.example.hello-system", false).unwrap();
-        let mut reloaded = Registry::load(root.clone());
+        let mut reloaded = Registry::load(root.to_path_buf());
         assert_eq!(reloaded.packages.len(), 1);
         assert!(!reloaded.enabled("com.example.hello-system"));
         assert!(reloaded.uninstall("toolboks.memory-cleaner").is_err());
         reloaded.uninstall("com.example.hello-system").unwrap();
-        assert!(Registry::load(root.clone()).packages.is_empty());
-        fs::remove_dir_all(root).unwrap();
+        assert!(Registry::load(root.to_path_buf()).packages.is_empty());
     }
 
     #[test]
     fn package_update_preserves_preferences_and_ignores_invalid_files() {
         let root = temp("upgrade");
-        let mut r = Registry::load(root.clone());
+        let mut r = Registry::load(root.to_path_buf());
         let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
         let id = p.manifest.id.clone();
         r.install(p.clone()).unwrap();
@@ -335,17 +333,17 @@ mod tests {
         p.manifest.version = "1.1.0".into();
         r.install(p).unwrap();
         fs::write(root.join("addons/invalid.tbaddon"), b"not JSON").unwrap();
-        let reloaded = Registry::load(root.clone());
+        let reloaded = Registry::load(root.to_path_buf());
         assert_eq!(reloaded.packages.len(), 1);
         assert_eq!(reloaded.packages[0].manifest.version, "1.1.0");
         assert_eq!(reloaded.config.preferences[&id]["label"], "Custom name");
         assert_eq!(reloaded.errors.len(), 1);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn a_package_that_names_a_host_linked_tool_is_refused() {
-        let mut r = Registry::load(temp("provider"));
+        let dir = temp("provider");
+        let mut r = Registry::load(dir.to_path_buf());
         let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
         p.manifest.native_provider = Some("toolboks.aural".into());
         assert!(r.install(p).is_err());
@@ -361,17 +359,17 @@ mod tests {
             "preferences":{"toolboks.system-essentials":{"a":1}}}"#,
         )
         .unwrap();
-        let r = Registry::load(root.clone());
+        let r = Registry::load(root.to_path_buf());
         assert!(r.errors.is_empty());
         assert!(r.config.keep_in_tray);
         assert_eq!(r.config.disabled, ["com.example.x"]);
         assert!(r.config.preferences.is_empty());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn local_packages_cannot_take_the_old_combined_id() {
-        let mut r = Registry::load(temp("reserved"));
+        let dir = temp("reserved");
+        let mut r = Registry::load(dir.to_path_buf());
         let mut p = Package::parse(SDK_EXAMPLE.as_bytes(), "0.8.2").unwrap();
         p.manifest.id = LEGACY_BASE_ID.into();
         assert!(r.install(p).is_err());
@@ -382,10 +380,9 @@ mod tests {
     #[test]
     fn a_new_install_has_nothing_to_restore() {
         let root = temp("fresh");
-        let r = Registry::load(root.clone());
+        let r = Registry::load(root.to_path_buf());
         assert!(r.config.platform_migrated);
         assert!(r.config.restore_pending.is_empty());
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -398,7 +395,7 @@ mod tests {
             "preferences":{"toolboks.resource-monitor":{"x":1}}}"#,
         )
         .unwrap();
-        let r = Registry::load(root.clone());
+        let r = Registry::load(root.to_path_buf());
         assert_eq!(
             r.config.restore_pending,
             [
@@ -410,10 +407,9 @@ mod tests {
         // Their saved settings stay where the add-ons will look for them.
         assert_eq!(r.config.preferences["toolboks.resource-monitor"]["x"], 1);
         // The offer is made once: a later start does not make it again.
-        let again = Registry::load(root.clone());
+        let again = Registry::load(root.to_path_buf());
         assert_eq!(again.config.restore_pending, r.config.restore_pending);
         assert!(again.config.platform_migrated);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -431,7 +427,7 @@ mod tests {
             old("toolboks.aural"),
         )
         .unwrap();
-        let r = Registry::load(root.clone());
+        let r = Registry::load(root.to_path_buf());
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert!(r.packages.is_empty());
         assert!(r
@@ -443,7 +439,6 @@ mod tests {
             .restore_pending
             .contains(&"toolboks.macro-manager".to_string()));
         assert!(!root.join("addons/toolboks.aural.tbaddon").exists());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -452,12 +447,11 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let broken = b"{ this is not json";
         fs::write(root.join("config.json"), broken).unwrap();
-        let r = Registry::load(root.clone());
+        let r = Registry::load(root.to_path_buf());
         assert_eq!(r.errors.len(), 1);
         assert!(!r.config.platform_migrated);
         assert!(r.config.restore_pending.is_empty());
         assert_eq!(fs::read(root.join("config.json")).unwrap(), broken);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -468,13 +462,12 @@ mod tests {
         bytes
             .extend_from_slice(br#"{"first_run_complete":true,"disabled":["toolboks.debloater"]}"#);
         fs::write(root.join("config.json"), bytes).unwrap();
-        let r = Registry::load(root.clone());
+        let r = Registry::load(root.to_path_buf());
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert!(!r.enabled("toolboks.debloater"));
         assert!(!r
             .config
             .restore_pending
             .contains(&"toolboks.debloater".to_string()));
-        fs::remove_dir_all(root).unwrap();
     }
 }
