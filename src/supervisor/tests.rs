@@ -3,6 +3,7 @@
 
 use super::pipe::{current_user_sid, ConnectError, PipePair};
 use super::*;
+use crate::test_dir::TestDir;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -19,7 +20,7 @@ pub(crate) const ID: &str = "test.fake-addon";
 const PATIENCE: Duration = Duration::from_secs(30);
 
 /// A folder with a copy of the fake add-on as `addon.exe`, set to `mode`.
-pub(crate) fn fake(test: &str, mode: &str) -> (PathBuf, LaunchSpec) {
+pub(crate) fn fake(test: &str, mode: &str) -> (TestDir, LaunchSpec) {
     // The example lands in `<target>/<profile>/examples`; where the test exe itself sits below
     // that folder differs between cargo versions, so look upwards from it.
     let test_exe = std::env::current_exe().unwrap();
@@ -33,10 +34,7 @@ pub(crate) fn fake(test: &str, mode: &str) -> (PathBuf, LaunchSpec) {
                 test_exe.display()
             )
         });
-    let dir =
-        std::env::temp_dir().join(format!("toolboks-supervisor-{test}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new(&format!("supervisor-{test}"));
     let exe = dir.join("addon.exe");
     fs::copy(&built, &exe).unwrap();
     fs::write(dir.join("mode.txt"), mode).unwrap();
@@ -540,9 +538,7 @@ fn hiding_during_launch_cancels_without_a_hidden_restart() {
 
 #[test]
 fn installed_folder_refuses_dlls_extra_files_and_directories() {
-    let dir = std::env::temp_dir().join(format!("toolboks-folder-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("folder");
     let exe = dir.join("addon.exe");
     fs::write(&exe, b"exe").unwrap();
     fs::write(dir.join("entry.json"), b"{}").unwrap();
@@ -560,13 +556,11 @@ fn installed_folder_refuses_dlls_extra_files_and_directories() {
     fs::remove_dir(dir.join("nested")).unwrap();
     fs::remove_file(&exe).unwrap();
     assert!(process::verify_folder(&exe).is_err());
-    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn installed_folder_refuses_junctions_in_its_path() {
-    let dir = std::env::temp_dir().join(format!("toolboks-junction-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = TestDir::new("junction");
     fs::create_dir_all(dir.join("real/1.0.0")).unwrap();
     fs::write(dir.join("real/1.0.0/addon.exe"), b"exe").unwrap();
     // Junction creation needs no developer mode or administrator rights.
@@ -579,7 +573,6 @@ fn installed_folder_refuses_junctions_in_its_path() {
     assert!(status.status.success());
     assert!(process::verify_folder(&dir.join("redirected/1.0.0/addon.exe")).is_err());
     fs::remove_dir(dir.join("redirected")).unwrap();
-    fs::remove_dir_all(dir).unwrap();
 }
 
 /// Inspect the built PE, rather than merely checking the Cargo configuration text.
@@ -631,7 +624,7 @@ fn a_forged_install_record_cannot_launch_an_elevated_process_without_a_signed_ca
         .unwrap(),
     )
     .unwrap();
-    spec.installed_root = Some(root.clone());
+    spec.installed_root = Some(root.to_path_buf());
     spec.may_elevate = true;
     let supervisor = supervisor(Timing::default());
     // Call the real launch path; refusal must happen before ShellExecute/UAC or any child.
@@ -659,7 +652,7 @@ fn an_installed_addon_with_a_planted_dll_is_never_started() {
         .unwrap(),
     )
     .unwrap();
-    spec.installed_root = Some(root.clone());
+    spec.installed_root = Some(root.to_path_buf());
     let mut supervisor = supervisor(Timing::default());
     supervisor.open(spec, Instant::now());
     let events = run_until(&mut supervisor, stopped);

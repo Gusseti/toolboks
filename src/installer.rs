@@ -546,6 +546,7 @@ pub fn updates<'a>(root: &Path, index: &'a Index, host: &Host) -> Vec<Available<
 mod tests {
     use super::*;
     use crate::addons::Registry;
+    use crate::test_dir::TestDir;
     use std::io::{Read, Write};
     use std::net::{Shutdown, TcpListener};
     use std::sync::{Arc, Mutex};
@@ -646,11 +647,8 @@ mod tests {
         }
     }
 
-    fn root(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("toolboks-install-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        root
+    fn root(name: &str) -> TestDir {
+        TestDir::unused(&format!("install-{name}"))
     }
 
     /// The SDK example package at `version`, serialised the way packages are stored.
@@ -744,7 +742,6 @@ mod tests {
             run(&root, &entry(&id, "1.0.0", &bytes), 1),
             Err(InstallError::NotNewer)
         );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -759,7 +756,6 @@ mod tests {
             Err(InstallError::BadPackage(_))
         ));
         assert!(installed_version(&root, &id).is_none());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -778,7 +774,6 @@ mod tests {
         assert!(!dir.join(ACTIVE_FILE).exists());
         assert!(!dir.join(DOWNLOADS).join("1.0.0.part").exists());
         assert_eq!(registry_version(&root, &id), None);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -796,7 +791,6 @@ mod tests {
             Err(InstallError::BadPackage(_))
         ));
         assert!(!addon_dir(&root, "com.example.other").join("1.0.0").exists());
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -818,7 +812,6 @@ mod tests {
         assert_eq!(run(&root, &e, server.port).unwrap().version, "1.0.0");
         assert_eq!(*server.ranges.lock().unwrap(), vec![None, Some(have)]);
         assert!(!part.exists());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -840,7 +833,7 @@ mod tests {
         assert_eq!(*server.ranges.lock().unwrap(), vec![None]);
 
         // A matching partial file, but the server ignores Range: the file starts over.
-        let root2 = super::tests::root("restart2");
+        let root2 = self::root("restart2");
         let downloads = addon_dir(&root2, &id).join(DOWNLOADS);
         fs::create_dir_all(&downloads).unwrap();
         fs::write(downloads.join("1.0.0.part"), &bytes[..20]).unwrap();
@@ -861,8 +854,6 @@ mod tests {
             fs::read(addon_dir(&root2, &id).join("1.0.0").join(PACKAGE_FILE)).unwrap(),
             bytes
         );
-        fs::remove_dir_all(root).unwrap();
-        fs::remove_dir_all(root2).unwrap();
     }
 
     #[test]
@@ -882,7 +873,6 @@ mod tests {
         );
         assert_eq!(result, Err(InstallError::Cancelled));
         assert_eq!(installed_version(&root, &id), None);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -936,7 +926,6 @@ mod tests {
         assert_eq!(started(&root, &id), Ok(()));
         assert!(!dir.join("1.0.0").exists());
         assert_eq!(launching(&root, &id), Ok(Launch::Start("1.2.0".into())));
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -959,22 +948,25 @@ mod tests {
 
         run(&root, &e, server.port).unwrap();
         prefs(&root);
-        Registry::load(root.clone()).remove(&id, true).unwrap();
+        Registry::load(root.to_path_buf())
+            .remove(&id, true)
+            .unwrap();
         assert!(!addon_dir(&root, &id).exists());
         assert!(data_dir(&root, &id).join("state").exists());
-        let r = Registry::load(root.clone());
+        let r = Registry::load(root.to_path_buf());
         assert!(r.config.preferences.contains_key(&id));
         assert!(r.packages.iter().all(|p| p.manifest.id != id));
 
         run(&root, &e, server.port).unwrap();
-        Registry::load(root.clone()).remove(&id, false).unwrap();
+        Registry::load(root.to_path_buf())
+            .remove(&id, false)
+            .unwrap();
         assert!(!addon_dir(&root, &id).exists());
         assert!(!data_dir(&root, &id).exists());
-        assert!(!Registry::load(root.clone())
+        assert!(!Registry::load(root.to_path_buf())
             .config
             .preferences
             .contains_key(&id));
-        fs::remove_dir_all(root).unwrap();
     }
 
     /// A catalog add-on (such as Disk Manager) is removed with `remove` directly, the call the
@@ -1010,7 +1002,6 @@ mod tests {
             // Deleting again, or deleting data that is already gone, is not an error.
             remove(&root, id, false).unwrap();
             assert!(!data_dir(&root, id).exists());
-            fs::remove_dir_all(root).unwrap();
         }
     }
 
@@ -1037,7 +1028,6 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].installed, "1.0.0");
         assert_eq!(found[0].entry.version, "1.1.0");
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1104,7 +1094,6 @@ mod tests {
         let stale = serde_json::to_vec(&native("9.9.9", &v1)).unwrap();
         fs::write(dir.join("1.0.0").join(ENTRY_FILE), stale).unwrap();
         assert_eq!(installed_entry(&root, id), None);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1115,6 +1104,5 @@ mod tests {
         assert_eq!(fs::read(root.join("0.12.5")).unwrap(), b"a");
         assert_eq!(fs::read(root.join("0.12.6")).unwrap(), b"b");
         assert!(!root.join("0.12.pending").exists());
-        fs::remove_dir_all(root).unwrap();
     }
 }

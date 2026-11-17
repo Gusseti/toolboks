@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn release_download_refuses_plain_http_and_custom_ports() {
         let cancel = AtomicBool::new(false);
-        let file = std::env::temp_dir().join(format!("toolboks-http-{}", std::process::id()));
+        let file = crate::test_dir::TestDir::unused("http");
         for url in ["http://127.0.0.1:8080/x", "https://127.0.0.1:8443/x"] {
             let result = download(
                 url,

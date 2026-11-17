@@ -23,6 +23,8 @@ mod marketplace;
 mod own_usage;
 mod sidebar_layout;
 mod supervisor;
+#[cfg(test)]
+mod test_dir;
 mod tray;
 mod update;
 mod winhttp;
