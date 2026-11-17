@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dragging add-ons in the sidebar now works the way you try it.** A row only moved once you dragged it past the middle of the next row, so a normal drag by one place did nothing, and the dragged row hid the line that shows where it lands. Now a row swaps places as soon as the pointer reaches the next row, the row you carry is see-through and the line shows on top of it. The name window for a new or renamed group also did not close when you pressed Enter; it does now.
+
+### Added
+
+- **A "New group" button at the end of the add-on list** (a plus icon in the narrow sidebar). It asks for a name and adds an empty group; drag add-ons onto its header to fill it. Rows you can drag show a small grip (six dots) when you point at them.
+
 ## [0.17.0] - 2026-11-17
 
 ### Added

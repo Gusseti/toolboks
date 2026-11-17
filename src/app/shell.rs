@@ -170,13 +170,16 @@ fn glyph(ui: &mut egui::Ui, name: &str, color: Color32, size: f32) {
     let (r, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
     paint_glyph(ui.painter(), r, name, color, size);
 }
-fn paint_glyph(p: &egui::Painter, r: egui::Rect, name: &str, color: Color32, size: f32) {
+pub(super) fn paint_glyph(p: &egui::Painter, r: egui::Rect, name: &str, color: Color32, size: f32) {
     let stroke = egui::Stroke::new(1.6, color);
     let pt = |x: f32, y: f32| egui::pos2(r.left() + x * size, r.top() + y * size);
     if name == "menu" {
         for y in [0.25, 0.5, 0.75] {
             p.line_segment([pt(0.12, y), pt(0.88, y)], stroke);
         }
+    } else if name == "plus" {
+        p.line_segment([pt(0.5, 0.2), pt(0.5, 0.8)], stroke);
+        p.line_segment([pt(0.2, 0.5), pt(0.8, 0.5)], stroke);
     } else if name == "home" {
         p.line(vec![pt(0.1, 0.48), pt(0.5, 0.12), pt(0.9, 0.48)], stroke);
         p.line(
@@ -494,7 +497,9 @@ fn nav_row_sensing(
                     egui::FontId::proportional(look::TEXT_CAPTION),
                     color,
                 );
-                let x = (rect.right() - text.size().x - 18.0)
+                // Rows that can be dragged keep the right edge for the grip.
+                let edge = if sense.senses_drag() { 30.0 } else { 18.0 };
+                let x = (rect.right() - text.size().x - edge)
                     .max(rect.left() + LABEL_X + label_width + 8.0);
                 let tag_rect = egui::Rect::from_min_size(
                     egui::pos2(x, rect.center().y - text.size().y / 2.0 - 2.0),
@@ -503,6 +508,18 @@ fn nav_row_sensing(
                 ui.painter().rect_filled(tag_rect, 9.0, wash);
                 ui.painter()
                     .galley(tag_rect.min + Vec2::new(5.0, 2.0), text, color);
+            }
+            if sense.senses_drag() && (response.hovered() || response.dragged()) {
+                // Six dots: this row can be dragged.
+                for dx in [0.0, 5.0] {
+                    for dy in [-5.0, 0.0, 5.0] {
+                        ui.painter().circle_filled(
+                            egui::pos2(rect.right() - 17.0 + dx, rect.center().y + dy),
+                            1.3,
+                            MUTED,
+                        );
+                    }
+                }
             }
         } else if tag != Tag::None {
             // The collapsed rail has no room for a word: a dot on the icon, named in the tooltip.
@@ -732,32 +749,8 @@ impl Crumb {
 }
 
 impl App {
-    pub(super) fn shell_ui(&mut self, ui: &mut egui::Ui) {
-        self.poll_marketplace(ui.ctx());
-        if self.screen != Screen::Settings {
-            self.own_usage.reset();
-        }
-        self.prepare_tutorial(ui.ctx());
-        if self.tour.is_some() {
-            ui.disable();
-        }
-        let dropped = ui.ctx().input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .map(|f| f.path().to_path_buf())
-                .collect::<Vec<_>>()
-        });
-        if let Some(path) = dropped.first() {
-            self.review_package(path);
-        }
-        if let Screen::External(id) = &self.screen {
-            if self.registry.config.new_addons.contains(id) {
-                self.registry.config.new_addons.retain(|n| n != id);
-                self.persist();
-            }
-        }
-        let expanded = self.sidebar_expanded && ui.ctx().content_rect().width() >= 760.0;
+    /// The left panel: menu button, Home, the add-ons and the foot (Settings, Add-ons).
+    pub(super) fn sidebar_panel(&mut self, ui: &mut egui::Ui, expanded: bool) {
         egui::Panel::left("host-sidebar")
             .resizable(false)
             .exact_size(if expanded { SIDEBAR_W } else { RAIL_W })
@@ -820,6 +813,35 @@ impl App {
                     });
                 bottom_group(ui, &mut self.screen, expanded);
             });
+    }
+
+    pub(super) fn shell_ui(&mut self, ui: &mut egui::Ui) {
+        self.poll_marketplace(ui.ctx());
+        if self.screen != Screen::Settings {
+            self.own_usage.reset();
+        }
+        self.prepare_tutorial(ui.ctx());
+        if self.tour.is_some() {
+            ui.disable();
+        }
+        let dropped = ui.ctx().input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect::<Vec<_>>()
+        });
+        if let Some(path) = dropped.first() {
+            self.review_package(path);
+        }
+        if let Screen::External(id) = &self.screen {
+            if self.registry.config.new_addons.contains(id) {
+                self.registry.config.new_addons.retain(|n| n != id);
+                self.persist();
+            }
+        }
+        let expanded = self.sidebar_expanded && ui.ctx().content_rect().width() >= 760.0;
+        self.sidebar_panel(ui, expanded);
 
         // The header: breadcrumb at the left, page controls at the right.
         let crumb = match self.screen.clone() {

@@ -49,6 +49,11 @@ fn drag_id() -> egui::Id {
     egui::Id::unique("sidebar-drag")
 }
 
+#[cfg(test)]
+fn test_rect_id(kind: &Kind) -> egui::Id {
+    egui::Id::unique(("sidebar-test-rect", format!("{kind:?}")))
+}
+
 /// What the list needs to draw itself.
 struct List<'a> {
     rows: &'a [layout::Row],
@@ -197,11 +202,11 @@ impl App {
                         .char_limit(40)
                         .desired_width(f32::INFINITY),
                 );
-                if ui.memory(|m| m.focused()).is_none() {
-                    edit.request_focus();
-                }
+                // Enter ends the edit (the box loses focus): check before taking focus back.
                 if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     submit = true;
+                } else if ui.memory(|m| m.focused()).is_none() {
+                    edit.request_focus();
                 }
                 if let Some(error) = &dialog.error {
                     ui.add_space(look::SPACE_XS);
@@ -312,6 +317,21 @@ fn list_ui(
                 }
             }
         }
+    }
+    // The way to make a group: always there, at the end of the list.
+    let button = ui
+        .push_id("sidebar-new-group", |ui| {
+            let response = nav_row(ui, "New group", "plus", false, list.expanded, Tag::None);
+            if list.expanded {
+                response
+            } else {
+                focus_tip(&response, "New group");
+                response.on_hover_text("New group")
+            }
+        })
+        .inner;
+    if button.clicked() {
+        actions.push(Action::NewGroup(None));
     }
     if let Some(drag) = dragging {
         drag_ui(ui, list, &slots, drag, &mut actions);
@@ -514,6 +534,8 @@ fn row_events(
     menu: impl FnOnce(&mut egui::Ui, &mut Vec<Action>),
 ) {
     let ctx = &response.ctx;
+    #[cfg(test)]
+    ctx.data_mut(|d| d.insert_temp(test_rect_id(&kind), response.rect));
     slots.push(Slot {
         rect: response.rect,
         kind: kind.clone(),
@@ -556,16 +578,20 @@ fn drag_ui(ui: &mut egui::Ui, list: &List, slots: &[Slot], drag: Kind, actions: 
     let released = !ctx.input(|i| i.pointer.any_down());
     let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     if let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) {
+        let overlay = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::unique("sidebar-ghost"),
+        ));
         if let Some((drop, mark)) = drop_target(slots, &drag, pos.y) {
             match mark {
                 Mark::Line { y, left, right } => {
-                    ui.painter().line_segment(
+                    overlay.line_segment(
                         [egui::pos2(left, y), egui::pos2(right, y)],
                         egui::Stroke::new(2.0, ACCENT),
                     );
                 }
                 Mark::Header(rect) => {
-                    ui.painter().rect_stroke(
+                    overlay.rect_stroke(
                         rect,
                         look::CONTROL_RADIUS,
                         egui::Stroke::new(1.5, ACCENT),
@@ -587,11 +613,9 @@ fn drag_ui(ui: &mut egui::Ui, list: &List, slots: &[Slot], drag: Kind, actions: 
                     (i.title.as_str(), sidebar_icon(id, &i.icon))
                 }),
             };
-            let painter = ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Tooltip,
-                egui::Id::unique("sidebar-ghost"),
-            ));
-            painter.rect_filled(rect, look::CONTROL_RADIUS, PANEL_BG);
+            let painter = overlay;
+            // See-through, so the row it is dragged over stays readable.
+            painter.rect_filled(rect, look::CONTROL_RADIUS, PANEL_BG.gamma_multiply(0.8));
             painter.rect_stroke(
                 rect,
                 look::CONTROL_RADIUS,
@@ -626,6 +650,10 @@ fn drag_ui(ui: &mut egui::Ui, list: &List, slots: &[Slot], drag: Kind, actions: 
 
 /// Where a drag at height `y` would land, and the mark that shows it. `None` when dropping there
 /// would change nothing.
+///
+/// A row swaps places with the one under the pointer as soon as the pointer is inside it: below
+/// the dragged row it lands behind that row, above it lands in front. (Waiting for the pointer to
+/// pass the middle made short drags do nothing.)
 fn drop_target(slots: &[Slot], drag: &Kind, y: f32) -> Option<(Drop, Mark)> {
     let last = slots.last()?;
     let line = |y: f32, rect: &egui::Rect| Mark::Line {
@@ -633,17 +661,17 @@ fn drop_target(slots: &[Slot], drag: &Kind, y: f32) -> Option<(Drop, Mark)> {
         left: rect.left(),
         right: rect.right(),
     };
+    let distance = |rect: &egui::Rect| (rect.top() - y).max(y - rect.bottom()).max(0.0);
+    let source_top = slots.iter().find(|s| s.kind == *drag).map(|s| s.rect.top());
     match drag {
         Kind::Addon { id: dragged, .. } => {
             if y > last.rect.bottom() {
                 return Some((Drop::End, line(last.rect.bottom() + 1.0, &last.rect)));
             }
-            let distance = |s: &Slot| (s.rect.top() - y).max(y - s.rect.bottom()).max(0.0);
             let slot = slots
                 .iter()
-                .min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
+                .min_by(|a, b| distance(&a.rect).total_cmp(&distance(&b.rect)))?;
             let rect = slot.rect;
-            let upper = y < rect.center().y;
             match &slot.kind {
                 Kind::Group(name) => {
                     if y < rect.top() + rect.height() * 0.25 {
@@ -656,15 +684,18 @@ fn drop_target(slots: &[Slot], drag: &Kind, y: f32) -> Option<(Drop, Mark)> {
                     }
                 }
                 Kind::Addon { id, .. } if id == dragged => None,
-                Kind::Addon { id, .. } if upper => {
-                    Some((Drop::Before(id.clone()), line(rect.top() - 1.0, &rect)))
-                }
                 Kind::Addon { id, .. } => {
-                    Some((Drop::After(id.clone()), line(rect.bottom() + 1.0, &rect)))
+                    let below = source_top.map_or(y >= rect.center().y, |top| rect.top() > top);
+                    if below {
+                        Some((Drop::After(id.clone()), line(rect.bottom() + 1.0, &rect)))
+                    } else {
+                        Some((Drop::Before(id.clone()), line(rect.top() - 1.0, &rect)))
+                    }
                 }
             }
         }
         Kind::Group(dragged) => {
+            let source_top = source_top?;
             // Top-level items: an add-on, or a header with the rows under it.
             let mut tops: Vec<(egui::Rect, Drop, bool)> = Vec::new();
             for slot in slots {
@@ -682,13 +713,17 @@ fn drop_target(slots: &[Slot], drag: &Kind, y: f32) -> Option<(Drop, Mark)> {
                     }
                 }
             }
-            match tops.iter().find(|(rect, ..)| y < rect.center().y) {
-                Some((_, _, true)) => None,
-                Some((rect, drop, false)) => Some((drop.clone(), line(rect.top() - 1.0, rect))),
-                None => {
-                    let end = tops.last()?;
-                    Some((Drop::End, line(end.0.bottom() + 1.0, &end.0)))
-                }
+            let (i, (rect, before, is_self)) = tops
+                .iter()
+                .enumerate()
+                .min_by(|a, b| distance(&a.1 .0).total_cmp(&distance(&b.1 .0)))?;
+            if *is_self {
+                None
+            } else if rect.top() > source_top {
+                let drop = tops.get(i + 1).map_or(Drop::End, |next| next.1.clone());
+                Some((drop, line(rect.bottom() + 1.0, rect)))
+            } else {
+                Some((before.clone(), line(rect.top() - 1.0, rect)))
             }
         }
     }
@@ -947,14 +982,251 @@ mod tests {
             drop_target(&slots, &drag_g, 5.0).map(|t| t.0),
             Some(Drop::Before("a".into()))
         );
+        // On its own rows nothing changes; in the row below it lands behind that row.
+        assert_eq!(drop_target(&slots, &drag_g, 90.0), None);
         assert_eq!(
-            drop_target(&slots, &drag_g, 90.0).map(|t| t.0),
-            Some(Drop::Before("b".into()))
+            drop_target(&slots, &drag_g, 115.0).map(|t| t.0),
+            Some(Drop::End)
         );
         assert_eq!(
             drop_target(&slots, &drag_g, 400.0).map(|t| t.0),
             Some(Drop::End)
         );
         assert_eq!(drop_target(&slots, &drag_g, 40.0), None);
+    }
+
+    /// The real app's sidebar (panel, menu row, Home, the scrolling list, the foot) with three
+    /// add-ons installed, driven with the events a real mouse makes.
+    struct Whole {
+        ctx: egui::Context,
+        app: App,
+        time: f64,
+        dir: std::path::PathBuf,
+    }
+
+    impl Whole {
+        fn new(expanded: bool) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "toolboks-sidebar-whole-{}-{}",
+                std::process::id(),
+                expanded
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::env::set_var("TOOLBOKS_DATA_DIR", &dir);
+            let mut app = App::new();
+            app.screen = Screen::Home;
+            app.sidebar_expanded = expanded;
+            app.registry.packages = ["a", "b", "c"]
+                .iter()
+                .map(|id| {
+                    let mut p = toolboks_addon_sdk::Package::parse(
+                        crate::addons::SDK_EXAMPLE.as_bytes(),
+                        "0.8.2",
+                    )
+                    .unwrap();
+                    p.manifest.id = (*id).into();
+                    p.manifest.title = id.to_uppercase();
+                    p
+                })
+                .collect();
+            let ctx = egui::Context::default();
+            crate::ui::apply_style(&ctx);
+            let mut whole = Self {
+                ctx,
+                app,
+                time: 0.0,
+                dir,
+            };
+            whole.frame(vec![]);
+            whole.frame(vec![]);
+            whole
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            self.time += 0.016;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1000.0, 700.0),
+                )),
+                events,
+                focused: true,
+                time: Some(self.time),
+                ..Default::default()
+            };
+            let expanded = self.app.sidebar_expanded;
+            let app = &mut self.app;
+            let mut output = self.ctx.run_ui(input, |ui| app.sidebar_panel(ui, expanded));
+            output.textures_delta.clear();
+        }
+
+        fn rect_of(&self, id: &str) -> egui::Rect {
+            let kind = Kind::Addon {
+                id: id.into(),
+                group: None,
+            };
+            self.ctx
+                .data(|d| d.get_temp(test_rect_id(&kind)))
+                .expect("row was drawn")
+        }
+
+        fn order(&self) -> Vec<String> {
+            self.app
+                .registry
+                .config
+                .sidebar_layout
+                .iter()
+                .filter_map(|item| match item {
+                    layout::Item::Addon(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// Press on `from`, move to `to` in small steps, one frame per step, release.
+        fn drag(&mut self, from: egui::Pos2, to: egui::Pos2) {
+            self.frame(vec![egui::Event::PointerMoved(from)]);
+            self.frame(vec![button(from, true)]);
+            let steps = ((to - from).length() / 3.0).ceil().max(1.0) as usize;
+            for step in 1..=steps {
+                let at = from.lerp(to, step as f32 / steps as f32);
+                self.frame(vec![egui::Event::PointerMoved(at)]);
+            }
+            self.frame(vec![]);
+            self.frame(vec![button(to, false)]);
+            self.frame(vec![]);
+        }
+    }
+
+    impl std::ops::Drop for Whole {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn a_real_mouse_drag_in_the_whole_sidebar_reorders_the_rows() {
+        for expanded in [true, false] {
+            let mut w = Whole::new(expanded);
+            assert_eq!(w.order(), ["a", "b", "c"]);
+            let a = w.rect_of("a").center();
+            let b = w.rect_of("b");
+            // Down past the lower half of "b".
+            let to = egui::pos2(a.x, b.bottom() - 4.0);
+            w.drag(a, to);
+            assert_eq!(w.order(), ["b", "a", "c"], "expanded {expanded}");
+        }
+    }
+
+    #[test]
+    fn a_plain_click_in_the_whole_sidebar_opens_the_add_on() {
+        let mut w = Whole::new(true);
+        let b = w.rect_of("b").center();
+        w.frame(vec![egui::Event::PointerMoved(b)]);
+        w.frame(vec![button(b, true)]);
+        w.frame(vec![button(b, false)]);
+        w.frame(vec![]);
+        assert!(w.app.screen == Screen::External("b".into()));
+        assert_eq!(w.order(), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_short_drag_of_one_row_reorders_it() {
+        // The pointer only just enters the next row: the row used to stay where it was.
+        for expanded in [true, false] {
+            let mut w = Whole::new(expanded);
+            let a = w.rect_of("a").center();
+            let b = w.rect_of("b");
+            w.drag(a, egui::pos2(a.x, b.top() + 5.0));
+            assert_eq!(w.order(), ["b", "a", "c"], "down, expanded {expanded}");
+            let c = w.rect_of("c");
+            let a = w.rect_of("a").center();
+            w.drag(c.center(), egui::pos2(a.x, a.y + 5.0));
+            assert_eq!(w.order(), ["b", "c", "a"], "up, expanded {expanded}");
+        }
+    }
+
+    /// The row of the "New group" button, found by its place under the last add-on.
+    fn new_group_center(w: &Whole) -> egui::Pos2 {
+        let c = w.rect_of("c");
+        egui::pos2(c.center().x, c.bottom() + 2.0 + ROW_H / 2.0)
+    }
+
+    #[test]
+    fn the_new_group_button_opens_the_name_window_and_makes_an_empty_group() {
+        for expanded in [true, false] {
+            let mut w = Whole::new(expanded);
+            let at = new_group_center(&w);
+            w.frame(vec![egui::Event::PointerMoved(at)]);
+            w.frame(vec![button(at, true)]);
+            w.frame(vec![button(at, false)]);
+            w.frame(vec![]);
+            assert!(w.app.group_dialog.is_some(), "expanded {expanded}");
+            // Type a name and press Enter in the window.
+            let ctx = w.ctx.clone();
+            let run = |w: &mut Whole, events: Vec<egui::Event>| {
+                w.time += 0.016;
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(1000.0, 700.0),
+                    )),
+                    events,
+                    focused: true,
+                    time: Some(w.time),
+                    ..Default::default()
+                };
+                let app = &mut w.app;
+                let mut output = ctx.run_ui(input, |ui| app.group_dialog_ui(ui.ctx()));
+                output.textures_delta.clear();
+            };
+            for _ in 0..4 {
+                run(&mut w, vec![]);
+            }
+            run(&mut w, vec![egui::Event::Text("Work".into())]);
+            run(&mut w, vec![]);
+            assert_eq!(
+                w.app.group_dialog.as_ref().map(|d| d.text.as_str()),
+                Some("Work")
+            );
+            let enter = |pressed| egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: Some(egui::Key::Enter),
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            };
+            run(&mut w, vec![enter(true)]);
+            run(&mut w, vec![enter(false)]);
+            assert!(w.app.group_dialog.is_none(), "closed, expanded {expanded}");
+            let layout = &w.app.registry.config.sidebar_layout;
+            assert_eq!(
+                layout.last(),
+                Some(&layout::Item::Group(layout::Group {
+                    name: "Work".into(),
+                    collapsed: false,
+                    ids: vec![]
+                }))
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_group_shows_and_takes_a_dropped_add_on() {
+        let mut w = Whole::new(true);
+        layout::new_group(&mut w.app.registry.config.sidebar_layout, "Work", None).unwrap();
+        w.frame(vec![]);
+        w.frame(vec![]);
+        let header = w
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(test_rect_id(&Kind::Group("Work".into()))))
+            .expect("the empty group is drawn");
+        let a = w.rect_of("a").center();
+        w.drag(a, header.center());
+        assert_eq!(
+            layout::group_of(&w.app.registry.config.sidebar_layout, "a").as_deref(),
+            Some("Work")
+        );
     }
 }
