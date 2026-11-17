@@ -806,9 +806,8 @@ impl App {
                         ) {
                             self.screen = Screen::Home;
                         }
-                        self.sidebar_list(ui, expanded);
                         toolboks_addon_sdk::tutorial::region(ui, "browser-sidebar", |ui| {
-                            self.market_sidebar(ui, expanded)
+                            self.sidebar_list(ui, expanded)
                         });
                     });
                 bottom_group(ui, &mut self.screen, expanded);

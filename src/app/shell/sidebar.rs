@@ -36,6 +36,8 @@ struct Info {
     title: String,
     icon: String,
     pages: Vec<String>,
+    /// What the row says when hovered, for a downloaded add-on: its name and install state.
+    tip: Option<String>,
 }
 
 /// Where the dragged row would land, as a mark to paint.
@@ -67,14 +69,26 @@ struct List<'a> {
 impl App {
     /// The add-ons below Home: top-level add-ons and groups in the user's order.
     pub(super) fn sidebar_list(&mut self, ui: &mut egui::Ui, expanded: bool) {
-        let all: Vec<String> = self
+        // The add-ons a user downloads from the list are not in `registry.packages`: they are the
+        // installed folders (and downloads still running). They are the rows people arrange.
+        let mut entries = crate::installer::installed(&self.registry.root);
+        for job in self.market.jobs.values() {
+            if !entries.iter().any(|entry| entry.id == job.entry.id) {
+                entries.push(job.entry.clone());
+            }
+        }
+        let package_ids: Vec<String> = self
             .registry
             .packages
             .iter()
             .map(|p| p.manifest.id.clone())
             .collect();
+        let is_package = |id: &str| package_ids.iter().any(|package| package == id);
+        entries.retain(|entry| !is_package(&entry.id));
+        let mut all = package_ids.clone();
+        all.extend(entries.iter().map(|entry| entry.id.clone()));
         layout::normalize(&mut self.registry.config.sidebar_layout, &all);
-        let info: HashMap<String, Info> = self
+        let mut info: HashMap<String, Info> = self
             .registry
             .packages
             .iter()
@@ -86,10 +100,25 @@ impl App {
                         title: p.manifest.title.clone(),
                         icon: p.manifest.icon.clone(),
                         pages: p.pages.iter().map(|page| page.title.clone()).collect(),
+                        tip: None,
                     },
                 )
             })
             .collect();
+        for entry in &entries {
+            let status = self
+                .market_status(&entry.id)
+                .unwrap_or_else(|| "Installed".into());
+            info.insert(
+                entry.id.clone(),
+                Info {
+                    title: entry.title.clone(),
+                    icon: entry.icon.clone(),
+                    pages: entry.pages.clone(),
+                    tip: Some(format!("{} - {status}", entry.title)),
+                },
+            );
+        }
         let tags: HashMap<String, Tag> = info
             .keys()
             .map(|id| (id.clone(), self.addon_tag(id)))
@@ -115,6 +144,17 @@ impl App {
                 for (p, name) in i.pages.iter().enumerate() {
                     if page_row(ui, name, self.addon_page == p) {
                         self.addon_page = p;
+                        if !is_package(id) {
+                            crate::addon_view::navigate(
+                                self.views.get_mut(id),
+                                p.to_string(),
+                                |message| {
+                                    self.supervisor
+                                        .as_ref()
+                                        .is_some_and(|supervisor| supervisor.send(id, message))
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -128,7 +168,16 @@ impl App {
         for action in actions {
             let layout = &mut self.registry.config.sidebar_layout;
             match action {
-                Action::Open(id) => self.open_addon(&id),
+                Action::Open(id) => {
+                    if self.installed_version(&id).is_some() {
+                        self.open_addon(&id);
+                    } else {
+                        // Still downloading or failed: the details show why.
+                        self.screen = Screen::Browser;
+                        self.market.focused = Some(id);
+                        self.market.details = true;
+                    }
+                }
                 Action::Toggle(name) => {
                     let open = layout.iter().any(
                         |item| matches!(item, layout::Item::Group(g) if g.name == name && !g.collapsed),
@@ -362,16 +411,20 @@ fn addon_row(
             tag,
             egui::Sense::click_and_drag(),
         );
-        if list.expanded {
-            response
-        } else {
-            let text = match tag {
-                Tag::New => format!("{} (new)", info.title),
-                Tag::Update => format!("{} (update available)", info.title),
-                Tag::None => info.title.clone(),
-            };
-            focus_tip(&response, &text);
-            response.on_hover_text(text)
+        match (&info.tip, list.expanded) {
+            (None, true) => response,
+            (tip, expanded) => {
+                let text = match (tip, tag) {
+                    (Some(tip), _) => tip.clone(),
+                    (None, Tag::New) => format!("{} (new)", info.title),
+                    (None, Tag::Update) => format!("{} (update available)", info.title),
+                    (None, Tag::None) => info.title.clone(),
+                };
+                if !expanded {
+                    focus_tip(&response, &text);
+                }
+                response.on_hover_text(text)
+            }
         }
     };
     let response = ui
@@ -743,6 +796,7 @@ mod tests {
                         title: id.to_uppercase(),
                         icon: "apps".into(),
                         pages: Vec::new(),
+                        tip: None,
                     },
                 )
             })
@@ -1005,7 +1059,40 @@ mod tests {
         _dir: crate::test_dir::TestDir,
     }
 
+    /// A downloaded add-on, as the add-ons list installs it: not one of `registry.packages`.
+    fn downloaded(id: &str) -> crate::catalog::Entry {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "title": id.to_uppercase(), "short_description": "Test tool",
+            "publisher": "Toolboks", "category": "system", "icon": "box", "accent": "#8b5cf6",
+            "kind": "declarative", "version": "1.0.0", "min_toolboks_version": "0.1.0",
+            "protocol_version": toolboks_addon_proto::PROTOCOL_VERSION,
+            "download_url": "https://github.com/Gusseti/test/releases/download/test/sample.tbaddon",
+            "size": 123, "sha256": "00".repeat(32), "verified": true, "channel": "stable"
+        }))
+        .unwrap()
+    }
+
     impl Whole {
+        /// The sidebar of a real install: the add-ons are downloaded ones, `registry.packages`
+        /// is empty. (The first version of reordering only worked on `registry.packages`.)
+        fn downloaded(expanded: bool) -> Self {
+            let mut whole = Self::new(expanded);
+            whole.app.registry.packages.clear();
+            for id in ["a", "b", "c"] {
+                whole.app.market.jobs.insert(
+                    id.into(),
+                    crate::marketplace::Job {
+                        entry: downloaded(id),
+                        status: crate::marketplace::InstallStatus::Ready,
+                    },
+                );
+            }
+            whole.app.registry.config.sidebar_layout.clear();
+            whole.frame(vec![]);
+            whole.frame(vec![]);
+            whole
+        }
+
         fn new(expanded: bool) -> Self {
             let dir = crate::test_dir::TestDir::new(&format!("sidebar-whole-{expanded}"));
             std::env::set_var("TOOLBOKS_DATA_DIR", &*dir);
@@ -1105,6 +1192,18 @@ mod tests {
             let to = egui::pos2(a.x, b.bottom() - 4.0);
             w.drag(a, to);
             assert_eq!(w.order(), ["b", "a", "c"], "expanded {expanded}");
+        }
+    }
+
+    #[test]
+    fn downloaded_add_ons_can_be_dragged_into_a_new_order() {
+        for expanded in [true, false] {
+            let mut w = Whole::downloaded(expanded);
+            assert_eq!(w.order(), ["a", "b", "c"], "expanded {expanded}");
+            let a = w.rect_of("a").center();
+            let c = w.rect_of("c");
+            w.drag(a, egui::pos2(a.x, c.bottom() - 4.0));
+            assert_eq!(w.order(), ["b", "c", "a"], "expanded {expanded}");
         }
     }
 

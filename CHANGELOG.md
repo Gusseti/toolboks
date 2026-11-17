@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dragging add-ons in the sidebar, and putting them in groups, now works for the add-ons you download.** Reordering and groups had only been wired to a list that real installs do not use, so your add-on rows (Disk Manager, Resource Monitor and the rest) could not be dragged, grouped or moved with Alt+Up and Alt+Down, and the right-click menu was missing on them. They now behave like the rows the feature was built for. An add-on that is still downloading or failed opens its details when you click it, as before.
+
 ## [0.17.2] - 2026-11-17
 
 ### Fixed
