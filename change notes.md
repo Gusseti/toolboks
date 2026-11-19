@@ -2,6 +2,8 @@
 
 ## Added
 
+- **`developer_integration` capability:** an add-on can declare it (SDK `Capability::DeveloperIntegration`, schema, catalog) for a local job queue, process priority and CPU core changes, and Claude Code scripts and settings. The install review explains it in plain words (`src/marketplace.rs`). It grants no administrator helper, so it is not in the native-only list.
+
 - **No signatures (owner decision):** the add-on catalog is a plain list anyone can publish. It is not signed, so the catalog keys, key rotation, expiry and replay checks, the `catalog-sign` tool and `docs/catalog-signing.md` are gone. A download is still checked against the size and SHA-256 its entry declares. Older indexes with `sequence`, dates or `publisher_key_id` still read. See `docs/catalog.md` and the note at the top of `docs/ADDON-THREAT-MODEL.md`.
 
 - **Add-on browser and first run (#86):** choose tools with nothing preselected, review several installs together, and download them through the checked catalog and existing installer. Browse by search, category or installed state; inspect screenshots, access and release notes; update, open or remove without leaving Toolboks. Installs show progress and failures stay in the sidebar until dismissed, including after a restart. Removal keeps data by default, with an explicit option to delete it. Local `.tbaddon` review and a browser walkthrough remain available.
