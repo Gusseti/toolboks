@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-19
+
 ### Added
 
 - **Copy any text or number with Ctrl+C.** Point at a value anywhere in Toolboks (a reading, a file path, a label, a heading, a table cell) and press Ctrl+C. It is copied, and a small "Copied" note shows next to the pointer with what was copied. There is no button: the shortcut works on whatever you point at. Text that is cut short with "..." is copied in full. Text you selected yourself, or text inside a field you are typing in, copies as before. It works in the app itself; an add-on gets it when it is updated to this version of Toolboks, with no change to the add-on's own pages.
