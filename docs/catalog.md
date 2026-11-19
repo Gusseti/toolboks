@@ -60,6 +60,8 @@ are ignored, so those indexes still read.
 - `capabilities`: `administrator`, `drive_optimize` or `system_tuning` let a native add-on ask for
   a separate helper for one administrator action. The helper owns its native Confirm/Cancel
   window; the add-on UI stays unelevated. See [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md).
+  `developer_integration` (local job queue, process priority and CPU cores, Claude Code scripts and
+  settings) grants no administrator helper; the install review explains it.
 - `byline` (optional, at most 60 characters) is the maker's credit shown in the details, such as "by stratum".
 - `data_note` (optional, 1 to 160 characters, one line, no control characters, no Unicode format
   characters such as bidi overrides or zero-width characters, no line or paragraph separators, no

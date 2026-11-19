@@ -91,6 +91,9 @@ pub enum Capability {
     LiveAudio,
     SystemTuning,
     InputAutomation,
+    /// A local job queue and Claude Code integration (the Testdeck add-on). Grants no
+    /// administrator helper, so it is not in the native-only list in `validate`.
+    DeveloperIntegration,
     Administrator,
 }
 
@@ -606,6 +609,21 @@ mod tests {
                 serde_json::json!(["host_metrics", "local_preferences", capability]);
             assert!(Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").is_err());
         }
+    }
+    #[test]
+    fn developer_integration_is_a_known_capability() {
+        let mut v = example();
+        v["manifest"]["capabilities"] =
+            serde_json::json!(["host_metrics", "local_preferences", "developer_integration"]);
+        let package = Package::parse(&serde_json::to_vec(&v).unwrap(), "0.8.2").unwrap();
+        assert!(package
+            .manifest
+            .capabilities
+            .contains(&Capability::DeveloperIntegration));
+        assert_eq!(
+            serde_json::to_value(Capability::DeveloperIntegration).unwrap(),
+            "developer_integration"
+        );
     }
     #[test]
     fn repeated_page_ids_and_preference_keys_are_rejected() {

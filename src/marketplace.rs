@@ -249,6 +249,27 @@ mod tests {
     }
 
     #[test]
+    fn developer_integration_is_explained_and_installable() {
+        let mut sample = entry("test.one");
+        sample.capabilities = vec!["developer_integration".into()];
+        assert!(can_install(&sample));
+        assert!(access("developer_integration").contains("priority and CPU cores"));
+        let manifest_text = package_access_text(&toolboks_addon_sdk::Manifest {
+            capabilities: vec![toolboks_addon_sdk::Capability::DeveloperIntegration],
+            ..toolboks_addon_sdk::Package::parse(
+                crate::addons::SDK_EXAMPLE.as_bytes(),
+                env!("CARGO_PKG_VERSION"),
+            )
+            .unwrap()
+            .manifest
+        });
+        assert_eq!(
+            manifest_text,
+            [AccessLine::Can(access("developer_integration"))]
+        );
+    }
+
+    #[test]
     fn review_text_lists_the_data_note_under_the_capabilities() {
         let note = "Keeps your last scan of each drive on this PC (file and folder names).";
         let mut sample = entry("test.disk");
@@ -504,6 +525,8 @@ pub fn size(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }
+/// The install review line for `developer_integration`, shared by the catalog and local-package reviews.
+const DEVELOPER_INTEGRATION_ACCESS: &str = "Developer tools integration: runs a local job queue on this PC, changes the priority and CPU cores of build and test processes or ends them, and installs scripts into Claude Code's settings";
 pub fn access(name: &str) -> String {
     match name {
         "host_metrics" => "Read memory use and uptime",
@@ -516,6 +539,7 @@ pub fn access(name: &str) -> String {
         "live_audio" => "Use your selected microphone and audio outputs",
         "system_tuning" => "Back up and change the Windows settings and power plan you select",
         "input_automation" => "Record and replay keyboard and mouse actions when you start a macro",
+        "developer_integration" => DEVELOPER_INTEGRATION_ACCESS,
         "administrator" => "Ask Windows for administrator permission for this add-on",
         _ => return format!("Unrecognized access: {name}. Update Toolboks before installing."),
     }
@@ -586,6 +610,7 @@ pub fn package_access_text(manifest: &toolboks_addon_sdk::Manifest) -> Vec<Acces
                     Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
                     Capability::SystemTuning => "Back up and change the Windows settings and power plan you select",
                     Capability::InputAutomation => "Record keyboard and mouse input and replay it only when you start a macro",
+                    Capability::DeveloperIntegration => DEVELOPER_INTEGRATION_ACCESS,
                 }
                 .into(),
             )
