@@ -144,6 +144,11 @@ user-selected outputs. Audio Gainer opens audio streams only after an explicit a
 `system_tuning` is a native-only capability for the System Profiles add-on. Applying
 or restoring a profile requires an explicit action and administrator rights.
 
+`developer_integration` is for the Testdeck add-on. It runs a local job queue on this PC (it
+listens on 127.0.0.1), changes the priority and CPU cores of build and test processes or ends
+them, and installs scripts into Claude Code's folder and settings (`%USERPROFILE%\.claude`).
+It grants no administrator helper, and the install review says all of this in plain words.
+
 `take_host_request` can return `ReviewUpdate` or `AdminOperation(AdminRequest)`. The
 host starts a separate administrator helper, keeping the interface unelevated. Only a native
 Confirm/Cancel dialog owned by the helper can approve its exact change. `RestartElevated` is

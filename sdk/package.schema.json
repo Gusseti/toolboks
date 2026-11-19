@@ -121,7 +121,8 @@
               "drive_optimize",
               "live_audio",
               "system_tuning",
-              "input_automation"
+              "input_automation",
+              "developer_integration"
             ]
           }
         },
