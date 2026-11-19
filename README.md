@@ -79,6 +79,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked -- --test-threads=1
 ```
 
+**Dependency updates:** Dependabot (`.github/dependabot.yml`) opens weekly pull requests into `staging` for Cargo crates and GitHub Actions, minor and patch updates grouped. Run the checks above on them before merging.
+
 **Normal way:** bump `version` in `Cargo.toml` (and `Cargo.lock`), run the checks above, merge to `main`. `.github/workflows/release.yml` sees a version with no release yet, builds `toolboks.exe` and publishes release `vX.Y.Z`. A push to `main` that does not change the version releases nothing.
 
 **Pre-releases and tagging by hand:** `scripts/release.ps1` bumps the version, commits, tags and pushes; a pushed `vX.Y.Z-rc.N` tag publishes a pre-release (which the in-app updater ignores).
