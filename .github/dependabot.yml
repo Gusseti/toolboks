@@ -1,0 +1,24 @@
+# Weekly dependency updates as pull requests into staging. Run the full checks locally before merging
+# (README, "Releasing"): no workflow tests these pull requests.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: staging
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns: ["*"]
