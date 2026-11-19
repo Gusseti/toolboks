@@ -1,77 +1,115 @@
-# toolboks
+<p align="center">
+  <img src="logo.png" alt="Toolboks" width="120">
+</p>
 
-A lightweight workspace for system utilities, written in Rust.
+<h1 align="center">Toolboks</h1>
 
-## Where Toolboks is going
+<p align="center">
+  <strong>One window for every Windows tool you actually use.</strong><br>
+  One file to download. Tools you pick, install in seconds, update one by one, and remove without a trace.
+</p>
 
-Toolboks is becoming an empty shell that downloads every tool as an add-on: you pick the tools
-you want inside the app, and each one can be updated or removed on its own. The engine for that
-is available through the add-on browser (plan: issue #77). Disk Manager has moved to the
-add-ons repository; the other tools below remain part of the app. See [the architecture](docs/ADDON-ARCHITECTURE.md), the
-[add-on author guide](docs/ADDON-AUTHOR-GUIDE.md) and the
-[threat model](docs/ADDON-THREAT-MODEL.md).
+<p align="center">
+  <a href="https://github.com/Gusseti/toolboks/releases/latest"><strong>Download toolboks.exe</strong></a> ·
+  <a href="docs/ADDON-ARCHITECTURE.md">How it works</a> ·
+  <a href="sdk/README.md">Build an add-on</a> ·
+  <a href="CHANGELOG.md">What's new</a>
+</p>
 
-## Local add-on preview
+---
 
-The local development branch introduces a Stratum-inspired shell, a persistent sidebar,
-and an add-on framework. Every tool (Memory Cleaner, Resource Monitor, Debloater, Event Watch, Disk Manager, Audio Gainer, Macro Manager and System Profiles) is a separate add-on that you install from the add-on browser; Toolboks itself contains none.
-Local `.tbaddon` packages render inside the same window. See [the architecture](docs/ADDON-ARCHITECTURE.md),
-[SDK](sdk/README.md), and [preview build instructions](docs/LOCAL-DEVELOPMENT.md).
+## The idea
 
-The external runtime supports declarative packages and catalog-installed native executables.
-**Disk Manager by stratum** now lives in [toolboks-addons](https://github.com/fredhakon/toolboks-addons/tree/main/addons/disk-manager)
-as an independent executable, with the same scan pages and saved preferences. It is no longer
-compiled into Toolboks. Its first catalog publication is still required before users can install it.
-Analysis and drive optimization (defrag, TRIM) run through a separate administrator helper with
-its own Confirm/Cancel window; Disk Manager itself never runs as administrator.
-See [Disk Manager](docs/DISK-MANAGER.md).
+Your PC has a pile of small utilities: one for memory, one for disk space, one for the event log,
+one for macros. Each has its own window, its own look and its own idea of what "safe" means.
 
-Help offers full and current-tab walkthroughs with purple highlights and cancellation.
-See [Guided tours](docs/GUIDED-TOURS.md) and [Drive optimization](docs/DRIVE-OPTIMIZATION.md).
+Toolboks is the other way round. The app is an **empty shell**, written in Rust. Every tool is an
+**add-on** that you pick from the add-on browser inside the app. Each add-on is its own program,
+drawn inside the Toolboks window, so they all look and behave the same. They also can't take each
+other down: if one crashes or hangs, the app keeps running and shows a plain message with a Restart button.
 
-## Tools
+Install the ones you want. Skip the rest. Update or remove any of them on its own.
 
-- **Memory Cleaner**: one-click Optimize memory (gentle, no admin needed), a colored "Where your memory goes" bar grouped by app, automatic cleaning with a start-percentage slider and an options panel, and an Advanced page with the process list, protection, system-wide cleaning and auto-clean rules.
-- **Resource Monitor**: a Task Manager style Overview (CPU with live clock, GPU, memory, disk, network, top processes) and a Details page (per-core CPU, GPU engines, per-drive disk, per-adapter network), with live graphs.
+## What's on the shelf
 
-## Macro Manager
+| Add-on | What it does for you |
+|---|---|
+| **Disk Manager** | Scan a drive or folder and see where the space went. An interactive space map, a full-window **Space explorer** in the style of WizTree (pan, zoom, names on the tiles), largest files, a **duplicate finder** that lets you keep one copy and delete the rest, and a read-only scan that only remembers names and sizes. Defrag and TRIM are there too, behind an administrator prompt you confirm each time. Based on Stratum. |
+| **Memory Cleaner** | A colored "where your memory goes" bar, grouped by app. Trim what idle apps hold on to, by hand or automatically when memory is really under pressure. Never closes an app. |
+| **Resource Monitor** | Live graphs for processor, graphics, memory, disk and network, plus running apps, process priority and a history of what used what, and when. |
+| **Event Watch** | The Windows event log in plain language, with a closer look at crashes, restarts and slow drivers. It reads. It never clears or changes anything. |
+| **Debloater** | Privacy switches, startup entries and background tasks, explained one by one. Nothing changes until you pick it, and what you change can be undone. |
+| **System Profiles** | A Windows gaming profile with a restore point, a registry backup and an activity log, so you can put things back. |
+| **Macro Manager** | Record keyboard and mouse actions, edit the steps and mouse paths, replay them with repeat delays. Macros stay on your PC. [More](docs/MACRO-MANAGER.md). |
+| **Audio Gainer** | Microphone gain, live level meters, listen to yourself, route your mic to other apps. Remembers settings per microphone. |
+| **Testdeck** | For people who let AI coding agents run tests and builds: a small local queue so heavy jobs take turns instead of swamping the PC. The newest one, not yet marked verified. |
 
-Install Macro Manager from Add-ons to record keyboard and mouse actions, edit steps
-and mouse paths, and replay them with configurable repeat delays and duration.
-Recording and playback shortcuts are configurable; Esc stops active work. Timing
-accepts milliseconds or decimal seconds. Macros stay local. See
-[Macro Manager](docs/MACRO-MANAGER.md).
+Disk Manager, Memory Cleaner, Resource Monitor and the rest live in the
+[toolboks-addons](https://github.com/fredhakon/toolboks-addons) repository. The add-on list in the
+app is read from there.
 
-## Audio Gainer settings
+## What makes it feel like one app
 
-Audio Gainer's Settings section can enable your microphone when Toolboks starts, even
-when you open another tool first. This is off by default. Remember settings for each
-microphone saves its on/off state, gain, listening volume, output choices and routing
-locally. Saved activation restores when switching microphones and when Toolboks
-launches. A saved per-microphone on/off state takes precedence over the general
-startup switch; saved routing resumes with an enabled microphone.
+- **One window, one look.** Dark graphite, one purple accent, plain words. Add-ons pick their
+  content and pages, not their colors or fonts ([DESIGN.md](DESIGN.md)).
+- **Your sidebar, your order.** Drag add-ons into the order you like, put them in named groups,
+  collapse what you don't need. Tags show what is new or has an update.
+- **Help that points.** Every add-on offers a full tour and a tour of the current page, with
+  highlights you can cancel at any moment. A tour never clicks anything for you.
+- **Tray and background.** Add-ons that need to keep working, like the history recorder or
+  Testdeck, can run quietly in the tray while the window is closed.
+- **Updates that you control.** The app checks GitHub once on launch. If there is a newer version,
+  it asks. It downloads the file, checks its SHA-256 and swaps itself in place. Add-ons update
+  on their own, one at a time.
 
-Choose a microphone and use **Use selected microphone** under Default microphone to
-remember it by name. Its name stays saved while disconnected, and Toolboks switches
-back when it reconnects. Duplicate device names require a unique choice rather than
-automatically picking an arbitrary microphone. Manually disabling the microphone
-keeps it off for that session.
+## Rules every add-on lives by
 
-Existing installations need to **Review update** in Audio Gainer to approve the new
-local-preferences permission before using saved settings. Preferences stay in the
-Toolboks data folder; preview builds keep a separate profile. VB-Audio Virtual Cable
-is installed separately for routing to other apps.
+1. **Plain words first**, the raw number one click away.
+2. **Measured is measured**, and an estimate says it is an estimate.
+3. **Nothing changes your system** without a preview, a confirmation and a way back.
+4. **Administrator only when needed.** Add-on windows stay unelevated. An action that needs
+   administrator rights goes through a separate helper with its own Confirm / Cancel window, and
+   the install review lists in plain words what an add-on may do.
 
-## Branches
+## Get it
 
-- `main` – stable; every stable release is cut from here.
-- `staging` – integration branch; pre-releases (`-rc.N`) are cut from here. Merge `staging` into `main` when ready.
+1. Download `toolboks.exe` from the [latest release](https://github.com/Gusseti/toolboks/releases/latest).
+   Checksum next to it (`toolboks.exe.sha256`).
+2. Run it. It is a single file with no installer, for Windows 11.
+3. Open the add-on browser and install what you want.
 
-## Releasing
+Releases aren't code-signed yet, so Windows SmartScreen may warn you the first time. Choose
+**More info**, then **Run anyway**.
 
-Versions follow [SemVer](https://semver.org) and live in `Cargo.toml`.
+Preferences and installed add-ons are saved in `%LOCALAPPDATA%\Toolboks`. Opening and closing
+Toolboks without changing anything writes nothing.
 
-**Before anything goes to `main`:** run the full checks on your own PC and merge only when all pass. The release workflow does not run them; it only builds and publishes.
+## Where it's going
+
+Everything is an add-on, and the shell stays tiny. The tools come from the Toolboks team today.
+The [add-on SDK](sdk/README.md) (a developer preview) is open to read and build against, but
+publishing by anyone else is not open yet. That needs its own plan, and a sandbox, first. See
+[ADDON-VISION.md](docs/ADDON-VISION.md).
+
+## Build an add-on
+
+Add-ons talk to the host over a small protocol and are drawn inside the same window.
+
+- [SDK](sdk/README.md): manifest, validator, packager and a working starter
+- [Architecture](docs/ADDON-ARCHITECTURE.md), [protocol](docs/ADDON-PROTOCOL.md) and
+  [threat model](docs/ADDON-THREAT-MODEL.md)
+- [Author guide](docs/ADDON-AUTHOR-GUIDE.md) and the [design checklist](docs/ADDON-DESIGN-CHECKLIST.md)
+
+## Work on Toolboks itself
+
+Build and run a preview that has its own window title and its own data folder, so it can sit next
+to the real one. Details in [LOCAL-DEVELOPMENT.md](docs/LOCAL-DEVELOPMENT.md).
+
+```powershell
+cargo build --release --locked --features preview
+```
+
+Run the checks on your own PC before anything goes to `main`. There is no CI gate:
 
 ```powershell
 cargo fmt --all --check
@@ -79,30 +117,40 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked -- --test-threads=1
 ```
 
-**Dependency updates:** Dependabot (`.github/dependabot.yml`) opens weekly pull requests into `staging` for Cargo crates and GitHub Actions, minor and patch updates grouped. Run the checks above on them before merging.
+**Branches.** Work goes into `staging` through pull requests. `main` is the stable branch, and
+releases are cut from it. Merge `staging` into `main` when it is ready, with a merge commit.
 
-**Normal way:** bump `version` in `Cargo.toml` (and `Cargo.lock`), run the checks above, merge to `main`. `.github/workflows/release.yml` sees a version with no release yet, builds `toolboks.exe` and publishes release `vX.Y.Z`. A push to `main` that does not change the version releases nothing.
+**Releasing.** Versions follow [SemVer](https://semver.org) and live in `Cargo.toml`. Bump the
+version (and `Cargo.lock`), run the checks, merge to `main`. `.github/workflows/release.yml` sees a
+version with no release yet, builds `toolboks.exe` and publishes `vX.Y.Z` with exactly two files:
+`toolboks.exe` and `toolboks.exe.sha256`. A push to `main` that does not change the version
+releases nothing. Pre-releases (`vX.Y.Z-rc.N`) are published from tags with `scripts/release.ps1`;
+the in-app updater ignores them. Versions 0.1.0 and 0.2.0 used long file names and cannot update
+themselves: download `toolboks.exe` once from the latest release.
 
-**Pre-releases and tagging by hand:** `scripts/release.ps1` bumps the version, commits, tags and pushes; a pushed `vX.Y.Z-rc.N` tag publishes a pre-release (which the in-app updater ignores).
+Dependabot opens weekly pull requests into `staging` for Cargo crates and GitHub Actions. Run the
+checks on them before merging.
 
-```powershell
-.\scripts\release.ps1 0.2.0-rc.1   # from staging: pre-release
-.\scripts\release.ps1 0.2.0        # from main: stable release
-```
+<details>
+<summary>Audio Gainer: saved microphone settings</summary>
 
-The workflow fails if a tag and the `Cargo.toml` version disagree. Each release has exactly two files: `toolboks.exe` (what you download and run) and `toolboks.exe.sha256` (its checksum). Versions 0.1.0 and 0.2.0 used long file names and cannot update themselves to a later release; download `toolboks.exe` once from the latest release.
+Audio Gainer's Settings section can enable your microphone when Toolboks starts, even when you open
+another tool first. This is off by default. *Remember settings for each microphone* saves its on/off
+state, gain, listening volume, output choices and routing locally. Saved activation restores when
+switching microphones and when Toolboks launches. A saved per-microphone on/off state takes
+precedence over the general startup switch; saved routing resumes with an enabled microphone.
 
-## Updates
+Choose a microphone and use **Use selected microphone** under Default microphone to remember it by
+name. Its name stays saved while disconnected, and Toolboks switches back when it reconnects.
+Duplicate device names require a unique choice rather than automatically picking an arbitrary
+microphone. Manually disabling the microphone keeps it off for that session.
 
-On launch the app makes one request to GitHub for the latest stable release (pre-releases are ignored). If a newer version exists it asks whether to update; **Update now** downloads the exe into memory, verifies the SHA-256, swaps itself in place and restarts, and **Not now** keeps the **Install and restart** button in Settings. Offline or no release: it says nothing. There is also a **Check for updates** button. Updater temporary files are cleaned up after restart. It needs the repository to be public, since it cannot carry a token.
+Existing installations need to **Review update** in Audio Gainer to approve the new
+local-preferences permission before using saved settings. Preferences stay in the Toolboks data
+folder; preview builds keep a separate profile. VB-Audio Virtual Cable is installed separately for
+routing to other apps.
 
-## Design rules
-
-Toolboks saves preferences and installed packages locally when you change a setting or manage an
-add-on. Opening and closing Toolboks without changes does not create a configuration file.
-Preview and stable data folders are separate. This supersedes the historical no-config rule in
-[docs/PLAN.md](docs/PLAN.md).
-Original native-tool options remain session-only until their settings migration is implemented.
+</details>
 
 ## License
 
