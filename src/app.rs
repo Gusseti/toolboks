@@ -53,6 +53,12 @@ pub struct App {
     services: crate::addon_services::Services,
     registry: Registry,
     screen: Screen,
+    /// The main window's page in the last pass, and the page it was on before the add-on page it
+    /// shows now: where it goes back to when that add-on moves into its own window.
+    shown_screen: Screen,
+    came_from: Option<Screen>,
+    /// Add-ons in a window of their own (dragged out of the sidebar), by id. Memory only.
+    detached: std::collections::BTreeMap<String, shell::detach::Detached>,
     /// The sidebar shows names (204 px) instead of icons only (52 px). Memory only.
     sidebar_expanded: bool,
     addon_page: usize,
@@ -202,6 +208,9 @@ impl App {
             views: Default::default(),
             services: Default::default(),
             registry,
+            shown_screen: screen.clone(),
+            came_from: None,
+            detached: Default::default(),
             screen,
             sidebar_expanded: false,
             addon_page,
@@ -431,6 +440,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.shell_ui(ui);
         toolboks_addon_sdk::copy_hover::host_pass(ui.ctx());
+        self.detached_windows(ui.ctx());
         if !self.update_cleanup_done && self.first_frame.is_none() {
             self.first_frame = Some(std::time::Instant::now());
             ui.ctx().request_repaint_after(Duration::from_secs(2));

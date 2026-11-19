@@ -88,8 +88,12 @@ pub fn host_pass(ctx: &Context) {
     show_note(ctx);
 }
 
-fn note_id() -> Id {
-    Id::NULL.with("toolboks-copied-note")
+/// One note per window: the host draws an add-on in a window of its own too (a detached add-on),
+/// and a copy there must not show its note in the main window as well.
+fn note_id(ctx: &Context) -> Id {
+    Id::NULL
+        .with("toolboks-copied-note")
+        .with(ctx.viewport_id())
 }
 
 /// Remembers that `text` was just copied, so the next passes show the note.
@@ -101,19 +105,22 @@ pub fn announce(ctx: &Context, text: &str) {
     } else {
         shown
     };
-    ctx.data_mut(|data| data.insert_temp(note_id(), (now, shown)));
+    // The id first: `note_id` reads the context, which `data_mut` holds locked.
+    let id = note_id(ctx);
+    ctx.data_mut(|data| data.insert_temp(id, (now, shown)));
     ctx.request_repaint();
 }
 
 /// Draws the "Copied" note next to the pointer for a moment. Does nothing otherwise.
 pub fn show_note(ctx: &Context) {
-    let Some((since, shown)) = ctx.data(|data| data.get_temp::<(f64, String)>(note_id())) else {
+    let id = note_id(ctx);
+    let Some((since, shown)) = ctx.data(|data| data.get_temp::<(f64, String)>(id)) else {
         return;
     };
     let now = ctx.input(|input| input.time);
     let left = NOTE_SECONDS - (now - since);
     if left <= 0.0 {
-        ctx.data_mut(|data| data.remove::<(f64, String)>(note_id()));
+        ctx.data_mut(|data| data.remove::<(f64, String)>(id));
         return;
     }
     let pointer = ctx.pointer_latest_pos().unwrap_or(Pos2::new(24.0, 24.0));
@@ -127,7 +134,7 @@ pub fn show_note(ctx: &Context) {
     } else {
         pointer.y + 18.0
     };
-    Area::new(note_id().with("area"))
+    Area::new(id.with("area"))
         .order(Order::Tooltip)
         .interactable(false)
         .fixed_pos(Pos2::new(x, y))
@@ -285,9 +292,8 @@ mod tests {
         assert!(out.platform_output.commands.is_empty());
         with_ctx(|ctx| {
             announce(ctx, &"x".repeat(100));
-            let (_, shown): (f64, String) = ctx
-                .data(|data| data.get_temp(note_id()))
-                .expect("announced");
+            let id = note_id(ctx);
+            let (_, shown): (f64, String) = ctx.data(|data| data.get_temp(id)).expect("announced");
             assert!(shown.chars().count() <= NOTE_CHARS + 3);
             assert!(shown.ends_with("..."));
         });

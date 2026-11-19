@@ -148,11 +148,17 @@ impl App {
                             None
                         }
                     };
-                    if self.screen == Screen::External(id.clone()) {
+                    let page = match self.detached.get(&id) {
+                        Some(window) => Some(window.page),
+                        None => {
+                            (self.screen == Screen::External(id.clone())).then_some(self.addon_page)
+                        }
+                    };
+                    if let Some(page) = page {
                         supervisor.send(
                             &id,
                             &toolboks_addon_proto::HostMessage::Navigate {
-                                page: route.unwrap_or_else(|| self.addon_page.to_string()),
+                                page: route.unwrap_or_else(|| page.to_string()),
                             },
                         );
                     }
@@ -160,6 +166,10 @@ impl App {
                 crate::supervisor::Event::Stopped { id, reason } => {
                     if let Some(view) = self.views.get_mut(&id) {
                         view.stop(reason.text());
+                    }
+                    // A stop that lasts puts a detached add-on back in the sidebar.
+                    if shell::detach::back_on_stop(&reason) {
+                        self.detached.remove(&id);
                     }
                 }
                 crate::supervisor::Event::Restarting { id } => {
@@ -179,7 +189,7 @@ impl App {
             if entry.kind != crate::catalog::Kind::Native {
                 continue;
             }
-            let on_screen = self.screen == Screen::External(entry.id.clone());
+            let on_screen = shell::detach::on_screen(&self.screen, &self.detached, &entry.id);
             if addon_tick::hide_addon(on_screen, self.hidden) {
                 supervisor.hide(&entry.id);
             }
@@ -207,12 +217,19 @@ impl App {
     /// Only from `ui`: the repaint an add-on view on screen needs. Not while hidden in the tray:
     /// eframe still runs `ui` for a window hidden with `Visible(false)` on Windows.
     fn poll_views(&mut self, ctx: &egui::Context) {
-        let shown = match &self.screen {
-            Screen::External(id) if !self.hidden => self.views.get(id).map(|view| view.state()),
+        if self.hidden {
+            return;
+        }
+        // The add-on in the main window and every add-on in a window of its own.
+        let main = match &self.screen {
+            Screen::External(id) => Some(id),
             _ => None,
         };
-        if let Some(after) = crate::addon_view::poll_after(shown) {
-            ctx.request_repaint_after(after);
+        for id in main.into_iter().chain(self.detached.keys()) {
+            let shown = self.views.get(id).map(|view| view.state());
+            if let Some(after) = crate::addon_view::poll_after(shown) {
+                ctx.request_repaint_after(after);
+            }
         }
     }
 
@@ -766,6 +783,8 @@ impl App {
                                 supervisor.stop(&entry.id, std::time::Instant::now());
                             }
                             self.views.remove(&entry.id);
+                            // Updated or reinstalled: it comes back to the sidebar.
+                            self.detached.remove(&entry.id);
                         }
                         self.market.review = None;
                         self.market.queue(entries.clone());
@@ -837,6 +856,11 @@ impl App {
     }
 
     pub(super) fn open_market_addon(&mut self, id: &str) {
+        // In a window of its own: that window comes to the front instead.
+        if let Some(window) = self.detached.get_mut(id) {
+            window.focus = true;
+            return;
+        }
         if !self.registry.enabled(id) {
             if let Err(error) = self.registry.set_enabled(id, true) {
                 self.message = Some(error);
@@ -934,7 +958,12 @@ impl App {
             .then(|| "Update available".into())
     }
 
-    pub(super) fn remote_workspace(&mut self, ui: &mut egui::Ui, id: &str) -> bool {
+    pub(super) fn remote_workspace(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: &str,
+        page: &mut usize,
+    ) -> bool {
         let Some(entry) = crate::installer::installed_entry(&self.registry.root, id)
             .filter(|entry| entry.kind == crate::catalog::Kind::Native)
         else {
@@ -969,9 +998,9 @@ impl App {
             view.show(ui, ui.available_rect_before_wrap());
             // The add-on opened one of its own pages (Resource Monitor's "Open in history"):
             // the sidebar and the header show it too.
-            if let Some(page) = view.take_own_page() {
-                if (page as usize) < entry.pages.len() && page as usize != self.addon_page {
-                    self.addon_page = page as usize;
+            if let Some(own) = view.take_own_page() {
+                if (own as usize) < entry.pages.len() && own as usize != *page {
+                    *page = own as usize;
                     ui.ctx().request_repaint();
                 }
             }
@@ -1061,6 +1090,7 @@ impl App {
                                 }
                                 self.services.health.remove(&id);
                                 self.views.remove(&id);
+                                self.detached.remove(&id);
                                 self.market.dismiss(&id);
                                 self.message =
                                     Some("Add-on removed. You can install it again from Add-ons.".into());

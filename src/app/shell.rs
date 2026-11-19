@@ -3,6 +3,7 @@ use crate::ui::{BORDER, HOST_ACCENT as ACCENT, MUTED, PANEL_BG, SIDEBAR_BG, TEXT
 use egui::{Color32, RichText, Vec2};
 use toolboks_addon_sdk::{Manifest, Metric, Widget};
 
+pub(super) mod detach;
 mod sidebar;
 
 /// The small window that asks for a sidebar group name.
@@ -815,6 +816,7 @@ impl App {
     }
 
     pub(super) fn shell_ui(&mut self, ui: &mut egui::Ui) {
+        self.note_screen();
         self.poll_marketplace(ui.ctx());
         if self.screen != Screen::Settings {
             self.own_usage.reset();
@@ -1197,6 +1199,7 @@ impl App {
             return false;
         }
         if !enabled {
+            self.redock(id);
             if self.help.as_deref() == Some(id) {
                 self.help = None;
             }
@@ -1302,12 +1305,27 @@ impl App {
         if self.hidden {
             return;
         }
-        if !self.registry.enabled(id) {
+        let mut page = self.addon_page;
+        let shown = self.addon_workspace(ui, id, &mut page);
+        self.addon_page = page;
+        if !shown {
             self.screen = Screen::Home;
-            return;
         }
-        if self.remote_workspace(ui, id) {
-            return;
+    }
+
+    /// An add-on's page, in the main window or in its own (see `detach`), on page `page` (the
+    /// add-on may change it). False when the add-on cannot be shown (turned off or gone).
+    pub(super) fn addon_workspace(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: &str,
+        page: &mut usize,
+    ) -> bool {
+        if !self.registry.enabled(id) {
+            return false;
+        }
+        if self.remote_workspace(ui, id, page) {
+            return true;
         }
         let Some(package) = self
             .registry
@@ -1316,12 +1334,11 @@ impl App {
             .find(|p| p.manifest.id == id)
             .cloned()
         else {
-            self.screen = Screen::Home;
-            return;
+            return false;
         };
         let color = accent(&package.manifest);
-        let page = self.addon_page.min(package.pages.len() - 1);
-        self.addon_page = page;
+        *page = (*page).min(package.pages.len() - 1);
+        let page = *page;
         ui.scope(|ui| {
             ui.visuals_mut().hyperlink_color = color;
             ui.visuals_mut().selection.bg_fill = color.gamma_multiply(0.25);
@@ -1442,6 +1459,7 @@ impl App {
                 ));
             }
         }
+        true
     }
     fn settings(&mut self, ui: &mut egui::Ui) {
         Self::title(
