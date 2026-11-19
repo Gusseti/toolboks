@@ -594,6 +594,9 @@ impl<W: Write> Runtime<W> {
                 tab = Some(direction);
             }
         }
+        let copy_asked = events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Copy));
         let mut raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             time: Some(self.clock.elapsed().as_secs_f64()),
@@ -643,6 +646,18 @@ impl<W: Write> Runtime<W> {
             // The host takes focus; the sentinel never keeps it.
             ctx.memory_mut(|memory| memory.surrender_focus(id));
         }
+        // Ctrl+C that nothing else answered copies the text under the pointer (copy_hover).
+        let mut hover_copy = None::<String>;
+        let platform_copies = output
+            .platform_output
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::OutputCommand::CopyText(_)));
+        if copy_asked && !platform_copies && !ctx.text_edit_focused() {
+            if let Some(pos) = ctx.pointer_hover_pos() {
+                hover_copy = crate::copy_hover::text_at(&output.shapes, pos);
+            }
+        }
         let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
         let repaint_after_ms = output
             .viewport_output
@@ -661,6 +676,9 @@ impl<W: Write> Runtime<W> {
                 egui::OutputCommand::OpenUrl(url) => open_urls.push(url.url),
                 _ => {}
             }
+        }
+        if let Some(text) = hover_copy {
+            copied_text.get_or_insert_with(String::new).push_str(&text);
         }
         let mut textures_set = Vec::new();
         for (id, deltas) in std::mem::take(&mut output.textures_delta.set) {

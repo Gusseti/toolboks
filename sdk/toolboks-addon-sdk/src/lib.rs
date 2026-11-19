@@ -7,6 +7,8 @@ pub const MAX_PACKAGE_BYTES: usize = 2 * 1024 * 1024;
 pub const API_VERSION: u32 = 2;
 
 #[cfg(feature = "native-ui")]
+pub mod copy_hover;
+#[cfg(feature = "native-ui")]
 pub mod tutorial;
 
 #[cfg(feature = "runtime")]

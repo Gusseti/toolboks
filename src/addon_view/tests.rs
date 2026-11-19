@@ -487,6 +487,33 @@ fn tab_escape_hands_focus_back_to_the_host() {
 }
 
 #[test]
+fn ctrl_c_over_the_page_reaches_the_add_on_even_without_keyboard_focus() {
+    let sent = |pointer: egui::Pos2| {
+        let ctx = egui::Context::default();
+        let mut view = AddonView::new("Demo", &ctx);
+        let (link, recorder, _tx) = fake_link();
+        view.attach(link);
+        pass(
+            &ctx,
+            vec![Event::PointerMoved(pointer), Event::Copy],
+            |ui| {
+                view.show_at(ui, page(), Instant::now());
+            },
+        );
+        assert!(!view.focused(), "the page was never clicked");
+        recorder
+            .batches()
+            .into_iter()
+            .flat_map(|batch| batch.events)
+            .collect::<Vec<InputEvent>>()
+    };
+    let inside = sent(page().center());
+    assert!(inside.contains(&InputEvent::Copy), "{inside:?}");
+    let outside = sent(pos2(2.0, 2.0));
+    assert!(!outside.contains(&InputEvent::Copy), "{outside:?}");
+}
+
+#[test]
 fn real_addon_paints_takes_clicks_and_restarts_dimmed() {
     let ctx = egui::Context::default();
     pass(&ctx, Vec::new(), |_| {});

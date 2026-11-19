@@ -54,6 +54,8 @@ app is read from there.
   content and pages, not their colors or fonts ([DESIGN.md](DESIGN.md)).
 - **Your sidebar, your order.** Drag add-ons into the order you like, put them in named groups,
   collapse what you don't need. Tags show what is new or has an update.
+- **Copy anything.** Point at any text or number, a reading, a path, a file name, and press
+  Ctrl+C. No buttons to hunt for.
 - **Help that points.** Every add-on offers a full tour and a tour of the current page, with
   highlights you can cancel at any moment. A tour never clicks anything for you.
 - **Tray and background.** Add-ons that need to keep working, like the history recorder or

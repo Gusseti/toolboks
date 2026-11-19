@@ -8,6 +8,12 @@ Design: every add-on follows [DESIGN.md](../DESIGN.md), the Toolboks design syst
 passes the [add-on design checklist](../docs/ADDON-DESIGN-CHECKLIST.md). `tbaddon validate`
 prints the checklist after a package passes; `tbaddon checklist` prints it on its own.
 
+## Copying
+
+Every text and number an add-on draws can be copied: the user points at it and presses Ctrl+C.
+The add-on runtime does this by itself, from what was drawn, so an add-on needs no copy button
+and no code for it. A selection in a text field or a selected label keeps its own copy.
+
 ## Start here
 
 1. Copy `examples/hello-system.tbaddon` and edit the manifest, pages, and widgets.
