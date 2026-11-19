@@ -30,6 +30,9 @@ enum Action {
     Delete(String),
     ToGroup(String, String),
     Out(String),
+    /// The row was let go past the window's edge: open the add-on in its own window, with its
+    /// outer corner here (screen points) when known.
+    Detach(String, Option<egui::Pos2>),
 }
 
 struct Info {
@@ -49,6 +52,11 @@ enum Mark {
 
 fn drag_id() -> egui::Id {
     egui::Id::unique("sidebar-drag")
+}
+
+/// The last pointer position seen during the current drag.
+fn drag_seen_id() -> egui::Id {
+    drag_id().with("seen")
 }
 
 #[cfg(test)]
@@ -119,6 +127,9 @@ impl App {
                 },
             );
         }
+        // An add-on in its own window is out of the sidebar until it comes back. The layout keeps
+        // its place, so it returns where it was.
+        info.retain(|id, _| !self.detached.contains_key(id));
         let tags: HashMap<String, Tag> = info
             .keys()
             .map(|id| (id.clone(), self.addon_tag(id)))
@@ -218,6 +229,7 @@ impl App {
                     changed |= layout::move_addon(layout, &id, &Drop::IntoGroup(group));
                 }
                 Action::Out(id) => changed |= layout::remove_from_group(layout, &id),
+                Action::Detach(id, at) => self.detach_addon(&id, at),
             }
         }
         if changed {
@@ -628,9 +640,40 @@ fn row_events(
 fn drag_ui(ui: &mut egui::Ui, list: &List, slots: &[Slot], drag: Kind, actions: &mut Vec<Action>) {
     let ctx = ui.ctx().clone();
     ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-    let released = !ctx.input(|i| i.pointer.any_down());
+    let window = ctx.content_rect();
+    let latest = ctx.input(|i| i.pointer.latest_pos().or(i.pointer.interact_pos()));
+    let seen = ctx.data(|d| d.get_temp::<egui::Pos2>(drag_seen_id()));
+    let place = detach::place(window, latest, seen);
+    // Only an add-on's row can leave the window; a group header re-orders wherever it is.
+    let detaching = match (&place, &drag) {
+        (detach::Place::Outside(pos), Kind::Addon { id, .. }) => Some((id.clone(), *pos)),
+        _ => None,
+    };
+    let past_edge = matches!(place, detach::Place::Outside(_) | detach::Place::Unknown);
+    let egui_down = ctx.input(|i| i.pointer.any_down());
+    let released = detach::released(
+        egui_down,
+        past_edge,
+        past_edge && egui_down && detach::primary_button_up(),
+    );
     let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-    if let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) {
+    if let Some(pos) = latest {
+        ctx.data_mut(|d| d.insert_temp(drag_seen_id(), pos));
+    }
+    if let Some((id, pos)) = detaching {
+        let overlay = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::unique("sidebar-ghost"),
+        ));
+        detach_hint(&overlay, list, window, &id, pos);
+        if released && !escape {
+            let at = detach::window_corner(ctx.input(|i| i.viewport().inner_rect), pos);
+            actions.push(Action::Detach(id, at));
+        } else {
+            // Look again soon: a release out there may reach only the real button state.
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    } else if let detach::Place::Inside(pos) | detach::Place::Outside(pos) = place {
         let overlay = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Tooltip,
             egui::Id::unique("sidebar-ghost"),
@@ -697,8 +740,65 @@ fn drag_ui(ui: &mut egui::Ui, list: &List, slots: &[Slot], drag: Kind, actions: 
         }
     }
     if released || escape {
-        ctx.data_mut(|d| d.remove::<Kind>(drag_id()));
+        ctx.data_mut(|d| {
+            d.remove::<Kind>(drag_id());
+            d.remove::<egui::Pos2>(drag_seen_id());
+        });
     }
+}
+
+/// While a row is past the window's edge: the window gets an accent outline, and the dragged row,
+/// held inside the window next to the pointer, says what letting go does.
+fn detach_hint(
+    painter: &egui::Painter,
+    list: &List,
+    window: egui::Rect,
+    id: &str,
+    pos: egui::Pos2,
+) {
+    painter.rect_stroke(
+        window.shrink(1.0),
+        0.0,
+        egui::Stroke::new(2.0, ACCENT),
+        egui::StrokeKind::Inside,
+    );
+    let (title, icon) = list.info.get(id).map_or((id, "apps"), |i| {
+        (i.title.as_str(), sidebar_icon(id, &i.icon))
+    });
+    let text = painter.layout_no_wrap(
+        format!("Release to open {title} in its own window"),
+        egui::FontId::proportional(look::TEXT_BODY),
+        TEXT,
+    );
+    let size = Vec2::new(LABEL_X + text.size().x + 12.0, ROW_H);
+    let inner = window.shrink(8.0);
+    let min = egui::pos2(
+        (pos.x - size.x / 2.0).clamp(inner.min.x, (inner.max.x - size.x).max(inner.min.x)),
+        (pos.y - size.y / 2.0).clamp(inner.min.y, (inner.max.y - size.y).max(inner.min.y)),
+    );
+    let rect = egui::Rect::from_min_size(min, size);
+    painter.rect_filled(rect, look::CONTROL_RADIUS, PANEL_BG);
+    painter.rect_stroke(
+        rect,
+        look::CONTROL_RADIUS,
+        egui::Stroke::new(1.0, ACCENT),
+        egui::StrokeKind::Inside,
+    );
+    paint_glyph(
+        painter,
+        egui::Rect::from_center_size(
+            egui::pos2(rect.left() + 18.0, rect.center().y),
+            Vec2::splat(18.0),
+        ),
+        icon,
+        ACCENT,
+        18.0,
+    );
+    painter.galley(
+        egui::pos2(rect.left() + LABEL_X, rect.center().y - text.size().y / 2.0),
+        text,
+        TEXT,
+    );
 }
 
 /// Where a drag at height `y` would land, and the mark that shows it. `None` when dropping there
@@ -1316,5 +1416,166 @@ mod tests {
             layout::group_of(&w.app.registry.config.sidebar_layout, "a").as_deref(),
             Some("Work")
         );
+    }
+
+    impl Whole {
+        /// Whether the add-on's row is drawn now (its rect is noted afresh in this frame).
+        fn row_drawn(&mut self, id: &str) -> bool {
+            let kind = Kind::Addon {
+                id: id.into(),
+                group: None,
+            };
+            self.ctx
+                .data_mut(|d| d.remove::<egui::Rect>(test_rect_id(&kind)));
+            self.frame(vec![]);
+            self.ctx
+                .data(|d| d.get_temp::<egui::Rect>(test_rect_id(&kind)))
+                .is_some()
+        }
+    }
+
+    #[test]
+    fn dragging_a_row_past_the_window_edge_opens_it_in_its_own_window() {
+        // Both sidebar widths, out of the left edge and out of the right one (the test window is
+        // 1000 x 700 points).
+        for expanded in [true, false] {
+            for out_x in [-40.0, 1060.0] {
+                let mut w = Whole::new(expanded);
+                let a = w.rect_of("a");
+                w.drag(a.center(), egui::pos2(out_x, a.center().y));
+                assert!(
+                    w.app.detached.contains_key("a"),
+                    "expanded {expanded}, x {out_x}"
+                );
+                assert_eq!(w.app.detached.len(), 1);
+                // Nothing was re-ordered, and the row is out of the sidebar.
+                assert_eq!(w.order(), ["a", "b", "c"]);
+                assert!(!w.row_drawn("a"), "expanded {expanded}, x {out_x}");
+                assert!(w.row_drawn("b"));
+                // Closing the window puts the row back in its old place.
+                assert!(w.app.redock("a"));
+                assert!(w.row_drawn("a"));
+                assert_eq!(w.rect_of("a"), a, "same slot, expanded {expanded}");
+                assert_eq!(w.order(), ["a", "b", "c"]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_drag_that_comes_back_in_still_reorders_and_does_not_detach() {
+        let mut w = Whole::new(true);
+        let a = w.rect_of("a").center();
+        let b = w.rect_of("b");
+        let to = egui::pos2(a.x, b.bottom() - 4.0);
+        w.frame(vec![egui::Event::PointerMoved(a)]);
+        w.frame(vec![button(a, true)]);
+        for at in [
+            egui::pos2(a.x, a.y + 6.0),
+            egui::pos2(-30.0, a.y + 6.0),
+            egui::pos2(-60.0, a.y + 10.0),
+            egui::pos2(a.x, b.top() + 2.0),
+            to,
+        ] {
+            w.frame(vec![egui::Event::PointerMoved(at)]);
+        }
+        w.frame(vec![button(to, false)]);
+        w.frame(vec![]);
+        assert!(w.app.detached.is_empty());
+        assert_eq!(w.order(), ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn escape_outside_the_window_cancels_the_detach() {
+        let mut w = Whole::new(true);
+        let a = w.rect_of("a").center();
+        let out = egui::pos2(-50.0, a.y);
+        w.frame(vec![egui::Event::PointerMoved(a)]);
+        w.frame(vec![button(a, true)]);
+        for step in 1..=20 {
+            w.frame(vec![egui::Event::PointerMoved(
+                a.lerp(out, step as f32 / 20.0),
+            )]);
+        }
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: Some(egui::Key::Escape),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        w.frame(vec![escape]);
+        w.frame(vec![button(out, false)]);
+        w.frame(vec![]);
+        assert!(w.app.detached.is_empty());
+        assert_eq!(w.order(), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_group_header_dragged_out_of_the_window_does_not_detach() {
+        let mut w = Whole::new(true);
+        layout::new_group(&mut w.app.registry.config.sidebar_layout, "Work", Some("c")).unwrap();
+        w.frame(vec![]);
+        w.frame(vec![]);
+        let header = w
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(test_rect_id(&Kind::Group("Work".into()))))
+            .expect("the group is drawn");
+        w.drag(header.center(), egui::pos2(-40.0, header.center().y));
+        assert!(w.app.detached.is_empty());
+    }
+
+    #[test]
+    fn detaching_the_add_on_on_screen_sends_the_main_window_back() {
+        let mut w = Whole::new(true);
+        w.app.screen = Screen::Settings;
+        w.app.note_screen();
+        w.app.open_addon("a");
+        w.app.addon_page = 0;
+        w.app.note_screen();
+        assert!(w.app.screen == Screen::External("a".into()));
+        w.frame(vec![]);
+        let a = w.rect_of("a").center();
+        w.drag(a, egui::pos2(1060.0, a.y));
+        assert!(w.app.detached.contains_key("a"));
+        assert!(w.app.screen == Screen::Settings, "back where it came from");
+        // Opening it again (a link, the add-on list) brings its window forward instead.
+        w.app.open_addon("a");
+        assert!(w.app.screen == Screen::Settings);
+        assert!(w.app.detached["a"].focus);
+        // Something that sets the main page directly is sent back too.
+        w.app.screen = Screen::External("a".into());
+        w.app.note_screen();
+        assert!(w.app.screen == Screen::Settings);
+    }
+
+    #[test]
+    fn only_one_window_per_add_on() {
+        let mut w = Whole::new(true);
+        w.app.detach_addon("a", None);
+        w.app.detach_addon("a", Some(egui::pos2(5.0, 5.0)));
+        assert_eq!(w.app.detached.len(), 1);
+        assert_eq!(w.app.detached["a"].at, None, "the first window stays");
+        assert!(w.app.detached["a"].focus, "and comes to the front");
+        // Not installed: nothing opens.
+        w.app.detach_addon("nope", None);
+        assert_eq!(w.app.detached.len(), 1);
+    }
+
+    #[test]
+    fn turning_off_or_removing_a_detached_add_on_brings_it_back() {
+        let mut w = Whole::new(true);
+        w.app.detach_addon("a", None);
+        w.app.detach_addon("b", None);
+        assert!(w.app.set_addon_enabled("a", false));
+        assert!(!w.app.detached.contains_key("a"), "turned off");
+        // Uninstalled behind its back (or by the add-on list): gone at the next pass.
+        w.app.registry.packages.retain(|p| p.manifest.id != "b");
+        w.app.redock_gone();
+        assert!(w.app.detached.is_empty(), "removed");
+        // A detached add-on being removed goes back first, so the remove window can stop it.
+        w.app.detach_addon("c", None);
+        w.app.market.remove = Some(("c".into(), false));
+        w.app.redock_gone();
+        assert!(w.app.detached.is_empty(), "being removed");
     }
 }
