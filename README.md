@@ -71,7 +71,15 @@ is installed separately for routing to other apps.
 
 Versions follow [SemVer](https://semver.org) and live in `Cargo.toml`.
 
-**Normal way:** bump `version` in `Cargo.toml` (and `Cargo.lock`), merge to `main`. `.github/workflows/release.yml` sees a version with no release yet, builds `toolboks.exe` and publishes release `vX.Y.Z`. A push to `main` that does not change the version releases nothing.
+**Before anything goes to `main`:** run the full checks on your own PC and merge only when all pass. The release workflow does not run them; it only builds and publishes.
+
+```powershell
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked -- --test-threads=1
+```
+
+**Normal way:** bump `version` in `Cargo.toml` (and `Cargo.lock`), run the checks above, merge to `main`. `.github/workflows/release.yml` sees a version with no release yet, builds `toolboks.exe` and publishes release `vX.Y.Z`. A push to `main` that does not change the version releases nothing.
 
 **Pre-releases and tagging by hand:** `scripts/release.ps1` bumps the version, commits, tags and pushes; a pushed `vX.Y.Z-rc.N` tag publishes a pre-release (which the in-app updater ignores).
 
