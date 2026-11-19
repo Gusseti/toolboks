@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-19
+
 ### Added
 
 - **A new add-on permission, "Developer tools integration".** An add-on such as the coming Testdeck can now say it runs a local job queue on this PC, changes the priority and CPU cores of build and test processes or ends them, and installs scripts into Claude Code's settings. The install review lists this in plain words before you install. It does not give the add-on administrator rights.

@@ -1,6 +1,6 @@
 [package]
 name = "toolboks"
-version = "0.17.3"
+version = "0.18.0"
 edition = "2021"
 description = "A lightweight toolbox of system utilities"
 license = "MIT"
