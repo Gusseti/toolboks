@@ -467,6 +467,17 @@ impl AddonView {
             });
         }
         self.router.route(&events, rect, focused, &mut routed);
+        // Ctrl+C over the page copies the text under the pointer, also when the page does not
+        // have keyboard focus, unless the host is in a text field of its own.
+        if !focused
+            && self.router.hovered()
+            && !ui.ctx().text_edit_focused()
+            && events
+                .iter()
+                .any(|event| matches!(event, egui::Event::Copy))
+        {
+            routed.push(InputEvent::Copy);
+        }
         if !self.interactive {
             routed.retain(|event| matches!(event, InputEvent::FocusLost));
         }
@@ -616,6 +627,7 @@ impl AddonView {
             self.escape = frame.focus_escape;
         }
         if let Some(text) = frame.copied_text {
+            toolboks_addon_sdk::copy_hover::announce(ctx, &text);
             ctx.copy_text(text);
         }
         for url in frame.open_urls {
