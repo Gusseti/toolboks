@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-19
+
 ### Added
 
 - **Open an add-on in its own window.** Drag an add-on's row out of the sidebar and past the edge of the Toolboks window, then let go: the add-on opens in a window of its own where you let go, on the page you had open, without restarting. While you drag past the edge, the Toolboks window gets a purple outline and the row says "Release to open ... in its own window"; press Escape to cancel. While it is out, its row leaves the sidebar. Close its window to put it back in the sidebar, in the same place and group. The window hides and comes back with Toolboks when Toolboks goes to the tray. An add-on that is turned off, removed, updated or stops for good goes back to the sidebar by itself, and every add-on is back in the sidebar at the next start. Dragging rows within the sidebar works as before.
