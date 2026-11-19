@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-19
+
+### Fixed
+
+- **Copy now reaches Windows.** Until now everything you copied in Toolboks (Ctrl+C on text or a number, or text from a field) stayed inside the app, and pasting it anywhere else gave nothing. Copied text now goes to the Windows clipboard, and text copied elsewhere can be pasted into Toolboks fields.
+
 ## [0.19.0] - 2026-11-19
 
 ### Added
