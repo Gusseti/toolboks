@@ -1463,7 +1463,11 @@ impl App {
                 let index = page
                     .and_then(|page| entry.pages.iter().position(|own| *own == page))
                     .unwrap_or(0);
-                self.addon_page = index;
+                // A detached add-on turns to the page in its own window.
+                match self.detached.get_mut(id) {
+                    Some(window) => window.page = index,
+                    None => self.addon_page = index,
+                }
                 let route = route.unwrap_or_else(|| index.to_string());
                 let sent =
                     crate::addon_view::navigate(self.views.get_mut(id), route.clone(), |message| {
