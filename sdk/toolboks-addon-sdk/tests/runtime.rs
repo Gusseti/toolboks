@@ -147,6 +147,42 @@ fn button(pressed: bool) -> InputEvent {
     }
 }
 
+/// An add-on with one number and no copy code of its own.
+struct Readout;
+
+impl NativeAddon for Readout {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _: &mut std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> bool {
+        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(200.0, 30.0));
+        ui.put(rect, egui::Label::new("CPU 42 %").selectable(false));
+        false
+    }
+}
+
+#[test]
+fn ctrl_c_over_a_number_copies_it_without_the_add_on_doing_anything() {
+    let mut host = TestHost::connect(Readout);
+    host.frame(vec![]);
+    // Over the text: the copy arrives with the frame that answers the Copy.
+    host.frame(vec![InputEvent::PointerMoved { pos: [110.0, 25.0] }]);
+    let (frame, _) = host.frame(vec![InputEvent::Copy]);
+    assert_eq!(frame.copied_text.as_deref(), Some("CPU 42 %"));
+    // Not over any text: nothing is copied.
+    host.frame(vec![InputEvent::PointerMoved {
+        pos: [300.0, 250.0],
+    }]);
+    let (frame, _) = host.frame(vec![InputEvent::Copy]);
+    assert_eq!(frame.copied_text, None);
+    // No Ctrl+C: nothing is copied either.
+    host.frame(vec![InputEvent::PointerMoved { pos: [110.0, 25.0] }]);
+    let (frame, _) = host.frame(vec![]);
+    assert_eq!(frame.copied_text, None);
+    host.quit().unwrap();
+}
+
 #[test]
 fn hello_first_frame_and_cached_meshes() {
     let mut host = TestHost::connect(Counter::default());

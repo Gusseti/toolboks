@@ -430,6 +430,7 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.shell_ui(ui);
+        toolboks_addon_sdk::copy_hover::host_pass(ui.ctx());
         if !self.update_cleanup_done && self.first_frame.is_none() {
             self.first_frame = Some(std::time::Instant::now());
             ui.ctx().request_repaint_after(Duration::from_secs(2));
