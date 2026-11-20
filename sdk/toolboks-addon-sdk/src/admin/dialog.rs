@@ -55,7 +55,7 @@ fn template() -> Vec<u32> {
     );
     dword(&mut b, 0);
     word(&mut b, 3);
-    for n in [0, 0, 330, 210] {
+    for n in [0, 0, 400, 260] {
         word(&mut b, n);
     }
     word(&mut b, 0);
@@ -70,7 +70,7 @@ fn template() -> Vec<u32> {
             | ES_MULTILINE as u32
             | ES_READONLY as u32
             | ES_AUTOVSCROLL as u32,
-        [12, 12, 306, 158],
+        [12, 12, 376, 208],
         DESCRIPTION,
         0x81,
         "",
@@ -78,7 +78,7 @@ fn template() -> Vec<u32> {
     control(
         &mut b,
         WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
-        [174, 180, 68, 20],
+        [244, 230, 68, 20],
         CONFIRM,
         0x80,
         "Confirm",
@@ -86,7 +86,7 @@ fn template() -> Vec<u32> {
     control(
         &mut b,
         WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
-        [250, 180, 68, 20],
+        [320, 230, 68, 20],
         IDCANCEL.0 as u16,
         0x80,
         "Cancel",
@@ -116,7 +116,12 @@ unsafe extern "system" fn procedure(
             let _ = SetDlgItemTextW(
                 hwnd,
                 DESCRIPTION as i32,
-                &HSTRING::from(state.description.replace('\n', "\r\n")),
+                &HSTRING::from(
+                    state
+                        .description
+                        .replace("\r\n", "\n")
+                        .replace('\n', "\r\n"),
+                ),
             );
             SetTimer(Some(hwnd), 1, 100, None);
             if let Ok(button) = GetDlgItem(Some(hwnd), IDCANCEL.0) {
@@ -194,4 +199,45 @@ fn dialog_window_is_created_by_this_process_and_cancellation_closes_it() {
         show("Test only. Nothing will change.", &AtomicBool::new(true)).unwrap();
     assert!(!confirmed);
     assert_eq!(owner, std::process::id());
+}
+
+#[cfg(test)]
+#[test]
+fn template_keeps_room_for_long_previews() {
+    // Guards the window size, so a long preview needs little scrolling while the buttons stay on
+    // a 1366x768 screen at 125 % and a 1920x1080 screen at 175 %.
+    let words: Vec<u16> = template()
+        .iter()
+        .flat_map(|d| [*d as u16, (*d >> 16) as u16])
+        .collect();
+    let (count, width, height) = (words[4], words[7], words[8]);
+    assert_eq!((count, width, height), (3, 400, 260));
+    let skip_string = |mut i: usize| {
+        while words[i] != 0 {
+            i += 1;
+        }
+        i + 1
+    };
+    // Title, then the point size word and the font name.
+    let mut i = skip_string(skip_string(11) + 1);
+    let mut controls = Vec::new();
+    for _ in 0..count {
+        i += i % 2; // Each control starts on a DWORD boundary.
+        let style = u32::from(words[i]) | (u32::from(words[i + 1]) << 16);
+        let [x, y, cx, cy, id] = [4, 5, 6, 7, 8].map(|k| words[i + k]);
+        assert!(
+            x + cx <= width && y + cy <= height,
+            "control {id} is outside the window"
+        );
+        controls.push((id, style, cx, cy));
+        i = skip_string(i + 11) + 1; // Class atom, title, then the creation data word.
+    }
+    let edit = controls.iter().find(|c| c.0 == DESCRIPTION).unwrap();
+    assert!(edit.2 >= 370 && edit.3 >= 200);
+    let cancel = controls.iter().find(|c| c.0 == IDCANCEL.0 as u16).unwrap();
+    assert_ne!(
+        cancel.1 & BS_DEFPUSHBUTTON as u32,
+        0,
+        "Cancel must stay the default button"
+    );
 }

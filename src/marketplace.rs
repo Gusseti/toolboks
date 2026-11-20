@@ -525,6 +525,9 @@ pub fn size(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }
+/// The install review line for `system_tuning`, shared by the catalog and local-package reviews.
+const SYSTEM_TUNING_ACCESS: &str =
+    "Back up and change the Windows settings and power plan you select, and clear memory caches when you ask";
 /// The install review line for `developer_integration`, shared by the catalog and local-package reviews.
 const DEVELOPER_INTEGRATION_ACCESS: &str = "Developer tools integration: runs a local job queue on this PC, changes the priority and CPU cores of build and test processes or ends them, and installs scripts into Claude Code's settings";
 pub fn access(name: &str) -> String {
@@ -537,7 +540,7 @@ pub fn access(name: &str) -> String {
             "Analyze and optimize drives when you ask (administrator permission required)"
         }
         "live_audio" => "Use your selected microphone and audio outputs",
-        "system_tuning" => "Back up and change the Windows settings and power plan you select",
+        "system_tuning" => SYSTEM_TUNING_ACCESS,
         "input_automation" => "Record and replay keyboard and mouse actions when you start a macro",
         "developer_integration" => DEVELOPER_INTEGRATION_ACCESS,
         "administrator" => "Ask Windows for administrator permission for this add-on",
@@ -608,7 +611,7 @@ pub fn package_access_text(manifest: &toolboks_addon_sdk::Manifest) -> Vec<Acces
                     Capability::UserExports => "Save reports to a destination you choose",
                     Capability::DriveOptimize => "Analyze fragmentation and run Windows defrag or TRIM only when you request it (administrator access required)",
                     Capability::LiveAudio => "Open the selected microphone and route live audio to outputs you enable",
-                    Capability::SystemTuning => "Back up and change the Windows settings and power plan you select",
+                    Capability::SystemTuning => SYSTEM_TUNING_ACCESS,
                     Capability::InputAutomation => "Record keyboard and mouse input and replay it only when you start a macro",
                     Capability::DeveloperIntegration => DEVELOPER_INTEGRATION_ACCESS,
                 }
