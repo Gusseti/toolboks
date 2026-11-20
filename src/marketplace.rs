@@ -525,9 +525,10 @@ pub fn size(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }
-/// The install review line for `developer_integration`, shared by the catalog and local-package reviews.
+/// The install review line for `system_tuning`, shared by the catalog and local-package reviews.
 const SYSTEM_TUNING_ACCESS: &str =
     "Back up and change the Windows settings and power plan you select, and clear memory caches when you ask";
+/// The install review line for `developer_integration`, shared by the catalog and local-package reviews.
 const DEVELOPER_INTEGRATION_ACCESS: &str = "Developer tools integration: runs a local job queue on this PC, changes the priority and CPU cores of build and test processes or ends them, and installs scripts into Claude Code's settings";
 pub fn access(name: &str) -> String {
     match name {
