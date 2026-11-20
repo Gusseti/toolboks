@@ -55,7 +55,7 @@ fn template() -> Vec<u32> {
     );
     dword(&mut b, 0);
     word(&mut b, 3);
-    for n in [0, 0, 330, 210] {
+    for n in [0, 0, 400, 300] {
         word(&mut b, n);
     }
     word(&mut b, 0);
@@ -70,7 +70,7 @@ fn template() -> Vec<u32> {
             | ES_MULTILINE as u32
             | ES_READONLY as u32
             | ES_AUTOVSCROLL as u32,
-        [12, 12, 306, 158],
+        [12, 12, 376, 248],
         DESCRIPTION,
         0x81,
         "",
@@ -78,7 +78,7 @@ fn template() -> Vec<u32> {
     control(
         &mut b,
         WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
-        [174, 180, 68, 20],
+        [244, 270, 68, 20],
         CONFIRM,
         0x80,
         "Confirm",
@@ -86,7 +86,7 @@ fn template() -> Vec<u32> {
     control(
         &mut b,
         WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
-        [250, 180, 68, 20],
+        [320, 270, 68, 20],
         IDCANCEL.0 as u16,
         0x80,
         "Cancel",
@@ -194,4 +194,25 @@ fn dialog_window_is_created_by_this_process_and_cancellation_closes_it() {
         show("Test only. Nothing will change.", &AtomicBool::new(true)).unwrap();
     assert!(!confirmed);
     assert_eq!(owner, std::process::id());
+}
+#[cfg(test)]
+#[test]
+fn template_keeps_room_for_long_previews() {
+    // Guards the size of the window and its text box, so a long preview does not need much scrolling.
+    let words: Vec<u16> = template()
+        .iter()
+        .flat_map(|d| [*d as u16, (*d >> 16) as u16])
+        .collect();
+    assert_eq!((words[4], words[7], words[8]), (3, 400, 300));
+    // Skip the title, then the point size and font name; each ends at a zero word.
+    let mut i = 11;
+    for _ in 0..2 {
+        while words[i] != 0 {
+            i += 1;
+        }
+        i += 1;
+    }
+    i += i % 2; // The first control starts on a DWORD boundary.
+    assert_eq!(words[i + 8], DESCRIPTION);
+    assert!(words[i + 6] >= 370 && words[i + 7] >= 240);
 }

@@ -40,6 +40,8 @@
 
 - **Shared code for add-ons (#99, no change in behaviour):** Audio Gainer, Macro Manager and System Profiles now import the shared crates directly and no host code. `data_root` and `write_atomic` moved to `toolboks-shared` (`storage`); the host re-exports them. The rest of the Debloater engine (apps, restore points, services, startup, scheduled tasks, and the change error with its rollback) moved to `toolboks-debloat-engine`; the Debloater page uses it from there.
 
+- **Administrator Confirm window (#251):** the window is larger (400 by 300 dialog units), so long previews such as Memory Cleaner's eight clean regions and its freeze warnings fit with little scrolling. A preview is still limited to 8,000 bytes and is never cut.
+
 ## Fixed
 
 - **Add-on launch hardening (#95, F2/F3):** every privileged native launch reads the saved catalog entry and uses its hash and granted elevation capability instead of writable install records. A missing saved catalog requires a refresh; rollback versions absent from the catalog cannot elevate. MSVC builds load implicit DLL dependencies from System32 only, and installed version folders with extra files or redirected paths are refused.

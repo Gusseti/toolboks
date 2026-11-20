@@ -315,6 +315,8 @@ The host treats them as opaque data. No request field carries approval or previe
 The add-on must choose an allowed operation, parse a strict parameter type and construct the
 plain-language preview from independently checked state inside the helper.
 
+The host passes `operation` and `json` through without a schema, within the limits above, so the add-on's `prepare` must validate strictly: reject unknown keys, wrong types and empty selections. The preview may be up to 8,000 bytes. The confirmation window shows about 2,500 characters before it scrolls and never truncates the text. Enable each Windows privilege only for the step that needs it and remove it afterwards. Return per-step results in the `Completed` json; the host does not rewrite them.
+
 1. UI sends `HostRequest::AdminOperation(request)`.
 2. Supervisor verifies the installed executable against the saved catalog and starts
    only its helper mode. The helper presents a new token and completes the usual v3 handshake.
