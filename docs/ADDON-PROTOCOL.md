@@ -317,8 +317,9 @@ plain-language preview from independently checked state inside the helper.
 
 The host passes `operation` and `json` through without a schema, within the limits above, so
 the add-on's `prepare` must validate strictly: reject unknown keys, wrong types and empty
-selections. The preview may be up to 8,000 bytes. The confirmation window shows about 2,500
-characters before it scrolls and never truncates the text. Enable each Windows privilege only
+selections. The preview may be up to 8,000 bytes. The confirmation window shows roughly 25 lines
+(about 2,000 to 2,500 characters, depending on scale and line breaks) before it scrolls, and it
+never truncates the text. Enable each Windows privilege only
 for the step that needs it and remove it afterwards. Return per-step results in the
 `Completed` json; the host does not rewrite them.
 

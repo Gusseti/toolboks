@@ -15,7 +15,7 @@ use toolboks_addon_proto::{
 mod dialog;
 
 pub const HELPER_ARG: &str = "--toolboks-admin-helper";
-/// Longest preview, in bytes, that the confirmation window accepts.
+/// Longest preview, in bytes, that `perform` lets through to the confirmation window.
 const MAX_DESCRIPTION: usize = 8000;
 
 /// A validated, immutable preview and the one change it describes. Preparing this value

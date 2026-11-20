@@ -761,7 +761,8 @@ change.
 
 1. *Install.* Add-ons page > **Install** on one add-on (or use first-run **Pick your tools** >
    **Install add-on** / **Install these add-ons**). Expected: "Review installation" lists exactly
-   the permissions ("Back up and change the Windows settings and power plan you select", "Record
+   the permissions ("Back up and change the Windows settings and power plan you select, and clear memory caches
+   when you ask", "Record
    and replay keyboard and mouse actions...", administrator and drive optimization lines for
    those that ask), nothing downloads until you confirm; a progress state; then it appears in the
    sidebar with a "New" tag until opened.

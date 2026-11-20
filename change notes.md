@@ -40,7 +40,7 @@
 
 - **Shared code for add-ons (#99, no change in behaviour):** Audio Gainer, Macro Manager and System Profiles now import the shared crates directly and no host code. `data_root` and `write_atomic` moved to `toolboks-shared` (`storage`); the host re-exports them. The rest of the Debloater engine (apps, restore points, services, startup, scheduled tasks, and the change error with its rollback) moved to `toolboks-debloat-engine`; the Debloater page uses it from there.
 
-- **Administrator Confirm window (#251):** the window is larger (400 by 300 dialog units), so long previews such as Memory Cleaner's eight clean regions and its freeze warnings fit with little scrolling. A preview is still limited to 8,000 bytes and is never cut.
+- **Administrator Confirm window (#251):** the window is larger (400 by 260 dialog units), so long previews such as Memory Cleaner's eight clean regions and its freeze warnings fit with little scrolling. A preview is still limited to 8,000 bytes and is never cut.
 
 ## Fixed
 
