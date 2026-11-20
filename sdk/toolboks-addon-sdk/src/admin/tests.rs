@@ -259,8 +259,9 @@ fn long_preview() -> (String, Vec<String>) {
         .map(|(i, name)| {
             format!(
                 "Region {} ({name}): empty this memory region now. Programs that use it may pause and \
-                 reload data from disk, so save your work first and expect the screen to stall for a moment. \r
-                 Windows may also slow other programs until the cache has been rebuilt.",
+                 reload data from disk, so save your work first and expect the screen to stall for a moment. \
+                 Windows may also slow other programs until the cache has been rebuilt. \
+                 Nothing is deleted from disk.",
                 i + 1
             )
         })
