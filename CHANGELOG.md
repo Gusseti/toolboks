@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Add-ons can bring their own icon.** An add-on whose manifest says `"icon": "custom"` ships a small square PNG (16 to 128 pixels, at most 32 KiB). Toolboks downloads it with the add-on, checks it like the add-on itself (GitHub address, exact size and SHA-256), and draws its shape in the same colours as the built-in icons in the sidebar, the add-on list, the install review and Home. A picture that fails a check shows the default icon and never stops an install. The icon is deleted when the add-on is removed or replaced. The built-in tools keep their icons.
+
 ## [0.20.0] - 2026-11-19
 
 ### Added

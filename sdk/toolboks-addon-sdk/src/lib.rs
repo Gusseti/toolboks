@@ -341,7 +341,7 @@ impl Package {
         }
         if ![
             "grid", "activity", "layers", "storage", "wrench", "leaf", "macro", "sliders", "chip",
-            "shield", "mic", "gauge",
+            "shield", "mic", "gauge", "custom",
         ]
         .contains(&m.icon.as_str())
         {
@@ -591,6 +591,8 @@ mod tests {
         for icon in [
             "grid", "activity", "layers", "storage", "wrench", "leaf", "macro", "sliders", "chip",
             "shield", "mic", "gauge",
+            // The add-on's own picture, `icon.png` beside the manifest (see the author guide).
+            "custom",
         ] {
             let mut v = example();
             v["manifest"]["icon"] = serde_json::json!(icon);

@@ -8,6 +8,8 @@
 //! - `addons/<id>/.download/<version>.part` and `.part.json`: an unfinished download and the
 //!   size and SHA-256 it must match, so it can be resumed, or restarted when the index changed.
 //! - `addon-data/<id>/`: the add-on's own data, kept or deleted on removal as the user chooses.
+//! - `icons/<id>-<sha256>.png`: the add-on's own icon, when its entry has one (`crate::icons`).
+//!   Never in the version folder, which holds only the package or exe and `entry.json`.
 //!
 //! Nothing is placed before the bytes match the size and SHA-256 of the signed index entry, and
 //! `download_url` (and the URL after redirects) must be a trusted GitHub URL. Every failure
@@ -155,6 +157,40 @@ pub fn installed_entry(root: &Path, id: &str) -> Option<Entry> {
     let bytes = fs::read(dir.join(&active.version).join(ENTRY_FILE)).ok()?;
     let entry: Entry = serde_json::from_slice(&bytes).ok()?;
     (entry.id == id && entry.version == active.version && entry.validate().is_ok()).then_some(entry)
+}
+
+/// The catalog entries of the installed versions of `id`: the active one and the one kept for
+/// rollback.
+pub fn version_entries(root: &Path, id: &str) -> Vec<Entry> {
+    let dir = addon_dir(root, id);
+    let Some(active) = read_active(&dir) else {
+        return Vec::new();
+    };
+    std::iter::once(active.version)
+        .chain(active.previous)
+        .filter_map(|version| {
+            serde_json::from_slice::<Entry>(&fs::read(dir.join(version).join(ENTRY_FILE)).ok()?)
+                .ok()
+        })
+        .filter(|entry| entry.id == id)
+        .collect()
+}
+
+/// [`version_entries`] of every installed add-on.
+pub fn all_version_entries(root: &Path) -> Vec<Entry> {
+    let Ok(folders) = fs::read_dir(root.join("addons")) else {
+        return Vec::new();
+    };
+    folders
+        .flatten()
+        .filter(|folder| folder.path().is_dir())
+        .flat_map(|folder| version_entries(root, &folder.file_name().to_string_lossy()))
+        .collect()
+}
+
+/// Deletes the cached icons of `id` that its installed versions no longer use.
+fn prune_icons(root: &Path, id: &str) {
+    crate::icons::keep_only(root, id, &version_entries(root, id));
 }
 
 /// Every installed add-on that has a readable entry record, in id order.
@@ -307,6 +343,9 @@ pub fn install(
     write_active(&dir, &active)?;
     discard();
     prune(&dir, &active);
+    // The add-on's own icon, when it has one. Best effort: a failure means the default glyph.
+    crate::icons::download_or_log(root, entry, fetch);
+    prune_icons(root, &entry.id);
     Ok(Installed {
         version: new.to_string(),
         previous,
@@ -443,6 +482,7 @@ pub fn started(root: &Path, id: &str) -> Result<(), InstallError> {
     active.previous_sha256 = None;
     write_active(&dir, &active)?;
     prune(&dir, &active);
+    prune_icons(root, id);
     Ok(())
 }
 
@@ -467,6 +507,7 @@ pub fn rollback(root: &Path, id: &str) -> Result<Option<String>, InstallError> {
     };
     write_active(&dir, &back)?;
     prune(&dir, &back);
+    prune_icons(root, id);
     Ok(Some(active.version))
 }
 
@@ -481,6 +522,7 @@ pub fn remove(root: &Path, id: &str, keep_data: bool) -> Result<(), InstallError
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(io(e)),
     }
+    crate::icons::remove(root, id);
     if !keep_data {
         remove_data(root, id)?;
     }
@@ -926,6 +968,82 @@ mod tests {
         assert_eq!(started(&root, &id), Ok(()));
         assert!(!dir.join("1.0.0").exists());
         assert_eq!(launching(&root, &id), Ok(Launch::Start("1.2.0".into())));
+    }
+
+    /// Sends `.../icon.png` to `icon` and everything else to `addon`.
+    struct WithIcon<'a> {
+        addon: &'a dyn Fetch,
+        icon: &'a dyn Fetch,
+    }
+
+    impl Fetch for WithIcon<'_> {
+        fn fetch(&self, url: &str, file: &Path, options: Download) -> Result<Saved, HttpError> {
+            if url.ends_with("/icon.png") {
+                self.icon.fetch(url, file, options)
+            } else {
+                self.addon.fetch(url, file, options)
+            }
+        }
+    }
+
+    #[test]
+    fn custom_icons_are_cached_outside_the_version_folder_and_removed_with_the_addon() {
+        use crate::icons::tests::{png, with_icon, Serve};
+        let root = root("icons");
+        let run_with = |entry: &Entry, port: u16, icon: &Serve| {
+            let cancel = AtomicBool::new(false);
+            let fetch = WithIcon {
+                addon: &Local(port),
+                icon,
+            };
+            install(&root, entry, &HOST, &fetch, false, &cancel, &mut |_, _| {})
+        };
+        let (id, v1) = package("1.0.0");
+        let (_, v2) = package("1.1.0");
+        let (icon1, icon2) = (png(64, 64), png(32, 32));
+        let mut e1 = entry(&id, "1.0.0", &v1);
+        with_icon(&mut e1, &icon1);
+        let mut e2 = entry(&id, "1.1.0", &v2);
+        with_icon(&mut e2, &icon2);
+        let path1 = crate::icons::path(&root, &e1).unwrap();
+        let path2 = crate::icons::path(&root, &e2).unwrap();
+        assert_ne!(path1, path2);
+
+        let s1 = serve(v1.clone(), Mode::Normal);
+        run_with(&e1, s1.port, &Serve::new(icon1.clone())).unwrap();
+        assert_eq!(fs::read(&path1).unwrap(), icon1);
+        // The version folder holds only what the supervisor allows.
+        let mut files: Vec<String> = fs::read_dir(addon_dir(&root, &id).join("1.0.0"))
+            .unwrap()
+            .map(|f| f.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        files.sort();
+        assert_eq!(files, [ENTRY_FILE, PACKAGE_FILE]);
+
+        // An update keeps the old icon while the old version is kept for rollback...
+        let s2 = serve(v2.clone(), Mode::Normal);
+        run_with(&e2, s2.port, &Serve::new(icon2.clone())).unwrap();
+        assert!(path1.exists() && path2.exists());
+        // ...and drops it once the new version has started (the add-on was replaced).
+        launching(&root, &id).unwrap();
+        started(&root, &id).unwrap();
+        assert!(!path1.exists() && path2.exists());
+
+        // Uninstalling removes the cached icon.
+        remove(&root, &id, false).unwrap();
+        assert!(!path2.exists());
+        assert_eq!(fs::read_dir(crate::icons::dir(&root)).unwrap().count(), 0);
+
+        // An icon that does not match the catalog is not placed, and the install still works.
+        let mut tampered = icon1.clone();
+        tampered[40] ^= 1;
+        let s3 = serve(v1.clone(), Mode::Normal);
+        assert_eq!(
+            run_with(&e1, s3.port, &Serve::new(tampered)).map(|done| done.version),
+            Ok("1.0.0".to_string())
+        );
+        assert!(!path1.exists());
+        assert_eq!(installed_version(&root, &id).as_deref(), Some("1.0.0"));
     }
 
     #[test]

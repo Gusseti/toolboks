@@ -42,7 +42,7 @@ pub(super) fn manifest_of(entry: &crate::catalog::Entry) -> Manifest {
         author: entry.publisher.clone(),
         publisher: entry.publisher.clone(),
         category: entry.category.clone(),
-        icon: entry.icon.clone(),
+        icon: crate::icons::key(entry),
         accent: entry.accent.clone(),
         api_version: 2,
         min_toolboks_version: entry.min_toolboks_version.clone(),
@@ -172,6 +172,10 @@ fn glyph(ui: &mut egui::Ui, name: &str, color: Color32, size: f32) {
     paint_glyph(ui.painter(), r, name, color, size);
 }
 pub(super) fn paint_glyph(p: &egui::Painter, r: egui::Rect, name: &str, color: Color32, size: f32) {
+    // An add-on's own picture (`custom:<file>`); one that cannot be used gets the default below.
+    if super::custom_icons::paint(p, r, name, color) {
+        return;
+    }
     let stroke = egui::Stroke::new(1.6, color);
     let pt = |x: f32, y: f32| egui::pos2(r.left() + x * size, r.top() + y * size);
     if name == "menu" {

@@ -62,6 +62,19 @@ are ignored, so those indexes still read.
   window; the add-on UI stays unelevated. See [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md).
   `developer_integration` (local job queue, process priority and CPU cores, Claude Code scripts and
   settings) grants no administrator helper; the install review explains it.
+- `icon` is one of the names the app draws, or `custom` for an add-on that ships its own picture.
+  A custom icon needs all three of `icon_url` (an HTTPS GitHub address, the same rule as
+  `download_url`), `icon_sha256` (lowercase hex SHA-256 of the file) and `icon_size` (bytes, 1 to
+  32768); an entry with `"icon": "custom"` and any of them missing or bad makes the whole index
+  refused. The fields are left out for a named icon (and checked if present). The file is a
+  square PNG of 16 to 128 pixels; the app downloads it when it installs or updates the add-on and
+  when the add-on list shows it, places nothing that does not match `icon_size` and
+  `icon_sha256`, and keeps it in `<data>/icons/<id>-<sha256>.png` (never in the add-on's version
+  folder). A file that fails any check is drawn as the default glyph. Older apps ignore the three
+  fields and draw the unknown name `custom` as their default glyph (the entry still reads and
+  installs), so an entry with a custom icon must set `min_toolboks_version` to the first release
+  that draws custom icons (the one after 0.20.0), the same way protocol 4 and 5 entries are kept
+  from older apps.
 - `byline` (optional, at most 60 characters) is the maker's credit shown in the details, such as "by stratum".
 - `data_note` (optional, 1 to 160 characters, one line, no control characters, no Unicode format
   characters such as bidi overrides or zero-width characters, no line or paragraph separators, no

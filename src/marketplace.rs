@@ -428,6 +428,8 @@ enum Message {
         Result<installer::Installed, installer::InstallError>,
     ),
     Image(String, Result<Vec<u8>, String>),
+    /// A custom icon download of this add-on ended (placed or not).
+    Icon(String),
 }
 /// How often the add-on list is fetched again while the app is open.
 pub const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
@@ -474,6 +476,8 @@ pub struct Marketplace {
     pub jobs: BTreeMap<String, Job>,
     pub images: BTreeMap<String, Result<Vec<u8>, String>>,
     image_pending: BTreeSet<String>,
+    /// Custom icons (by key) already fetched or asked for since the list was last read.
+    icons_asked: BTreeSet<String>,
     queue: VecDeque<Entry>,
     active: Option<(String, Arc<AtomicBool>)>,
     sender: mpsc::Sender<Message>,
@@ -501,6 +505,7 @@ impl Default for Marketplace {
             jobs: BTreeMap::new(),
             images: BTreeMap::new(),
             image_pending: BTreeSet::new(),
+            icons_asked: BTreeSet::new(),
             queue: VecDeque::new(),
             active: None,
             sender,
@@ -704,6 +709,14 @@ fn load_catalog(root: &Path) -> Result<Index, String> {
     catalog::accept(root, &bytes)
         .map_err(|_| "Could not read the add-on list. Try again later.".into())
 }
+/// How add-ons and their icons are downloaded: WinHTTP, or the test folder in a preview build.
+fn fetcher() -> Box<dyn installer::Fetch> {
+    #[cfg(feature = "preview")]
+    if let Some(folder) = fixture() {
+        return Box::new(FixtureFetch(folder));
+    }
+    Box::new(installer::WinHttp)
+}
 #[cfg(feature = "preview")]
 fn fixture() -> Option<PathBuf> {
     std::env::var_os("TOOLBOKS_TEST_CATALOG").map(PathBuf::from)
@@ -896,6 +909,31 @@ impl Marketplace {
             ctx.request_repaint();
         });
     }
+    /// Fetches the custom icon of `entry` into the icon folder when it is not there yet, in the
+    /// background. Asked once per icon until the list is read again, so a failure is not retried
+    /// on every frame.
+    pub fn icon(&mut self, root: &Path, entry: &Entry, ctx: &eframe::egui::Context) {
+        if entry.custom_icon().is_none() {
+            return;
+        }
+        let key = crate::icons::key(entry);
+        if self.icons_asked.contains(&key) {
+            return;
+        }
+        self.icons_asked.insert(key);
+        if crate::icons::path(root, entry).is_some_and(|path| path.is_file()) {
+            return;
+        }
+        let root = root.to_path_buf();
+        let entry = entry.clone();
+        let sender = self.sender.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            crate::icons::download_or_log(&root, &entry, fetcher().as_ref());
+            let _ = sender.send(Message::Icon(entry.id));
+            ctx.request_repaint();
+        });
+    }
     pub fn poll(
         &mut self,
         root: &Path,
@@ -920,6 +958,12 @@ impl Marketplace {
                             self.selected
                                 .retain(|id| self.entries.iter().any(|entry| &entry.id == id));
                             let _ = installer::record_update_check(root, catalog::now());
+                            // Icons of add-ons that left the list or changed their picture go;
+                            // the ones still shown are fetched again if they are missing.
+                            let installed = installer::all_version_entries(root);
+                            let keep: Vec<&Entry> = self.entries.iter().chain(&installed).collect();
+                            crate::icons::prune(root, &keep);
+                            self.icons_asked.clear();
                         }
                         Err(error) => {
                             self.entries.clear();
@@ -940,6 +984,8 @@ impl Marketplace {
                 }
                 Message::Installed(id, result) => {
                     self.active = None;
+                    // The add-on's icon may have changed with it: read it again.
+                    crate::app::custom_icons::forget(ctx, &id);
                     if let Some(job) = self.jobs.get_mut(&id) {
                         job.status = match result {
                             Ok(_) => {
@@ -955,6 +1001,7 @@ impl Marketplace {
                     self.image_pending.remove(&url);
                     self.images.insert(url, bytes);
                 }
+                Message::Icon(id) => crate::app::custom_icons::forget(ctx, &id),
             }
         }
         if self.active.is_none() {
@@ -979,18 +1026,7 @@ impl Marketplace {
                         let _ = sender.send(Message::Progress(entry.id.clone(), done, total));
                         ctx.request_repaint();
                     };
-                    let fetch: Box<dyn installer::Fetch> = {
-                        #[cfg(feature = "preview")]
-                        if let Some(folder) = fixture() {
-                            Box::new(FixtureFetch(folder))
-                        } else {
-                            Box::new(installer::WinHttp)
-                        }
-                        #[cfg(not(feature = "preview"))]
-                        {
-                            Box::new(installer::WinHttp)
-                        }
-                    };
+                    let fetch = fetcher();
                     let result = installer::install(
                         &root,
                         &entry,
