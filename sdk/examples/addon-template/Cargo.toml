@@ -1,0 +1,16 @@
+[package]
+name = "addon-template"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The add-on that toolboks-addon-templates writes as a new project; compiled and tested here so it cannot drift from the SDK"
+publish = false
+
+[dependencies]
+toolboks-addon-sdk = { path = "../../toolboks-addon-sdk", features = ["runtime"] }
+toolboks-shared = { path = "../../../shared/toolboks-shared", features = ["ui"] }
+egui = { version = "0.37", default-features = false }
+serde_json = "1"
+
+[dev-dependencies]
+toolboks-addon-sdk = { path = "../../toolboks-addon-sdk", features = ["testing"] }

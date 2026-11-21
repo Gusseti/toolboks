@@ -22,6 +22,10 @@ pub mod tutorial;
 #[cfg(feature = "runtime")]
 pub mod runtime;
 
+/// Checks for an add-on's own tests: its manifest and its built exe.
+#[cfg(feature = "testing")]
+pub mod testing;
+
 #[cfg(feature = "native-ui")]
 pub mod admin;
 #[cfg(feature = "native-ui")]

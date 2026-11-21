@@ -1,0 +1,16 @@
+[package]
+name = "toolboks-addon-templates"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Writes a new, complete Toolboks add-on project from a few answers"
+publish = false
+
+# std only: the add-on that writes projects links this crate and stays small.
+[dependencies]
+
+[dev-dependencies]
+toolboks-addon-sdk = { path = "../toolboks-addon-sdk" }
+toolboks-catalog = { path = "../../shared/toolboks-catalog" }
+image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = "3"
