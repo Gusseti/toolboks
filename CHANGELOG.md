@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.1] - 2026-11-21
+
+### Changed
+
+- **The add-on author guide starts with the SDK Add-on.** Step 1 of the guide for making an add-on now describes installing the SDK Add-on from the add-on browser, pressing Install Rust if Rust is missing, choosing a folder and pressing Create, and what the generated project holds. Nothing changes in the app itself.
+
 ## [0.21.0] - 2026-11-21
 
 ### Changed
