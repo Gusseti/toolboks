@@ -17,6 +17,8 @@ admin-preview = ["native-ui"]
 native-ui = ["dep:egui", "dep:toolboks-addon-proto"]
 # Out-of-process add-ons: the headless egui loop that speaks the wire protocol.
 runtime = ["native-ui", "dep:toolboks-addon-proto"]
+# For an add-on's tests: check its manifest and start its exe as the host would.
+testing = ["runtime"]
 
 [[bin]]
 name = "tbaddon"
