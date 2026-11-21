@@ -2,7 +2,8 @@
 
 This guide takes you from nothing to a working add-on: create it, draw a page, save a setting,
 test it, and see what publishing involves. The first four steps need no account and no
-knowledge of the host's code.
+knowledge of the host's code. The quickest start is the **SDK Add-on** in the Toolboks add-on
+browser: it writes a complete, working project for you (step 1).
 
 ## What an add-on is
 
@@ -27,16 +28,49 @@ You will touch three things:
 
 ## What you need
 
-- Windows, [Rust](https://rustup.rs) (stable) and the Visual C++ build tools.
-- A clone of the add-ons repository, `fredhakon/toolboks-addons`. Real add-ons live there, one
-  folder each under `addons/`. It already depends on the SDK, so you add nothing.
+- Windows, [Rust](https://rustup.rs) (stable) and the Visual C++ build tools. The SDK Add-on
+  checks for both and can install Rust for you (step 1).
+- Toolboks 0.21.0 or later, to use the SDK Add-on.
+- Only if you work by hand inside the add-ons repository (step 1, "By hand"): a clone of
+  `fredhakon/toolboks-addons`. Real add-ons live there, one folder each under `addons/`. It
+  already depends on the SDK, so you add nothing.
 - For looking at your add-on in a window: a clone of the host repository, `Gusseti/toolboks`
   (step 4).
 
 ## 1. Create it
 
-Copy the smallest add-on, `hello`, and give the copy your name. The name is lowercase letters,
-digits and hyphens (`counter`, `disk-manager`). The folder, the crate and the exe all use it.
+### The easy way: the SDK Add-on
+
+1. In Toolboks, open the add-on browser, install **SDK Add-on** (category Developer tools) and
+   open it.
+2. The **What you need** card shows whether Rust and the Visual C++ build tools are installed.
+   If Rust is missing, press **Install Rust**: a PowerShell window opens and runs the official
+   Rust installer (rustup), which also offers the Visual C++ build tools if they are missing.
+   Nothing is installed until you press the button. When the window says it is done, press
+   **Check again**. If only the build tools are missing, install the Visual Studio Build Tools with
+   the "Desktop development with C++" workload.
+3. Fill in the project name (lowercase letters, digits and hyphens), a title, your name and an
+   accent colour. Under **Advanced** you can set the add-on id; the suggestion is fine for your
+   own use, and you change it before publishing.
+4. Press **Choose folder...** and pick where the project goes. It is created inside that folder
+   as `<folder>\<name>`, never in a drive root, the Windows folder or Program Files, and no file is
+   ever replaced. Press **Create project**.
+5. Press **Get started (README)**. The README in your new project lists the five edits to make and
+   where, with `// EDIT:` markers in the code. Then, in the project folder, run `cargo test`.
+
+You get a standalone project: its own `Cargo.toml` (using the SDK version the SDK Add-on was built with),
+the manifest, a placeholder `icon.png`, a working example page in `src/main.rs`, the protocol
+test, the README, and `AGENTS.md` and `CLAUDE.md` with instructions for AI coding assistants, so
+an assistant that opens the folder knows how an add-on is built and what not to change. You
+need no clone of the add-ons repository.
+
+Steps 2 to 9 explain each file in detail; the project's README tells you which to change first.
+
+### By hand, in the add-ons repository
+
+Use this to put an add-on in the add-ons repository itself. Copy the smallest add-on, `hello`,
+and give the copy your name. The name is lowercase letters, digits and hyphens (`counter`,
+`disk-manager`). The folder, the crate and the exe all use it.
 
 ```powershell
 git clone https://github.com/fredhakon/toolboks-addons
