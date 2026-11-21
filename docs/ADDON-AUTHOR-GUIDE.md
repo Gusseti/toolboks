@@ -112,7 +112,7 @@ a field it does not know.
 | `icon` | `custom` for your own picture (`icon.png`), or one of the twelve names the host draws: `grid`, `activity`, `layers`, `storage`, `wrench`, `leaf`, `macro`, `sliders`, `chip`, `shield`, `mic`, `gauge`. See "Icons" below. |
 | `accent` | `#RRGGBB`. |
 | `api_version` | `2` for a native add-on. |
-| `min_toolboks_version` | Leave `0.12.5`. The catalog entry is raised to the first Toolboks that speaks the SDK's protocol automatically. If you set a newer one, change the host version string in the first test of `tests/protocol.rs` to match. |
+| `min_toolboks_version` | Leave `0.12.5` when you use one of the twelve named icons; use `0.21.0` (the first Toolboks that accepts `"icon": "custom"`) when you ship your own `icon.png`. The catalog entry is raised to the first Toolboks that speaks the SDK's protocol automatically. If you set a newer one, change the host version string in the first test of `tests/protocol.rs` to match. |
 | `capabilities` | What the user must allow before installing. `[]` for an add-on that only draws a page and keeps its own settings. Anything else (reading files, administrator actions, audio) needs a reason and is reviewed; see the table in [sdk/README.md](../sdk/README.md). |
 | `pages` | Must be `[]` for a native add-on. Its pages are drawn by your code. |
 | Optional | `byline`, `website`, `support_url`, `screenshots` (HTTPS, at most 8), `data_note` (one line about data you keep on the PC), `checks` (names of the health checks you report, see below). |
