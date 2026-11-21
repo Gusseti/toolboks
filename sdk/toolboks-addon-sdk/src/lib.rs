@@ -1,3 +1,11 @@
+//! The Toolboks add-on SDK: the manifest and package format, and the [`NativeAddon`] trait an
+//! add-on implements.
+//!
+//! Making an add-on? Start with `docs/ADDON-AUTHOR-GUIDE.md` in the Toolboks repository: it
+//! creates one from the `hello` add-on, draws a page, saves a setting and tests it. In short, an
+//! add-on is a struct that implements [`NativeAddon`] (only [`NativeAddon::ui`] is required) and
+//! is run by `runtime::run_addon` (feature `runtime`).
+//!
 //! API 1 declarative packages and API 2 source-level host-linked providers.
 //! This contract is not a dynamic-library ABI or arbitrary executable-code loader.
 use serde::{Deserialize, Serialize};
@@ -467,6 +475,8 @@ impl Package {
 /// a source-level contract, not a dynamic-library ABI. The host resolves trusted providers.
 #[cfg(feature = "native-ui")]
 pub trait NativeAddon {
+    /// Tells the add-on which capabilities the user granted, after the host connected. Do
+    /// nothing that was not granted; the manifest alone grants nothing.
     fn set_capabilities(&mut self, _capabilities: &[Capability]) {}
     /// Initializes preferences before foreground UI or background work.
     fn load_preferences(
@@ -483,25 +493,41 @@ pub trait NativeAddon {
     }
     /// Informational result in the unelevated UI; never use this to authorize a write.
     fn admin_result(&mut self, _id: u64, _outcome: AdminOutcome) {}
+    /// Asked after every message. Return `HostRequest::AdminOperation` for one administrator
+    /// action the user then confirms in a Confirm dialog, once per user action, then `None`.
+    /// (The host currently takes no action on `HostRequest::ReviewUpdate`.)
     fn take_host_request(&mut self) -> Option<HostRequest> {
         None
     }
+    /// A link or the sidebar chose the page named `_page` (one of the names in the add-on's
+    /// `host-services.json`). Only needed by add-ons with more than one page.
     fn navigate(&mut self, _page: &str) {}
+    /// The index of the page being shown, in the order of the `host-services.json` names.
     fn page_index(&self) -> usize {
         0
     }
-    /// Returns true when the add-on changed its namespaced persistent preferences.
+    /// Draws the page. Called once per frame while the page is shown, when the host sent input
+    /// or a repaint was requested (`ui.ctx().request_repaint()`).
+    ///
+    /// Returns true when the add-on changed its namespaced persistent preferences: write the
+    /// new values into `preferences` first, and the host saves them under the add-on's id.
     fn ui(
         &mut self,
         ui: &mut egui::Ui,
         preferences: &mut std::collections::BTreeMap<String, serde_json::Value>,
     ) -> bool;
+    /// Per-frame housekeeping with the egui context, before `ui`. Not called while suspended.
     fn tick(&mut self, _ctx: &egui::Context) {}
+    /// The page was left. Release memory you only need while it is visible.
     fn suspend(&mut self) {}
+    /// The page is shown again after `suspend`.
     fn resume(&mut self) {}
+    /// True while there is work to do with the page hidden. Only an add-on declared
+    /// `"background": true` in `host-services.json` keeps its process while hidden.
     fn has_background_work(&self) -> bool {
         false
     }
+    /// Called about every 200 ms while the page is hidden and `has_background_work` is true.
     fn tick_background(&mut self) {}
     /// Collects completed background changes without constructing the add-on UI.
     fn save_preferences(
@@ -510,15 +536,22 @@ pub trait NativeAddon {
     ) -> bool {
         false
     }
+    /// Called before the add-on exits (Toolboks closed, or the user turned it off). Stop work
+    /// safely; the process can be ended at any time, so never rely on this for consistency.
     fn cancel(&mut self) {}
+    /// The steps of the guided tour. Default: none, and the host supplies no tour.
     fn tutorial_steps(&self) -> Vec<TutorialStep> {
         Vec::new()
     }
+    /// The route of the page being shown, matching a step's page.
     fn tutorial_location(&self) -> String {
         String::new()
     }
+    /// A tour started. Save transient UI state (open tabs, selections) to restore at the end.
     fn tutorial_start(&mut self) {}
+    /// The tour moved to `_page`. Navigate only; never run an action.
     fn tutorial_navigate(&mut self, _page: &str) {}
+    /// The tour ended or was cancelled. Restore the state saved in `tutorial_start`.
     fn tutorial_finish(&mut self) {}
     /// Status bar items. Only the out-of-process runtime forwards them today.
     fn status_items(&self) -> Vec<StatusItem> {

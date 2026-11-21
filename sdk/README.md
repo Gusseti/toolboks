@@ -4,6 +4,12 @@ Build an add-on that stays inside the Toolboks workspace. This SDK includes a Ru
 manifest/UI contract, validation and packaging CLI, JSON Schema, a working starter,
 and the shared background palette. No account is required for local development.
 
+**Making an add-on that is its own program (an exe)?** That is the usual kind, and it is not
+covered by the steps on this page. Go to the [add-on author guide](../docs/ADDON-AUTHOR-GUIDE.md):
+it takes you from an empty folder to a tested add-on. This page covers the code-free,
+declarative `.tbaddon` packages, and the capabilities, tours and administrator requests that
+both kinds use.
+
 Design: every add-on follows [DESIGN.md](../DESIGN.md), the Toolboks design system, and
 passes the [add-on design checklist](../docs/ADDON-DESIGN-CHECKLIST.md). `tbaddon validate`
 prints the checklist after a package passes; `tbaddon checklist` prints it on its own.
@@ -173,6 +179,6 @@ window. Besides the hooks above, the trait has `status_items` (status bar), `tra
 `tutorial::mark` or `tutorial::region`; the host draws the overlay.
 
 Start with the [add-on author guide](../docs/ADDON-AUTHOR-GUIDE.md): it builds and runs the sample
-in `examples/hello-addon` with the test host. The wire protocol (version 3) and the host services
-are described in [ADDON-PROTOCOL.md](../docs/ADDON-PROTOCOL.md). Toolboks itself does not start
-add-on exes yet; that arrives with the add-on browser.
+in `examples/hello-addon` with the test host. The wire protocol (currently version 5) and the host
+services are described in [ADDON-PROTOCOL.md](../docs/ADDON-PROTOCOL.md). Toolboks installs add-on
+exes from the catalog in the add-on browser and starts them through its supervisor.
