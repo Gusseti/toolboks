@@ -54,7 +54,10 @@ are exposed in details; this preview does not fetch remote image galleries.
 
 Versions use major.minor.patch. Declarative packages use `api_version: 1`; host-linked
 native providers use API 2. `min_toolboks_version` is
-checked on install and load. Icons: grid, activity, layers, storage, wrench, leaf.
+checked on install and load. Icons: grid, activity, layers, storage, wrench, leaf, macro,
+sliders, chip, shield, mic, gauge, or `custom` for the add-on's own PNG (it comes with the catalog
+entry, see [docs/catalog.md](../docs/catalog.md); a local package with `custom` shows the default
+glyph).
 `accent` is `#RRGGBB`. URLs must be HTTPS. All unrecognized manifest fields are rejected.
 
 Pages contain headings, text, notes, live metrics, toggles, and text inputs. They render

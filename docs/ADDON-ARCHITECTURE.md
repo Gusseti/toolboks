@@ -64,7 +64,9 @@ services), [catalog.md](catalog.md) (the catalog format),
 
 Local data: `addons/<id>/<version>/` holds the exe or package and the catalog entry it was
 installed from; `addons/<id>/active.json` says which version runs; `addon-data/<id>/` is the
-add-on's own data, kept or deleted on removal as the user chooses.
+add-on's own data, kept or deleted on removal as the user chooses; `icons/<id>-<sha256>.png` is
+an add-on's own icon (catalog `"icon": "custom"`), kept outside the version folder and deleted
+when the add-on is removed or replaced.
 
 ## Today
 

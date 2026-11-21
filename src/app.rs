@@ -11,6 +11,7 @@ use crate::update::{self, CheckOutcome, Release, UpdateError, Version};
 #[cfg(feature = "preview")]
 pub mod addon_check;
 mod addon_tick;
+pub(crate) mod custom_icons;
 #[cfg(feature = "preview")]
 pub mod disk_manager_check;
 mod health;

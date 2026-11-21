@@ -22,6 +22,7 @@ You will touch three things:
 |---|---|
 | `src/main.rs` | The add-on: a struct that implements the `NativeAddon` trait. |
 | `<name>.tbaddon` | The manifest: name, description, icon, accent colour, what it may do. |
+| `icon.png` (optional) | Your own sidebar icon, when the manifest says `"icon": "custom"`. See "Icons" below. |
 | `tests/protocol.rs` | A test that starts the built exe and checks it connects, draws and quits. |
 
 ## What you need
@@ -108,7 +109,7 @@ a field it does not know.
 | `version` | `major.minor.patch`, and the same as `version` in `Cargo.toml`. A test checks it. |
 | `author`, `publisher` | Up to 100 characters. |
 | `category` | Free text up to 60 characters. The list groups add-ons by it, for example `System tools`, `Storage`, `Developer tools`. |
-| `icon` | One of the twelve names the host draws: `grid`, `activity`, `layers`, `storage`, `wrench`, `leaf`, `macro`, `sliders`, `chip`, `shield`, `mic`, `gauge`. See "Icons" below. |
+| `icon` | `custom` for your own picture (`icon.png`), or one of the twelve names the host draws: `grid`, `activity`, `layers`, `storage`, `wrench`, `leaf`, `macro`, `sliders`, `chip`, `shield`, `mic`, `gauge`. See "Icons" below. |
 | `accent` | `#RRGGBB`. |
 | `api_version` | `2` for a native add-on. |
 | `min_toolboks_version` | Leave `0.12.5`. The catalog entry is raised to the first Toolboks that speaks the SDK's protocol automatically. If you set a newer one, change the host version string in the first test of `tests/protocol.rs` to match. |
@@ -116,13 +117,23 @@ a field it does not know.
 | `pages` | Must be `[]` for a native add-on. Its pages are drawn by your code. |
 | Optional | `byline`, `website`, `support_url`, `screenshots` (HTTPS, at most 8), `data_note` (one line about data you keep on the PC), `checks` (names of the health checks you report, see below). |
 
-**Icons.** The sidebar is scanned by icon, so no two add-ons in the catalog may share one, and
-`addon-repo validate` refuses a catalog entry whose icon is not among the nine it lists
-(`activity`, `storage`, `macro`, `chip`, `shield`, `mic`, `gauge`, `sliders`, `layers`). The nine
-first-party add-ons use all nine. You can use any of the twelve for local work, but a new add-on
-that is to be published needs a new icon first: add the name to the list in
-`sdk/toolboks-addon-sdk/src/lib.rs`, draw it in `src/app/shell.rs`, and add it to `ICONS` in
-`tools/repo/src/main.rs` in the add-ons repo.
+**Icons.** The sidebar is scanned by icon, so no two add-ons in the catalog may share one. The
+first-party add-ons use the named icons; a new add-on brings its own: set `"icon": "custom"` and
+put a file named `icon.png` beside `<name>.tbaddon`. The rules, checked before the picture is
+read:
+
+- PNG, at most 32 KiB.
+- Square, 16 to 128 pixels on a side (64 x 64 is a good choice).
+- Only the transparency (alpha channel) counts: it is the shape. Draw your shape in any colour on
+  a transparent background. Toolboks paints it in the colour the other icons have in the same
+  place (muted in the sidebar, accent when selected, the add-on's accent on its card), so it looks
+  like the rest. Leave a little empty margin, as the built-in icons do; the picture fills an 18 to
+  22 pixel square.
+
+The file goes to users through the catalog entry (`icon_url`, `icon_sha256`, `icon_size`; see
+[catalog.md](catalog.md)), and Toolboks checks it like the exe: an address on GitHub, the exact
+size and SHA-256, and the rules above. If anything is wrong, the default glyph is drawn instead
+and the add-on still installs.
 
 ## 3. Write the page
 
@@ -312,6 +323,7 @@ The catalog entry states, among other things:
 | Field | Meaning |
 |---|---|
 | `id`, `title`, `short_description`, `publisher`, `category`, `icon`, `accent` | What the add-on browser shows. |
+| `icon_url`, `icon_sha256`, `icon_size` | Only with `"icon": "custom"`: where `icon.png` is and exactly what it must be. |
 | `kind` | `native` for an exe, `declarative` for a `.tbaddon`. |
 | `version`, `min_toolboks_version` | Plain `x.y.z`. An update must have a higher version. |
 | `protocol_version` | The wire protocol your exe speaks (5 with the current SDK). Toolboks speaks the version in the entry, so it must match the exe. |
@@ -435,7 +447,7 @@ absence of administrator rights in the drawing process. Never automate the UAC p
 | `cannot update the lock file … because --locked was passed` | A new crate changes `Cargo.lock`. Run `cargo metadata --format-version 1` once without `--locked`. |
 | The first test fails with "needs Toolboks x.y.z or later" | The manifest's `min_toolboks_version` is newer than the host version string in `tests/protocol.rs`. Raise the string or lower the minimum. |
 | The test says the id differs | `ID` in `main.rs`, `id` and `native_provider` in the manifest, and the id in `tests/protocol.rs` must all be the same text. |
-| `Unknown sidebar icon` | `icon` is not one of the twelve names above. |
+| `Unknown sidebar icon` | `icon` is not `custom` or one of the twelve names above. |
 | The add-on exits at once on a CI runner | Hosted Windows runners run as administrator, and the drawing runtime refuses to. A normal PC is fine. |
 | Toolboks says the add-on did not connect | It has 10 seconds to open its pipes and answer. Look for a panic before `run_addon`, or a slow start-up. |
 
