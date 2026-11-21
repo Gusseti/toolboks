@@ -417,6 +417,7 @@ impl App {
 
     /// One row of the first-run picker: click it to tick or untick the add-on.
     fn pick_row(&mut self, ui: &mut egui::Ui, entry: &Entry) {
+        self.market.icon(&self.registry.root, entry, ui.ctx());
         let installed = self.installed_version(&entry.id).is_some();
         let job = self
             .market
@@ -492,6 +493,10 @@ impl App {
                 .contains(&needle)
         });
         entries.sort_by_key(|entry| !entry.verified);
+        // Add-ons with their own icon: fetch the ones not downloaded yet.
+        for entry in &entries {
+            self.market.icon(&self.registry.root, entry, ui.ctx());
+        }
         if self
             .market
             .focused
@@ -717,7 +722,7 @@ impl App {
                                 }
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 14.0;
-                                    store::tile(ui, &entry.icon);
+                                    store::tile(ui, &crate::icons::key(entry));
                                     ui.vertical(|ui| {
                                         ui.spacing_mut().item_spacing = Vec2::new(6.0, 2.0);
                                         ui.horizontal(|ui| {
@@ -1088,6 +1093,8 @@ impl App {
                                 if let Some(supervisor) = &mut self.supervisor {
                                     supervisor.forget(&id);
                                 }
+                                // Its icon file is gone; free the texture too.
+                                super::custom_icons::forget(ctx, &id);
                                 self.services.health.remove(&id);
                                 self.views.remove(&id);
                                 self.detached.remove(&id);

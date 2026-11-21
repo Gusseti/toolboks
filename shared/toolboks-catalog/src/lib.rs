@@ -17,6 +17,81 @@ pub const MAX_ENTRIES: usize = 4096;
 /// Sanity limit for the `size` an entry may declare.
 pub const MAX_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
 
+/// The `icon` of an add-on that ships its own picture: `icon_url`, `icon_sha256` and `icon_size`
+/// then say where it is and what it must match.
+pub const CUSTOM_ICON: &str = "custom";
+/// The largest custom icon file.
+pub const MAX_ICON_BYTES: u64 = 32 * 1024;
+/// The smallest and largest side of a custom icon, in pixels. It must be square.
+pub const MIN_ICON_SIDE: u32 = 16;
+pub const MAX_ICON_SIDE: u32 = 128;
+
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
+
+/// Why a custom icon file was not accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconProblem {
+    /// Larger than [`MAX_ICON_BYTES`].
+    TooLarge,
+    /// Does not start with the PNG signature and its header.
+    NotPng,
+    /// Ends before the header does.
+    Truncated,
+    NotSquare {
+        width: u32,
+        height: u32,
+    },
+    /// Square, but not between [`MIN_ICON_SIDE`] and [`MAX_ICON_SIDE`].
+    BadSide(u32),
+}
+
+impl fmt::Display for IconProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge => write!(f, "the icon is larger than {MAX_ICON_BYTES} bytes"),
+            Self::NotPng => f.write_str("the icon is not a PNG file"),
+            Self::Truncated => f.write_str("the icon file is cut short"),
+            Self::NotSquare { width, height } => {
+                write!(f, "the icon is {width}x{height} pixels, not square")
+            }
+            Self::BadSide(side) => write!(
+                f,
+                "the icon is {side} pixels wide; it must be {MIN_ICON_SIDE} to {MAX_ICON_SIDE}"
+            ),
+        }
+    }
+}
+
+/// Checks a custom icon file before anything decodes it: its size, the PNG signature, and the
+/// width and height in its header (the first chunk, `IHDR`). Returns the side in pixels. A file
+/// that passes can still fail to decode; this only makes sure decoding it is small work.
+pub fn check_icon_header(bytes: &[u8]) -> Result<u32, IconProblem> {
+    if bytes.len() as u64 > MAX_ICON_BYTES {
+        return Err(IconProblem::TooLarge);
+    }
+    let shown = bytes.len().min(PNG_SIGNATURE.len());
+    if bytes[..shown] != PNG_SIGNATURE[..shown] || bytes.is_empty() {
+        return Err(IconProblem::NotPng);
+    }
+    // Signature (8), chunk length (4), "IHDR" (4), its 13 bytes of data and its CRC (4).
+    if bytes.len() < 33 {
+        return Err(IconProblem::Truncated);
+    }
+    let word =
+        |at: usize| u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+    if word(8) != 13 || &bytes[12..16] != b"IHDR" {
+        return Err(IconProblem::NotPng);
+    }
+    let (width, height) = (word(16), word(20));
+    if width != height {
+        return Err(IconProblem::NotSquare { width, height });
+    }
+    if !(MIN_ICON_SIDE..=MAX_ICON_SIDE).contains(&width) {
+        return Err(IconProblem::BadSide(width));
+    }
+    Ok(width)
+}
+
 /// Lowercase hex.
 pub fn hex_encode(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -105,7 +180,20 @@ pub struct Entry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub byline: Option<String>,
     pub category: String,
+    /// One of the names the host draws, or [`CUSTOM_ICON`] for an add-on that ships its own
+    /// picture (then `icon_url`, `icon_sha256` and `icon_size` are required). Plain text, so a
+    /// name this host does not know is drawn as the default glyph instead of refusing the index.
     pub icon: String,
+    /// Where the custom icon PNG is: an HTTPS GitHub address like `download_url`. Older hosts
+    /// ignore the three icon fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    /// Lowercase hex SHA-256 of the custom icon file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_sha256: Option<String>,
+    /// Size in bytes of the custom icon file, at most [`MAX_ICON_BYTES`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_size: Option<u64>,
     pub accent: String,
     #[serde(default)]
     pub screenshots: Vec<String>,
@@ -224,6 +312,24 @@ impl Entry {
         )?;
         ok(text(&self.category, 1, 40, false), "category")?;
         ok(text(&self.icon, 0, 64, false), "icon")?;
+        // The icon fields are checked whenever they are there; a custom icon needs all three.
+        ok(self.icon_url.as_deref().is_none_or(https_url), "icon_url")?;
+        ok(
+            self.icon_sha256
+                .as_deref()
+                .is_none_or(|sha| hex_decode::<32>(sha).is_some()),
+            "icon_sha256",
+        )?;
+        ok(
+            self.icon_size
+                .is_none_or(|size| (1..=MAX_ICON_BYTES).contains(&size)),
+            "icon_size",
+        )?;
+        if self.icon == CUSTOM_ICON {
+            ok(self.icon_url.is_some(), "icon_url")?;
+            ok(self.icon_sha256.is_some(), "icon_sha256")?;
+            ok(self.icon_size.is_some(), "icon_size")?;
+        }
         ok(text(&self.accent, 0, 64, false), "accent")?;
         ok(
             self.screenshots.len() <= 8 && self.screenshots.iter().all(|url| https_url(url)),
@@ -291,6 +397,23 @@ impl Entry {
     /// Checks a finished download against this entry's `size` and `sha256`.
     pub fn check_download(&self, bytes: &[u8]) -> Result<(), DownloadMismatch> {
         check_bytes(bytes, self.size, &self.sha256)
+    }
+
+    /// The custom icon's address, SHA-256 and size, when the entry has one. `None` for a named
+    /// icon, and for a custom one whose fields are missing or bad (it is drawn as the default).
+    pub fn custom_icon(&self) -> Option<(&str, &str, u64)> {
+        if self.icon != CUSTOM_ICON {
+            return None;
+        }
+        let url = self.icon_url.as_deref().filter(|url| https_url(url))?;
+        let sha = self
+            .icon_sha256
+            .as_deref()
+            .filter(|sha| hex_decode::<32>(sha).is_some())?;
+        let size = self
+            .icon_size
+            .filter(|size| (1..=MAX_ICON_BYTES).contains(size))?;
+        Some((url, sha, size))
     }
 }
 
@@ -383,6 +506,9 @@ mod tests {
             byline: None,
             category: "system".into(),
             icon: "box".into(),
+            icon_url: None,
+            icon_sha256: None,
+            icon_size: None,
             accent: "#4f8cff".into(),
             screenshots: vec![],
             capabilities: vec!["read_system_info".into()],
@@ -669,6 +795,170 @@ mod tests {
         }
         let parsed = Index::parse(&serde_json::to_vec(&json).unwrap()).unwrap();
         assert!(parsed.entries.iter().all(|e| e.checks.is_empty()));
+    }
+
+    fn custom(entry: &mut Entry) {
+        entry.icon = CUSTOM_ICON.into();
+        entry.icon_url = Some("https://github.com/o/r/releases/download/v1/icon.png".into());
+        entry.icon_sha256 = Some(sha256_hex(b"icon"));
+        entry.icon_size = Some(4);
+    }
+
+    #[test]
+    fn custom_icon_fields_are_optional_and_round_trip() {
+        // Without them: not written, and an entry without them (every existing one) reads.
+        let plain = entry("toolboks.sample", "1.0.0");
+        let json = serde_json::to_value(&plain).unwrap();
+        for field in ["icon_url", "icon_sha256", "icon_size"] {
+            assert!(json.get(field).is_none(), "{field}");
+        }
+        let old: Entry = serde_json::from_value(json).unwrap();
+        assert_eq!(old, plain);
+        assert_eq!(old.custom_icon(), None);
+        // With them: a whole index round-trips and the icon is found.
+        let mut with = index();
+        custom(&mut with.entries[0]);
+        let parsed = Index::parse(&bytes(&with)).unwrap();
+        assert_eq!(parsed, with);
+        assert_eq!(
+            parsed.entries[0].custom_icon(),
+            Some((
+                "https://github.com/o/r/releases/download/v1/icon.png",
+                sha256_hex(b"icon").as_str(),
+                4
+            ))
+        );
+    }
+
+    #[test]
+    fn a_custom_icon_needs_all_three_good_fields() {
+        let mut good = entry("toolboks.sample", "1.0.0");
+        custom(&mut good);
+        assert_eq!(good.validate(), Ok(()));
+        type Change = fn(&mut Entry);
+        let cases: [(Change, &str); 9] = [
+            (|e| e.icon_url = None, "icon_url"),
+            (|e| e.icon_sha256 = None, "icon_sha256"),
+            (|e| e.icon_size = None, "icon_size"),
+            (
+                |e| e.icon_url = Some("http://github.com/icon.png".into()),
+                "icon_url",
+            ),
+            (
+                |e| e.icon_url = Some("https://u@github.com/i.png".into()),
+                "icon_url",
+            ),
+            (|e| e.icon_sha256 = Some("ABC".into()), "icon_sha256"),
+            (
+                |e| e.icon_sha256 = Some(sha256_hex(b"x").to_uppercase()),
+                "icon_sha256",
+            ),
+            (|e| e.icon_size = Some(0), "icon_size"),
+            (|e| e.icon_size = Some(MAX_ICON_BYTES + 1), "icon_size"),
+        ];
+        for (change, field) in cases {
+            let mut bad = good.clone();
+            change(&mut bad);
+            assert_eq!(bad.validate(), Err(field));
+            assert_eq!(bad.custom_icon(), None);
+            // A bad entry refuses the whole index, like any other bad field.
+            let mut index = index();
+            index.entries[0] = bad;
+            assert!(matches!(
+                Index::parse(&bytes(&index)),
+                Err(Refused::Malformed(_))
+            ));
+        }
+        // A named icon may carry no fields; good ones are allowed but not used.
+        let mut named = good.clone();
+        named.icon = "chip".into();
+        assert_eq!(named.validate(), Ok(()));
+        assert_eq!(named.custom_icon(), None);
+        named.icon_size = Some(0);
+        assert_eq!(named.validate(), Err("icon_size"));
+    }
+
+    /// What a host built before custom icons does with an index that has one: its entry type has
+    /// no icon fields and no `deny_unknown_fields`, and it checks `icon` only as plain text of at
+    /// most 64 characters. So the entry and the index read, and the icon is the unknown name
+    /// `custom`, which those hosts draw as their default glyph.
+    #[test]
+    fn an_older_host_reads_a_custom_icon_entry() {
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct OldEntry {
+            id: String,
+            icon: String,
+            sha256: String,
+        }
+        #[derive(Deserialize)]
+        struct OldIndex {
+            format_version: u32,
+            entries: Vec<OldEntry>,
+        }
+        let mut with = index();
+        custom(&mut with.entries[0]);
+        let old: OldIndex = serde_json::from_slice(&bytes(&with)).unwrap();
+        assert_eq!(old.format_version, FORMAT_VERSION);
+        assert_eq!(old.entries.len(), 1);
+        assert_eq!(old.entries[0].icon, "custom");
+        // The old rule for `icon` (the text check that is still the first one here).
+        assert!(text(&old.entries[0].icon, 0, 64, false));
+    }
+
+    /// The smallest PNG start: signature and an `IHDR` chunk for `width` x `height`.
+    fn png_head(width: u32, height: u32) -> Vec<u8> {
+        let mut out = PNG_SIGNATURE.to_vec();
+        out.extend(13u32.to_be_bytes());
+        out.extend(b"IHDR");
+        out.extend(width.to_be_bytes());
+        out.extend(height.to_be_bytes());
+        out.extend([8, 6, 0, 0, 0]);
+        out.extend([0; 4]);
+        out
+    }
+
+    #[test]
+    fn icon_header_check() {
+        assert_eq!(check_icon_header(&png_head(64, 64)), Ok(64));
+        assert_eq!(check_icon_header(&png_head(16, 16)), Ok(16));
+        assert_eq!(check_icon_header(&png_head(128, 128)), Ok(128));
+        assert_eq!(
+            check_icon_header(&png_head(64, 32)),
+            Err(IconProblem::NotSquare {
+                width: 64,
+                height: 32
+            })
+        );
+        assert_eq!(
+            check_icon_header(&png_head(15, 15)),
+            Err(IconProblem::BadSide(15))
+        );
+        assert_eq!(
+            check_icon_header(&png_head(129, 129)),
+            Err(IconProblem::BadSide(129))
+        );
+        // A decompression bomb announces its size in the header and is refused there.
+        assert_eq!(
+            check_icon_header(&png_head(60000, 60000)),
+            Err(IconProblem::BadSide(60000))
+        );
+        let mut big = png_head(64, 64);
+        big.resize(MAX_ICON_BYTES as usize + 1, 0);
+        assert_eq!(check_icon_header(&big), Err(IconProblem::TooLarge));
+        assert_eq!(check_icon_header(b""), Err(IconProblem::NotPng));
+        assert_eq!(check_icon_header(b"GIF89a....."), Err(IconProblem::NotPng));
+        assert_eq!(
+            check_icon_header(&png_head(64, 64)[..5]),
+            Err(IconProblem::Truncated)
+        );
+        assert_eq!(
+            check_icon_header(&png_head(64, 64)[..20]),
+            Err(IconProblem::Truncated)
+        );
+        let mut other_chunk = png_head(64, 64);
+        other_chunk[12..16].copy_from_slice(b"tEXt");
+        assert_eq!(check_icon_header(&other_chunk), Err(IconProblem::NotPng));
     }
 
     #[test]

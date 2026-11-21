@@ -113,6 +113,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "addon-template"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "serde_json",
+ "toolboks-addon-sdk",
+ "toolboks-shared",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2964,7 +2974,7 @@ checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "toolboks"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "eframe",
  "egui_extras",
@@ -3000,6 +3010,16 @@ dependencies = [
  "serde_json",
  "toolboks-addon-proto",
  "windows",
+]
+
+[[package]]
+name = "toolboks-addon-templates"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "tempfile",
+ "toolboks-addon-sdk",
+ "toolboks-catalog",
 ]
 
 [[package]]

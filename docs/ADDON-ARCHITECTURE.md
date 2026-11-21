@@ -35,6 +35,17 @@ Every add-on follows the design system in [DESIGN.md](../DESIGN.md) and passes t
 
 Where each tool goes and how the move works: [ADDON-MOVE.md](ADDON-MOVE.md).
 
+**Project templates.** `sdk/toolboks-addon-templates` (std only) turns a name, id, title,
+description, author, accent and a pinned host commit into every file of a new standalone add-on
+project: `Cargo.toml` (the SDK from git at that commit), `.cargo/config.toml`, the manifest,
+a placeholder `icon.png`, `src/main.rs`, `tests/protocol.rs`, a get-started `README.md` and an
+`AGENTS.md` for coding assistants. `write_project` writes them into a new folder and never
+overwrites anything. The code it writes is the example crate `sdk/examples/addon-template`,
+which the workspace builds and tests, so the template cannot drift from the SDK; the generated
+test is a few lines because it calls the SDK's `testing` feature (`check_manifest`,
+`check_exe`). Its tests fail when a `NativeAddon` method is added without listing it in the
+template's `AGENTS.md`.
+
 Details: [ADDON-PROTOCOL.md](ADDON-PROTOCOL.md) (protocol, connection, supervisor, host
 services), [catalog.md](catalog.md) (the catalog format),
 [ADDON-THREAT-MODEL.md](ADDON-THREAT-MODEL.md) (what can go wrong and what is still open).
@@ -64,7 +75,9 @@ services), [catalog.md](catalog.md) (the catalog format),
 
 Local data: `addons/<id>/<version>/` holds the exe or package and the catalog entry it was
 installed from; `addons/<id>/active.json` says which version runs; `addon-data/<id>/` is the
-add-on's own data, kept or deleted on removal as the user chooses.
+add-on's own data, kept or deleted on removal as the user chooses; `icons/<id>-<sha256>.png` is
+an add-on's own icon (catalog `"icon": "custom"`), kept outside the version folder and deleted
+when the add-on is removed or replaced.
 
 ## Today
 

@@ -1,6 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.21.0] - 2026-11-21
+
+### Changed
+
+- **The administrator Confirm window is bigger, and the install review is clearer about memory cleaning.** The window an add-on shows before it makes an administrator change (for example Memory Cleaner's list of regions to clean) is now taller, so a long preview needs less scrolling, and its buttons stay on screen on small displays. It applies to add-ons built with this version of the SDK. The permission line for system tuning, shown before you install, now says it may clear memory caches when you ask.
+
+### Added
+
+- **Add-on project templates for authors.** A new SDK crate, `toolboks-addon-templates`, writes a complete, working add-on project into an empty folder: the code, the manifest, a placeholder icon, a test, a get-started README that lists the five edits to make, and instructions for AI coding assistants. The SDK also gains a `testing` feature, so an add-on's protocol test is a few lines. Nothing changes in the app itself.
+
+- **Add-ons can bring their own icon.** An add-on whose manifest says `"icon": "custom"` ships a small square PNG (16 to 128 pixels, at most 32 KiB). Toolboks downloads it with the add-on, checks it like the add-on itself (GitHub address, exact size and SHA-256), and draws its shape in the same colours as the built-in icons in the sidebar, the add-on list, the install review and Home. A picture that fails a check shows the default icon and never stops an install. The icon is deleted when the add-on is removed or replaced. The built-in tools keep their icons.
 
 ## [0.20.0] - 2026-11-19
 

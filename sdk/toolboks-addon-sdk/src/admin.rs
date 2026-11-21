@@ -15,6 +15,8 @@ use toolboks_addon_proto::{
 mod dialog;
 
 pub const HELPER_ARG: &str = "--toolboks-admin-helper";
+/// Longest preview, in bytes, that `perform` lets through to the confirmation window.
+const MAX_DESCRIPTION: usize = 8000;
 
 /// A validated, immutable preview and the one change it describes. Preparing this value
 /// must not change the system. Revalidate mutable system state in `apply` and refuse if it
@@ -142,7 +144,10 @@ fn perform(
             return Err("This add-on was not granted access to this administrator action.".into());
         }
         let description = change.description();
-        if description.trim().is_empty() || description.len() > 8000 || description.contains('\0') {
+        if description.trim().is_empty()
+            || description.len() > MAX_DESCRIPTION
+            || description.contains('\0')
+        {
             return Err("The administrator action has no valid preview.".into());
         }
         if cancelled.load(Ordering::SeqCst)

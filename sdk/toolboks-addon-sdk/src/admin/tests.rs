@@ -222,3 +222,129 @@ fn oversized_or_invalid_requests_never_prepare() {
         assert!(matches!(result, AdminOutcome::Failed { .. }));
     }
 }
+
+/// A preview and a result chosen by the test, for a change that needs `system_tuning`.
+struct Described {
+    text: String,
+    result: String,
+    applied: Arc<AtomicUsize>,
+}
+impl AdminChange for Described {
+    fn capability(&self) -> &str {
+        "system_tuning"
+    }
+    fn description(&self) -> String {
+        self.text.clone()
+    }
+    fn apply(self: Box<Self>) -> Result<String, String> {
+        self.applied.fetch_add(1, Ordering::SeqCst);
+        Ok(self.result)
+    }
+}
+/// A long preview in the shape of Memory Cleaner's: one line per region, then three warnings.
+fn long_preview() -> (String, Vec<String>) {
+    let names = [
+        "working sets",
+        "modified page list",
+        "standby list",
+        "low-priority standby list",
+        "system file cache",
+        "combined page list",
+        "registry cache",
+        "modified file cache",
+    ];
+    let mut lines: Vec<String> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            format!(
+                "Region {} ({name}): empty this memory region now. Programs that use it may pause and \
+                 reload data from disk, so save your work first and expect the screen to stall for a moment. \
+                 Windows may also slow other programs until the cache has been rebuilt. \
+                 Nothing is deleted from disk.",
+                i + 1
+            )
+        })
+        .collect();
+    for n in 1..=3 {
+        lines.push(format!(
+            "Warning: step {n} can freeze Windows for several seconds while memory is rewritten. \
+             Do not turn the computer off or start other heavy work until it has finished."
+        ));
+    }
+    (lines.join("\n"), lines)
+}
+#[test]
+fn regions_payload_passes_through_unchanged() {
+    let json = r#"{"regions":255}"#;
+    let sent = AdminRequest {
+        operation: "purge_standby".into(),
+        json: json.into(),
+        ..request()
+    };
+    let (text, lines) = long_preview();
+    assert!(text.len() >= 2500, "{}", text.len());
+    let result = r#"{"text":"1 of 2 regions emptied","regions":[{"region":1,"ok":true},{"region":5,"ok":false,"error":"Access is denied."}]}"#;
+    let applied = Arc::new(AtomicUsize::new(0));
+    let outcome = perform(
+        &sent,
+        &["system_tuning".into()],
+        true,
+        &AtomicBool::new(false),
+        |received| {
+            assert_eq!(received.operation, "purge_standby");
+            assert_eq!(received.json, json);
+            Ok(Box::new(Described {
+                text: text.clone(),
+                result: result.into(),
+                applied: applied.clone(),
+            }))
+        },
+        |shown, _| {
+            assert_eq!(shown, text, "the preview must not be cut or rewritten");
+            assert!(lines.iter().all(|line| shown.contains(line.as_str())));
+            assert_eq!(shown.matches("Warning:").count(), 3);
+            Ok(true)
+        },
+    );
+    assert_eq!(applied.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        outcome,
+        AdminOutcome::Completed {
+            json: result.into()
+        }
+    );
+}
+#[test]
+fn description_limit_is_inclusive() {
+    for (len, accepted) in [(MAX_DESCRIPTION, true), (MAX_DESCRIPTION + 1, false)] {
+        let applied = Arc::new(AtomicUsize::new(0));
+        let confirmed = AtomicUsize::new(0);
+        let outcome = perform(
+            &request(),
+            &["system_tuning".into()],
+            true,
+            &AtomicBool::new(false),
+            |_| {
+                Ok(Box::new(Described {
+                    text: "a".repeat(len),
+                    result: "{}".into(),
+                    applied: applied.clone(),
+                }))
+            },
+            |shown, _| {
+                confirmed.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(shown.len(), len);
+                Ok(true)
+            },
+        );
+        assert_eq!(confirmed.load(Ordering::SeqCst), usize::from(accepted));
+        assert_eq!(applied.load(Ordering::SeqCst), usize::from(accepted));
+        assert_eq!(
+            matches!(outcome, AdminOutcome::Completed { .. }),
+            accepted,
+            "{outcome:?}"
+        );
+        assert_eq!(matches!(outcome, AdminOutcome::Failed { .. }), !accepted);
+    }
+}

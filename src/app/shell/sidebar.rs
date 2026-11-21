@@ -92,6 +92,13 @@ impl App {
             .map(|p| p.manifest.id.clone())
             .collect();
         let is_package = |id: &str| package_ids.iter().any(|package| package == id);
+        // A package installed from the list draws the icon its catalog entry gave it. An add-on
+        // with its own icon gets it fetched again if the install could not.
+        let mut catalog_icons: HashMap<String, String> = HashMap::new();
+        for entry in &entries {
+            self.market.icon(&self.registry.root, entry, ui.ctx());
+            catalog_icons.insert(entry.id.clone(), crate::icons::key(entry));
+        }
         entries.retain(|entry| !is_package(&entry.id));
         let mut all = package_ids.clone();
         all.extend(entries.iter().map(|entry| entry.id.clone()));
@@ -106,7 +113,10 @@ impl App {
                     p.manifest.id.clone(),
                     Info {
                         title: p.manifest.title.clone(),
-                        icon: p.manifest.icon.clone(),
+                        icon: catalog_icons
+                            .get(&p.manifest.id)
+                            .cloned()
+                            .unwrap_or_else(|| p.manifest.icon.clone()),
                         pages: p.pages.iter().map(|page| page.title.clone()).collect(),
                         tip: None,
                     },
@@ -121,7 +131,7 @@ impl App {
                 entry.id.clone(),
                 Info {
                     title: entry.title.clone(),
-                    icon: entry.icon.clone(),
+                    icon: crate::icons::key(entry),
                     pages: entry.pages.clone(),
                     tip: Some(format!("{} - {status}", entry.title)),
                 },

@@ -81,6 +81,10 @@ fn text(value: impl Into<String>, size: f32, weight: u16, color: Color32) -> Ric
 }
 
 fn icon(painter: &egui::Painter, rect: Rect, name: &str, color: Color32) {
+    // An add-on's own picture (`custom:<file>`); one that cannot be used gets the default below.
+    if super::custom_icons::paint(painter, rect, name, color) {
+        return;
+    }
     let point =
         |position: [f32; 2]| rect.min + Vec2::new(position[0], position[1]) * (rect.width() / 24.0);
     let stroke = Stroke::new(1.7 * rect.width() / 24.0, color);
@@ -272,7 +276,7 @@ pub(super) fn row(
             );
         }
         let tile = Rect::from_min_size(rect.min + Vec2::new(12.0, 17.0), Vec2::splat(40.0));
-        paint_tile(painter, tile, &entry.icon, selected);
+        paint_tile(painter, tile, &crate::icons::key(entry), selected);
         let right = rect.right() - 12.0 - if check.is_some() { 30.0 } else { 0.0 };
         if let Some(on) = check {
             let boxed = Rect::from_center_size(

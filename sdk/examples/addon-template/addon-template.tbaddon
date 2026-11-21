@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "manifest": {
+    "id": "toolboks.example",
+    "title": "Example add-on",
+    "native_provider": "toolboks.example",
+    "description": "The add-on a new project starts from.",
+    "long_description": "A page with a button, one saved number and a status bar item. It does not change your system.",
+    "version": "0.1.0",
+    "author": "Toolboks",
+    "publisher": "Toolboks",
+    "category": "Other",
+    "icon": "custom",
+    "accent": "#3ecf8e",
+    "api_version": 2,
+    "min_toolboks_version": "0.21.0",
+    "license": "MIT",
+    "capabilities": []
+  },
+  "pages": []
+}

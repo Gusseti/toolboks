@@ -1,13 +1,13 @@
 [package]
 name = "toolboks"
-version = "0.20.0"
+version = "0.21.0"
 edition = "2021"
 description = "A lightweight toolbox of system utilities"
 license = "MIT"
 repository = "https://github.com/Gusseti/toolboks"
 
 [workspace]
-members = ["sdk/toolboks-addon-sdk", "sdk/examples/hello-addon", "sdk/toolboks-addon-proto", "shared/toolboks-shared", "shared/toolboks-debloat-engine", "shared/toolboks-catalog"]
+members = ["sdk/toolboks-addon-sdk", "sdk/toolboks-addon-templates", "sdk/examples/hello-addon", "sdk/examples/addon-template", "sdk/toolboks-addon-proto", "shared/toolboks-shared", "shared/toolboks-debloat-engine", "shared/toolboks-catalog"]
 resolver = "2"
 
 [features]

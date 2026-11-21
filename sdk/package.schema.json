@@ -59,7 +59,13 @@
             "storage",
             "wrench",
             "leaf",
-            "macro"
+            "macro",
+            "sliders",
+            "chip",
+            "shield",
+            "mic",
+            "gauge",
+            "custom"
           ]
         },
         "accent": {
