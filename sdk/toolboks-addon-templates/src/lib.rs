@@ -23,9 +23,10 @@ pub const HOST_REPO: &str = "https://github.com/Gusseti/toolboks";
 pub const DEFAULT_ACCENT: &str = "#3ecf8e";
 /// The description [`Params::suggest`] fills in. The README tells the author to replace it.
 pub const PLACEHOLDER_DESCRIPTION: &str = "Describe in one sentence what this add-on does.";
-/// The oldest Toolboks the new manifest names. The catalog raises it to what the SDK's
+/// The oldest Toolboks the new manifest names: the first release that accepts `"icon": "custom"`
+/// (a manifest with it is refused by older ones). The catalog raises it further to what the SDK's
 /// protocol needs when the add-on is published.
-pub const MIN_TOOLBOKS_VERSION: &str = "0.12.5";
+pub const MIN_TOOLBOKS_VERSION: &str = "0.21.0";
 
 // The example add-on, compiled and tested in the host workspace.
 const EXAMPLE_CARGO: &str = include_str!("../../examples/addon-template/Cargo.toml");
