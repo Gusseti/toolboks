@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.21.0] - 2026-11-21
+
+### Changed
+
+- **The administrator Confirm window is bigger, and the install review is clearer about memory cleaning.** The window an add-on shows before it makes an administrator change (for example Memory Cleaner's list of regions to clean) is now taller, so a long preview needs less scrolling, and its buttons stay on screen on small displays. It applies to add-ons built with this version of the SDK. The permission line for system tuning, shown before you install, now says it may clear memory caches when you ask.
 
 ### Added
 
